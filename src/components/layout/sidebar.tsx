@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useTotalUnread } from "@/hooks/use-total-unread";
@@ -11,6 +11,7 @@ import {
   Bell,
   Bot,
   Crown,
+  FileText,
   GitBranch,
   LayoutDashboard,
   LogOut,
@@ -99,6 +100,8 @@ const navItems: NavItem[] = [
   { href: "/automations", label: "Automations", icon: Zap },
   { href: "/flows", label: "Flows", icon: Workflow, beta: true },
   { href: "/agents", label: "AI Agents", icon: Bot },
+  { href: "/templates", label: "Templates", icon: FileText },
+  { href: "/members", label: "Team members", icon: UsersRound },
 ];
 
 const bottomNavItems = [
@@ -113,9 +116,37 @@ interface SidebarProps {
 
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { profile, profileLoading, account, accountRole, signOut } = useAuth();
+  const { profile, profileLoading, account, accountId, accountRole, signOut } = useAuth();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
+  const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(null);
+
+  // Check WhatsApp connection status
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+
+    const checkWhatsAppStatus = async () => {
+      try {
+        const res = await fetch('/api/whatsapp/config', { cache: 'no-store' });
+        const data = await res.json();
+        if (!cancelled) {
+          setWhatsappConnected(data?.connected ?? false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setWhatsappConnected(false);
+        }
+      }
+    };
+
+    checkWhatsAppStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
+
   // Only surface the account-name strip when it actually carries
   // information. A solo user's personal account is named after them
   // (the 017 signup trigger seeds it from `full_name`), so showing it
@@ -186,7 +217,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
           <Link href="/dashboard" className="flex items-center gap-2">
             <img
-              src="/conceps-logo/conceps-logo-02.svg"
+              src="/conceps-logo/conceps-logo-01.svg"
               alt="Conceps WA"
               className="h-10 w-10 rounded-lg"
             />
@@ -272,6 +303,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           <ul className="flex flex-col gap-1">
             {bottomNavItems.map((item) => {
               const isActive = pathname.startsWith(item.href);
+              const showWhatsAppWarning =
+                item.href === "/settings" && whatsappConnected === false && !isActive;
               return (
                 <li key={item.href}>
                   <Link
@@ -284,7 +317,15 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     )}
                   >
                     <item.icon className="h-4 w-4" />
-                    {item.label}
+                    <span className="flex-1">{item.label}</span>
+                    {showWhatsAppWarning && (
+                      <span
+                        aria-label="WhatsApp not connected"
+                        className="relative flex h-2 w-2"
+                      >
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+                      </span>
+                    )}
                   </Link>
                 </li>
               );

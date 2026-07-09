@@ -1,6 +1,5 @@
 import {
   Coins,
-  FileText,
   KeyRound,
   LayoutGrid,
   Palette,
@@ -8,7 +7,6 @@ import {
   Shield,
   Tags,
   User,
-  UsersRound,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -26,10 +24,8 @@ export const SETTINGS_SECTIONS = [
   'security',
   'appearance',
   'whatsapp',
-  'templates',
   'fields',
   'deals',
-  'members',
   'api',
 ] as const;
 
@@ -51,10 +47,8 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   security: { id: 'security', label: 'Login & security', icon: Shield, group: 'account' },
   appearance: { id: 'appearance', label: 'Appearance', icon: Palette, group: 'account' },
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
-  templates: { id: 'templates', label: 'Templates', icon: FileText, group: 'workspace' },
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
-  members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
 };
 
