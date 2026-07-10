@@ -228,3 +228,26 @@ html[data-theme="rose"] {
     @apply font-sans;
   }
 }
+
+/* Custom class for sidebar scroll - highest specificity */
+.sidebar-nav-scroll::-webkit-scrollbar {
+  width: 8px !important;
+}
+
+.sidebar-nav-scroll::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.sidebar-nav-scroll::-webkit-scrollbar-thumb {
+  background: #d1d5db !important;
+  border-radius: 4px !important;
+}
+
+.sidebar-nav-scroll::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af !important;
+}
+
+.sidebar-nav-scroll {
+  scrollbar-width: thin !important;
+  scrollbar-color: #d1d5db transparent !important;
+}
