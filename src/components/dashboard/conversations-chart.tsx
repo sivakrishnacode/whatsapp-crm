@@ -7,7 +7,7 @@ import { EmptyState } from './empty-state'
 import { Skeleton } from './skeleton'
 import { cn } from '@/lib/utils'
 
-type RangeDays = 7 | 30 | 90
+type RangeDays = 7 | 30 | 90 | 'custom'
 
 interface ConversationsChartProps {
   /** Per-range data, so switching tabs never re-fetches. */

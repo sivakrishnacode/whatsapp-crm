@@ -567,3 +567,111 @@ export interface AutomationLog {
   created_at: string;
   contact?: Contact;
 }
+
+// ============================================================
+// CTWA Campaigns (migration 034)
+// ============================================================
+
+export type CTWACampaignStatus = 'active' | 'paused' | 'archived';
+
+export interface CTWACampaign {
+  id: string;
+  account_id: string;
+  name: string;
+  meta_ad_id?: string;
+  meta_campaign_id?: string;
+  pre_filled_message?: string;
+  deep_link_url?: string;
+  status: CTWACampaignStatus;
+  click_count: number;
+  conversation_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CTWAClick {
+  id: string;
+  campaign_id: string;
+  contact_id?: string;
+  conversation_id?: string;
+  click_timestamp: string;
+  user_agent?: string;
+  referrer?: string;
+  ip_address?: string;
+  converted: boolean;
+  converted_at?: string;
+}
+
+// ============================================================
+// E-commerce Integrations (migration 035)
+// ============================================================
+
+export type EcommercePlatform = 'shopify' | 'woocommerce';
+
+export type EcommerceIntegrationStatus = 'connected' | 'disconnected' | 'error';
+
+export interface EcommerceIntegration {
+  id: string;
+  account_id: string;
+  platform: EcommercePlatform;
+  store_url: string;
+  api_key?: string;
+  api_secret?: string;
+  access_token?: string;
+  status: EcommerceIntegrationStatus;
+  last_sync_at?: string;
+  sync_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EcommerceProduct {
+  id: string;
+  integration_id: string;
+  external_product_id: string;
+  name: string;
+  description?: string;
+  price: number;
+  currency: string;
+  image_url?: string;
+  product_url: string;
+  inventory_count?: number;
+  sync_at: string;
+}
+
+export interface EcommerceOrder {
+  id: string;
+  integration_id: string;
+  external_order_id: string;
+  contact_id?: string;
+  total_amount: number;
+  currency: string;
+  status: string;
+  order_url: string;
+  sync_at: string;
+}
+
+// ============================================================
+// Campaign Scheduler & Retargeting (migration 036)
+// ============================================================
+
+export type CampaignType = 'broadcast' | 'retargeting';
+
+export interface CampaignSchedule {
+  id: string;
+  account_id: string;
+  name: string;
+  type: CampaignType;
+  broadcast_id?: string;
+  retargeting_config?: Record<string, unknown>;
+  schedule_type: 'one_time' | 'recurring';
+  scheduled_at: string;
+  recurring_pattern?: string; // cron expression
+  timezone?: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  last_run_at?: string;
+  next_run_at?: string;
+  run_count: number;
+  created_at: string;
+  updated_at: string;
+}

@@ -29,9 +29,10 @@ type DB = SupabaseClient
 
 // --- 1. Metric cards ---------------------------------------------------
 
-export async function loadMetrics(db: DB): Promise<MetricsBundle> {
-  const todayStart = startOfLocalDay().toISOString()
-  const yesterdayStart = daysAgoStart(1).toISOString()
+export async function loadMetrics(db: DB, startDate?: string, endDate?: string): Promise<MetricsBundle> {
+  const todayStart = startDate || startOfLocalDay().toISOString()
+  const yesterdayStart = startDate || daysAgoStart(1).toISOString()
+  const rangeEnd = endDate || new Date().toISOString()
 
   const [
     openConvCur,
@@ -48,14 +49,15 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
       .from('conversations')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'open')
-      .gte('created_at', todayStart),
+      .gte('created_at', todayStart)
+      .lte('created_at', rangeEnd),
     db
       .from('conversations')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'open')
       .gte('created_at', yesterdayStart)
       .lt('created_at', todayStart),
-    db.from('contacts').select('id', { count: 'exact', head: true }).gte('created_at', todayStart),
+    db.from('contacts').select('id', { count: 'exact', head: true }).gte('created_at', todayStart).lte('created_at', rangeEnd),
     db
       .from('contacts')
       .select('id', { count: 'exact', head: true })
@@ -66,7 +68,8 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
       .from('messages')
       .select('id', { count: 'exact', head: true })
       .eq('sender_type', 'agent')
-      .gte('created_at', todayStart),
+      .gte('created_at', todayStart)
+      .lte('created_at', rangeEnd),
     db
       .from('messages')
       .select('id', { count: 'exact', head: true })
@@ -104,12 +107,16 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
 export async function loadConversationsSeries(
   db: DB,
   rangeDays: number,
+  startDate?: string,
+  endDate?: string,
 ): Promise<ConversationsSeriesPoint[]> {
-  const start = daysAgoStart(rangeDays - 1).toISOString()
+  const start = startDate || daysAgoStart(rangeDays - 1).toISOString()
+  const end = endDate || new Date().toISOString()
   const { data, error } = await db
     .from('messages')
     .select('created_at, sender_type')
     .gte('created_at', start)
+    .lte('created_at', end)
     .order('created_at', { ascending: true })
   if (error) throw error
 
