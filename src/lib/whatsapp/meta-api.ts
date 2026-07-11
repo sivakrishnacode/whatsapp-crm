@@ -1045,3 +1045,126 @@ export async function downloadMedia(
   const buffer = Buffer.from(await response.arrayBuffer())
   return { buffer, contentType }
 }
+
+export interface SendProductMessageArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  catalogId: string
+  productRetailerId: string
+  bodyText?: string
+  footerText?: string
+  contextMessageId?: string
+}
+
+export async function sendProductMessage(
+  args: SendProductMessageArgs
+): Promise<MetaSendResult> {
+  const { phoneNumberId, accessToken, to, catalogId, productRetailerId, bodyText, footerText, contextMessageId } = args
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`
+  const body: any = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive: {
+      type: 'product',
+      action: {
+        catalog_id: catalogId,
+        product_retailer_id: productRetailerId,
+      },
+    },
+  }
+  
+  if (bodyText) {
+    body.interactive.body = { text: bodyText }
+  }
+  if (footerText) {
+    body.interactive.footer = { text: footerText }
+  }
+  if (contextMessageId) {
+    body.context = { message_id: contextMessageId }
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+
+export interface SendProductListMessageArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  catalogId: string
+  headerText: string
+  bodyText: string
+  footerText?: string
+  sections: Array<{
+    title: string
+    productRetailerIds: string[]
+  }>
+  contextMessageId?: string
+}
+
+export async function sendProductListMessage(
+  args: SendProductListMessageArgs
+): Promise<MetaSendResult> {
+  const { phoneNumberId, accessToken, to, catalogId, headerText, bodyText, footerText, sections, contextMessageId } = args
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`
+  const body: any = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive: {
+      type: 'product_list',
+      header: {
+        type: 'text',
+        text: headerText,
+      },
+      body: {
+        text: bodyText,
+      },
+      action: {
+        catalog_id: catalogId,
+        sections: sections.map((s) => ({
+          title: s.title,
+          product_items: s.productRetailerIds.map((id) => ({
+            product_retailer_id: id,
+          })),
+        })),
+      },
+    },
+  }
+  
+  if (footerText) {
+    body.interactive.footer = { text: footerText }
+  }
+  if (contextMessageId) {
+    body.context = { message_id: contextMessageId }
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}

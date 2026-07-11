@@ -13,7 +13,25 @@ import {
   LayoutTemplate,
   ImageOff,
   CornerDownLeft,
+  ShoppingBag,
+  Tag,
+  Package,
+  List,
 } from "lucide-react";
+
+// Helper to determine if a message contains serialized interactive product data
+function tryParseProductMessage(text: string | null | undefined) {
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && (parsed.type === "product" || parsed.type === "product_list")) {
+      return parsed;
+    }
+  } catch {
+    // Not JSON
+  }
+  return null;
+}
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
@@ -214,6 +232,87 @@ function MessageContent({ message }: { message: Message }) {
       );
 
     case "interactive": {
+      const productData = tryParseProductMessage(message.content_text);
+      if (productData) {
+        if (productData.type === "product") {
+          return (
+            <div className="flex flex-col gap-2 rounded-xl bg-card border border-border p-3 max-w-[260px] text-card-foreground shadow-sm my-1">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-primary uppercase">
+                <ShoppingBag className="h-3.5 w-3.5" />
+                Product Share
+              </div>
+              
+              {productData.image_url ? (
+                <img
+                  src={productData.image_url}
+                  alt={productData.name}
+                  className="w-full h-32 object-cover rounded-lg border border-border/30 bg-muted/40"
+                />
+              ) : (
+                <div className="w-full h-24 flex flex-col items-center justify-center rounded-lg bg-muted/40 border border-border/30">
+                  <Package className="h-6 w-6 text-muted-foreground/60" />
+                  <span className="text-[10px] text-muted-foreground mt-1">No Image</span>
+                </div>
+              )}
+              
+              <div className="space-y-0.5">
+                <h4 className="font-bold text-sm leading-tight text-foreground truncate">
+                  {productData.name}
+                </h4>
+                <div className="flex items-center justify-between text-xs pt-1">
+                  <span className="text-muted-foreground font-mono text-[10px]">
+                    SKU: {productData.retailer_id}
+                  </span>
+                  {productData.price && (
+                    <span className="font-semibold text-primary">
+                      {productData.price}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        }
+        
+        if (productData.type === "product_list") {
+          return (
+            <div className="flex flex-col gap-2 rounded-xl bg-card border border-border p-3 max-w-[260px] text-card-foreground shadow-sm my-1">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-primary uppercase">
+                <List className="h-3.5 w-3.5" />
+                Product List
+              </div>
+              
+              <div className="space-y-1">
+                <h4 className="font-bold text-sm leading-tight text-foreground">
+                  {productData.title}
+                </h4>
+                <p className="text-[11px] text-muted-foreground">
+                  Interactive multi-product collection
+                </p>
+              </div>
+              
+              <div className="border-t border-border/40 pt-2 mt-1 space-y-2">
+                {productData.sections?.map((section: any, idx: number) => (
+                  <div key={idx} className="space-y-1">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase leading-none block">
+                      {section.title}
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {section.productRetailerIds?.map((sku: string, sIdx: number) => (
+                        <span key={sIdx} className="inline-flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-[9px] font-medium text-foreground border border-border/30">
+                          <Tag className="h-2 w-2" />
+                          {sku}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        }
+      }
+
       // Customer tapped a reply button or list row on a message the bot
       // sent. We show the tapped option's title (already in content_text,
       // set by parseMessageContent in the webhook) with a small affordance

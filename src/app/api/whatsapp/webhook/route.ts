@@ -59,6 +59,16 @@ interface WhatsAppMessage {
   }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
+  order?: {
+    catalog_id: string
+    text?: string
+    product_items: Array<{
+      product_retailer_id: string
+      quantity: string
+      item_price: string
+      currency: string
+    }>
+  }
 }
 
 interface WhatsAppWebhookEntry {
@@ -687,6 +697,57 @@ async function processMessage(
     return
   }
 
+  // Insert native WhatsApp order if message type is order
+  if (message.type === 'order' && message.order) {
+    try {
+      const productItems = message.order.product_items || []
+      let totalAmount = 0
+      let currency = 'INR'
+      const itemsJson = []
+
+      for (const item of productItems) {
+        const qty = parseFloat(item.quantity) || 0
+        const price = parseFloat(item.item_price) || 0
+        totalAmount += qty * price
+        if (item.currency) currency = item.currency
+
+        const { data: localProduct } = await supabaseAdmin()
+          .from('whatsapp_products')
+          .select('name')
+          .eq('account_id', accountId)
+          .eq('retailer_id', item.product_retailer_id)
+          .maybeSingle()
+
+        itemsJson.push({
+          retailer_id: item.product_retailer_id,
+          name: localProduct?.name || `Product: ${item.product_retailer_id}`,
+          quantity: qty,
+          unit_price: price,
+          currency: item.currency,
+        })
+      }
+
+      const { error: orderError } = await supabaseAdmin()
+        .from('whatsapp_orders')
+        .insert({
+          account_id: accountId,
+          contact_id: contactRecord.id,
+          whatsapp_message_id: message.id,
+          total_amount: totalAmount,
+          currency: currency,
+          status: 'pending',
+          notes: message.order.text || null,
+          items: itemsJson,
+        })
+
+      if (orderError) {
+        console.error('Error inserting whatsapp order:', orderError)
+      }
+    } catch (orderErr) {
+      console.error('Exception during order insertion:', orderErr)
+    }
+  }
+
   // Update conversation
   const { error: convError } = await supabaseAdmin()
     .from('conversations')
@@ -932,6 +993,21 @@ async function parseMessageContent(
 
     case 'reaction':
       return { ...empty, contentText: message.reaction?.emoji || null }
+
+    case 'order':
+      if (message.order) {
+        const order = message.order
+        const items = order.product_items || []
+        const summary = items
+          .map((item) => `- ${item.quantity}x [SKU: ${item.product_retailer_id}] (${item.currency} ${item.item_price})`)
+          .join('\n')
+        const contentText = `🛒 *Cart Submitted*:\n${summary}${order.text ? `\n\nNote: ${order.text}` : ''}`
+        return {
+          ...empty,
+          contentText,
+        }
+      }
+      return empty
 
     case 'interactive': {
       // The customer tapped a reply button or a list row on a message

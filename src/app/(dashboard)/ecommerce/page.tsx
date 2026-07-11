@@ -57,9 +57,12 @@ import {
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import type { EcommerceIntegration } from '@/types';
+import { CatalogueTab } from '@/components/whatsapp-shop/catalogue-tab';
+import { OrdersTab } from '@/components/whatsapp-shop/orders-tab';
 
 export default function EcommerceIntegrationsPage() {
   const canCreate = useCan('edit-settings');
+  const [activeTab, setActiveTab] = useState<'integrations' | 'catalogue' | 'orders'>('catalogue');
   const [integrations, setIntegrations] = useState<EcommerceIntegration[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -228,43 +231,92 @@ export default function EcommerceIntegrationsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex justify-between items-start gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">E-commerce Integrations</h1>
+          <h1 className="text-2xl font-bold text-foreground">WhatsApp Shop & Catalog</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Connect Shopify or WooCommerce stores to sync products and send order notifications via WhatsApp.
+            Manage your native WhatsApp product catalogs and customer shopping carts in one unified dashboard.
           </p>
         </div>
-        <GatedButton
-          canAct={canCreate}
-          gateReason="create e-commerce integrations"
-          onClick={() => setCreateOpen(true)}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" />
-          New Integration
-        </GatedButton>
       </div>
 
-      {integrations.length === 0 ? (
-        <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-border bg-card">
-          <ShoppingBag className="mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">No e-commerce integrations yet</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Connect your Shopify or WooCommerce store to enable product sync and order notifications.
-          </p>
-          <GatedButton
-            canAct={canCreate}
-            gateReason="create e-commerce integrations"
-            onClick={() => setCreateOpen(true)}
-            className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            <Plus className="h-4 w-4" />
-            New Integration
-          </GatedButton>
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {/* Tabs Menu */}
+      <div className="flex border-b border-border space-x-1">
+        <button
+          onClick={() => setActiveTab('catalogue')}
+          className={`pb-3 px-4 text-sm font-semibold border-b-2 transition-all ${
+            activeTab === 'catalogue'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          WhatsApp Catalogue
+        </button>
+        <button
+          onClick={() => setActiveTab('orders')}
+          className={`pb-3 px-4 text-sm font-semibold border-b-2 transition-all ${
+            activeTab === 'orders'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          WhatsApp Orders
+        </button>
+        <button
+          onClick={() => setActiveTab('integrations')}
+          className={`pb-3 px-4 text-sm font-semibold border-b-2 transition-all ${
+            activeTab === 'integrations'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          E-commerce Integrations
+        </button>
+      </div>
+
+      {activeTab === 'catalogue' && <CatalogueTab />}
+
+      {activeTab === 'orders' && <OrdersTab />}
+
+      {activeTab === 'integrations' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">External Store Connections</h2>
+              <p className="text-sm text-muted-foreground">
+                Connect external Shopify or WooCommerce stores to sync products and send order notifications.
+              </p>
+            </div>
+            <GatedButton
+              canAct={canCreate}
+              gateReason="create e-commerce integrations"
+              onClick={() => setCreateOpen(true)}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <Plus className="h-4 w-4" />
+              New Integration
+            </GatedButton>
+          </div>
+
+          {integrations.length === 0 ? (
+            <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-border bg-card">
+              <ShoppingBag className="mb-3 h-10 w-10 text-muted-foreground" />
+              <p className="text-sm font-medium text-foreground">No e-commerce integrations yet</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Connect your Shopify or WooCommerce store to enable product sync and order notifications.
+              </p>
+              <GatedButton
+                canAct={canCreate}
+                gateReason="create e-commerce integrations"
+                onClick={() => setCreateOpen(true)}
+                className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                <Plus className="h-4 w-4" />
+                New Integration
+              </GatedButton>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {integrations.map((integration) => (
             <Card key={integration.id} className="border-border bg-card">
               <CardHeader className="pb-3">
@@ -339,6 +391,8 @@ export default function EcommerceIntegrationsPage() {
             </Card>
           ))}
         </div>
+      )}
+      </div>
       )}
 
       {/* Create Integration Dialog */}

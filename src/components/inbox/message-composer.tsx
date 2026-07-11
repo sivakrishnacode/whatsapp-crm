@@ -19,7 +19,9 @@ import {
   X,
   Loader2,
   Sparkles,
+  ShoppingBag,
 } from "lucide-react";
+import { ProductPicker } from "./product-picker";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
 import {
@@ -99,6 +101,20 @@ interface MessageComposerProps {
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
+  onSendProduct?: (params: {
+    productRetailerId: string;
+    bodyText?: string;
+    footerText?: string;
+  }) => void;
+  onSendProductList?: (params: {
+    headerText: string;
+    bodyText: string;
+    footerText?: string;
+    sections: Array<{
+      title: string;
+      productRetailerIds: string[];
+    }>;
+  }) => void;
 }
 
 function formatDuration(seconds: number): string {
@@ -120,10 +136,13 @@ export function MessageComposer({
   onOpenTemplates,
   replyTo,
   onClearReply,
+  onSendProduct,
+  onSendProductList,
 }: MessageComposerProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [drafting, setDrafting] = useState(false);
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
@@ -574,6 +593,18 @@ export function MessageComposer({
             size="sm"
             canAct={!readOnly}
             gateReason="send messages"
+            title={readOnly ? undefined : "Send product"}
+            className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+            onClick={() => setProductPickerOpen(true)}
+          >
+            <ShoppingBag className="h-4 w-4" />
+          </GatedButton>
+
+          <GatedButton
+            variant="ghost"
+            size="sm"
+            canAct={!readOnly}
+            gateReason="send messages"
             disabled={drafting}
             title={readOnly ? undefined : "Draft a reply with AI"}
             className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-primary"
@@ -631,6 +662,13 @@ export function MessageComposer({
           Tap the ✨ to draft a reply with AI — you can edit it before sending
         </p>
       )}
+
+      <ProductPicker
+        open={productPickerOpen}
+        onOpenChange={setProductPickerOpen}
+        onSelectProduct={onSendProduct || (() => {})}
+        onSelectProductList={onSendProductList || (() => {})}
+      />
     </div>
   );
 }

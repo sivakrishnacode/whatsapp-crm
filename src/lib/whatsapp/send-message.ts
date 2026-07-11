@@ -25,6 +25,8 @@ import {
   sendTextMessage,
   sendTemplateMessage,
   sendMediaMessage,
+  sendProductMessage,
+  sendProductListMessage,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
@@ -42,6 +44,8 @@ export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
   'text',
   'template',
+  'product',
+  'product_list',
   ...MEDIA_KINDS,
 ] as const;
 
@@ -74,6 +78,17 @@ export interface SendMessageParams {
   /** Structured template params (header/body/buttons). */
   templateMessageParams?: unknown;
   replyToMessageId?: string | null;
+  interactiveProductParams?: {
+    catalogId?: string;
+    productRetailerId?: string;
+    bodyText?: string;
+    footerText?: string;
+    headerText?: string;
+    sections?: Array<{
+      title: string;
+      productRetailerIds: string[];
+    }>;
+  };
 }
 
 export interface SendMessageResult {
@@ -175,6 +190,7 @@ export async function sendMessageToConversation(
     templateParams,
     templateMessageParams,
     replyToMessageId,
+    interactiveProductParams,
   } = params;
 
   if (!conversationId) {
@@ -316,6 +332,33 @@ export async function sendMessageToConversation(
       });
       return result.messageId;
     }
+    if (messageType === 'product') {
+      const result = await sendProductMessage({
+        phoneNumberId: config.phone_number_id,
+        accessToken,
+        to: phone,
+        catalogId: interactiveProductParams?.catalogId || 'mock_catalog_id_123',
+        productRetailerId: interactiveProductParams?.productRetailerId || '',
+        bodyText: interactiveProductParams?.bodyText || contentText || undefined,
+        footerText: interactiveProductParams?.footerText || undefined,
+        contextMessageId,
+      });
+      return result.messageId;
+    }
+    if (messageType === 'product_list') {
+      const result = await sendProductListMessage({
+        phoneNumberId: config.phone_number_id,
+        accessToken,
+        to: phone,
+        catalogId: interactiveProductParams?.catalogId || 'mock_catalog_id_123',
+        headerText: interactiveProductParams?.headerText || 'Catalogue',
+        bodyText: interactiveProductParams?.bodyText || 'Check out our products!',
+        footerText: interactiveProductParams?.footerText || undefined,
+        sections: interactiveProductParams?.sections || [],
+        contextMessageId,
+      });
+      return result.messageId;
+    }
     if (isMediaKind) {
       const result = await sendMediaMessage({
         phoneNumberId: config.phone_number_id,
@@ -387,6 +430,25 @@ export async function sendMessageToConversation(
       .eq('id', contact.id);
   }
 
+  let finalContentText = contentText || null;
+  let previewText = contentText || `[${messageType}]`;
+  if (messageType === 'product' && interactiveProductParams?.productRetailerId) {
+    finalContentText = JSON.stringify({
+      type: 'product',
+      retailer_id: interactiveProductParams.productRetailerId,
+      name: interactiveProductParams.bodyText || 'Product Message',
+      price: interactiveProductParams.footerText || '',
+    });
+    previewText = `🛍️ Product: ${interactiveProductParams.productRetailerId}`;
+  } else if (messageType === 'product_list' && interactiveProductParams?.sections) {
+    finalContentText = JSON.stringify({
+      type: 'product_list',
+      title: interactiveProductParams.headerText || 'Product List',
+      sections: interactiveProductParams.sections,
+    });
+    previewText = `🛍️ Product List: ${interactiveProductParams.headerText || ''}`;
+  }
+
   // Persist the sent message. Field names MUST match the messages
   // schema (see 001_initial_schema.sql).
   const { data: messageRecord, error: msgError } = await db
@@ -394,8 +456,8 @@ export async function sendMessageToConversation(
     .insert({
       conversation_id: conversationId,
       sender_type: 'agent',
-      content_type: messageType,
-      content_text: contentText || null,
+      content_type: messageType === 'product' || messageType === 'product_list' ? 'interactive' : messageType,
+      content_text: finalContentText,
       media_url: mediaUrl || null,
       template_name: templateName || null,
       message_id: waMessageId,
@@ -417,7 +479,7 @@ export async function sendMessageToConversation(
   await db
     .from('conversations')
     .update({
-      last_message_text: contentText || `[${messageType}]`,
+      last_message_text: previewText,
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })

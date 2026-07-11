@@ -561,6 +561,132 @@ export function MessageThread({
     [conversation, onNewMessage, onUpdateMessage],
   );
 
+  const handleSendProduct = useCallback(
+    async (params: {
+      productRetailerId: string;
+      bodyText?: string;
+      footerText?: string;
+    }) => {
+      if (!conversation) return;
+
+      const tempId = `temp-${Date.now()}`;
+      const optimisticMsg: Message = {
+        id: tempId,
+        conversation_id: conversation.id,
+        sender_type: "agent",
+        content_type: "interactive",
+        content_text: JSON.stringify({
+          type: "product",
+          retailer_id: params.productRetailerId,
+          name: params.bodyText || "Product Message",
+          price: params.footerText || "",
+        }),
+        status: "sending",
+        created_at: new Date().toISOString(),
+      };
+      onNewMessage(optimisticMsg);
+
+      try {
+        const res = await fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: conversation.id,
+            message_type: "product",
+            interactive_product_params: {
+              productRetailerId: params.productRetailerId,
+              bodyText: params.bodyText,
+              footerText: params.footerText,
+            },
+          }),
+        });
+
+        const payload = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const reason = payload?.error || `HTTP ${res.status}`;
+          console.error("Failed to send product message:", reason);
+          toast.error(`Failed to send product: ${reason}`);
+          onUpdateMessage(tempId, { status: "failed" });
+          return;
+        }
+
+        onUpdateMessage(tempId, { status: "sent" });
+      } catch (err) {
+        console.error("Failed to send product message:", err);
+        const reason = err instanceof Error ? err.message : "network error";
+        toast.error(`Failed to send product: ${reason}`);
+        onUpdateMessage(tempId, { status: "failed" });
+      }
+    },
+    [conversation, onNewMessage, onUpdateMessage],
+  );
+
+  const handleSendProductList = useCallback(
+    async (params: {
+      headerText: string;
+      bodyText: string;
+      footerText?: string;
+      sections: Array<{
+        title: string;
+        productRetailerIds: string[];
+      }>;
+    }) => {
+      if (!conversation) return;
+
+      const tempId = `temp-${Date.now()}`;
+      const optimisticMsg: Message = {
+        id: tempId,
+        conversation_id: conversation.id,
+        sender_type: "agent",
+        content_type: "interactive",
+        content_text: JSON.stringify({
+          type: "product_list",
+          title: params.headerText,
+          sections: params.sections,
+        }),
+        status: "sending",
+        created_at: new Date().toISOString(),
+      };
+      onNewMessage(optimisticMsg);
+
+      try {
+        const res = await fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: conversation.id,
+            message_type: "product_list",
+            interactive_product_params: {
+              headerText: params.headerText,
+              bodyText: params.bodyText,
+              footerText: params.footerText,
+              sections: params.sections,
+            },
+          }),
+        });
+
+        const payload = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const reason = payload?.error || `HTTP ${res.status}`;
+          console.error("Failed to send product list message:", reason);
+          toast.error(`Failed to send product list: ${reason}`);
+          onUpdateMessage(tempId, { status: "failed" });
+          return;
+        }
+
+        onUpdateMessage(tempId, { status: "sent" });
+      } catch (err) {
+        console.error("Failed to send product list message:", err);
+        const reason = err instanceof Error ? err.message : "network error";
+        toast.error(`Failed to send product list: ${reason}`);
+        onUpdateMessage(tempId, { status: "failed" });
+      }
+    },
+    [conversation, onNewMessage, onUpdateMessage],
+  );
+
   const handleStatusChange = useCallback(
     async (status: ConversationStatus) => {
       if (!conversation) return;
@@ -1079,6 +1205,8 @@ export function MessageThread({
         onOpenTemplates={handleOpenTemplates}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
+        onSendProduct={handleSendProduct}
+        onSendProductList={handleSendProductList}
       />
 
       <TemplatePicker
