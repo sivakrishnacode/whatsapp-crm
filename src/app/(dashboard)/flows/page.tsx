@@ -16,6 +16,8 @@ import {
   HelpCircle,
   UserPlus,
   FileText,
+  Upload,
+  Download,
 } from "lucide-react";
 
 import { useCan } from "@/hooks/use-can";
@@ -90,6 +92,7 @@ export default function FlowsPage() {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,6 +155,38 @@ export default function FlowsPage() {
     }
   }
 
+  async function handleImport(file: File) {
+    setImporting(true);
+    try {
+      const text = await file.text();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        toast.error("The selected file is not valid JSON.");
+        return;
+      }
+      const res = await fetch("/api/flows/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(json.error ?? `Import failed: ${res.status}`);
+      }
+      const json = (await res.json()) as { flow: FlowRow };
+      toast.success(`Flow "${json.flow.name}" imported successfully.`);
+      setFlows((prev) => [json.flow, ...prev]);
+      router.push(`/flows/${json.flow.id}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Import failed";
+      toast.error(msg);
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function handleUseTemplate(slug: string) {
     setCreating(true);
     try {
@@ -201,27 +236,53 @@ export default function FlowsPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {/* Hidden file input for import */}
+      <input
+        id="flow-import-input"
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleImport(file);
+          // Reset so the same file can be re-selected if needed.
+          e.target.value = "";
+        }}
+      />
+
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold text-foreground">Flows</h1>
-            <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-              Beta
-            </span>
-          </div>
+          <h1 className="text-2xl font-semibold text-foreground">Flows</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Build branching, button-driven WhatsApp conversations. Useful for
             menus, FAQs, and triage before a human steps in.
           </p>
         </div>
-        <GatedButton
-          canAct={canCreate}
-          gateReason="create flows"
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus className="h-4 w-4" />
-          New flow
-        </GatedButton>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={importing || !canCreate}
+            onClick={() =>
+              document.getElementById("flow-import-input")?.click()
+            }
+          >
+            {importing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4" />
+            )}
+            Import
+          </Button>
+          <GatedButton
+            canAct={canCreate}
+            gateReason="create flows"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus className="h-4 w-4" />
+            New flow
+          </GatedButton>
+        </div>
       </header>
 
       {flows.length === 0 ? (
@@ -364,6 +425,7 @@ function FlowCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const [exporting, setExporting] = useState(false);
   const triggerSummary = describeTrigger(flow);
   const StatusIcon =
     flow.status === "active"
@@ -371,6 +433,34 @@ function FlowCard({
       : flow.status === "archived"
         ? Archive
         : PauseCircle;
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/flows/${flow.id}/export`);
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(json.error ?? `Export failed: ${res.status}`);
+      }
+      // Derive filename from Content-Disposition or fall back to a default.
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match?.[1] ?? `flow_${flow.id}.json`;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Export failed";
+      toast.error(msg);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="flex flex-col rounded-lg border border-border bg-card p-4 transition-colors hover:border-border">
       <div className="flex items-start justify-between gap-2">
@@ -404,6 +494,20 @@ function FlowCard({
       </div>
 
       <div className="mt-4 flex items-center justify-end gap-2 border-t border-border pt-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleExport}
+          disabled={exporting}
+          title="Export flow as JSON"
+        >
+          {exporting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
+          Export
+        </Button>
         <Button variant="ghost" size="sm" onClick={onEdit}>
           <Pencil className="h-3.5 w-3.5" />
           Edit

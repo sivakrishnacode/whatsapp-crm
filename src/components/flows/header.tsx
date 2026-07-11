@@ -31,6 +31,7 @@ import {
   PauseCircle,
   PlayCircle,
   Save,
+  Smartphone,
   Trash2,
   Workflow,
 } from "lucide-react";
@@ -42,7 +43,7 @@ import {
   type BuilderState,
 } from "./flow-editor-state";
 
-export function EditorHeader() {
+export function EditorHeader({ onTest }: { onTest?: () => void }) {
   const router = useRouter();
   const {
     flow,
@@ -93,8 +94,14 @@ export function EditorHeader() {
           </span>
         )}
 
-        {/* ---- right: runs · delete · activate · save ---- */}
+        {/* ---- right: test · runs · delete · activate · save ---- */}
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {onTest && (
+            <Button variant="ghost" size="sm" onClick={onTest} title="Test this flow">
+              <Smartphone className="h-3.5 w-3.5" />
+              Test
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"

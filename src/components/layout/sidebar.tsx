@@ -132,7 +132,7 @@ const navGroups: NavGroup[] = [
     label: "Automation",
     items: [
       { href: "/automations", label: "Automations", icon: Zap },
-      { href: "/flows", label: "Flows", icon: Workflow, beta: true },
+      { href: "/flows", label: "Flows", icon: Workflow, beta: false },
       { href: "/agents", label: "AI Agents", icon: Bot },
     ],
   },
@@ -278,7 +278,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         </div>
 
         {/* Main navigation */}
-        <nav 
+        <nav
           className="flex-1 overflow-y-auto px-3 py-4 sidebar-nav-scroll"
         >
           {navGroups.map((group, groupIndex) => (

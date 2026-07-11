@@ -29,6 +29,7 @@ import { GitFork, List } from "lucide-react";
 
 import { FlowBuilder } from "./flow-builder";
 import { FlowCanvas } from "./flow-canvas";
+import { FlowSimulator } from "./flow-simulator";
 import { FlowEditorProvider } from "./flow-editor-state";
 import { EditorHeader } from "./header";
 import { ValidationPanel } from "./validation-panel";
@@ -59,27 +60,19 @@ interface Props {
 }
 
 export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
-  // Read the persisted choice in the useState initializer. Safe even
-  // though this is a client component because the parent page only
-  // mounts us AFTER a client-side fetch resolves — there's no SSR
-  // pass for this subtree, so no hydration mismatch to worry about.
-  // Default to `canvas` (the new default) when nothing is saved.
   const [view, setView] = useState<View>(() => {
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (saved === "canvas" || saved === "list") return saved;
     } catch {
-      // Private browsing / disabled storage — fall through to default.
+      // ignore
     }
     return "canvas";
   });
 
-  // Live mobile detection. We don't render canvas under the
-  // breakpoint regardless of `view` — but we keep `view` itself
-  // intact so the user's preference comes back when they widen
-  // again (e.g. rotating a tablet, resizing a window).
   const isMobile = useMatchMedia(MOBILE_BREAKPOINT);
   const effectiveView: View = isMobile ? "list" : view;
+  const [simulatorOpen, setSimulatorOpen] = useState(false);
 
   const choose = (next: View) => {
     setView(next);
@@ -93,7 +86,7 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
   return (
     <FlowEditorProvider initialFlow={initialFlow} initialNodes={initialNodes}>
       <div className="flex h-full min-h-0 flex-col">
-        <EditorHeader />
+        <EditorHeader onTest={() => setSimulatorOpen(true)} />
 
         {/* ---- mode row: view toggle + node-type legend ----
             Omitted entirely on mobile (canvas is unavailable there and
@@ -152,6 +145,8 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
           <ValidationPanel />
         </div>
       </div>
+
+      <FlowSimulator open={simulatorOpen} onClose={() => setSimulatorOpen(false)} />
     </FlowEditorProvider>
   );
 }
