@@ -1,0 +1,3 @@
+api=rzp_test_TCs9rejtWDeydM
+secret=9tq5Z9DoY15XhiRHyDauIPgt
+webhook_secret=secret-razorpay

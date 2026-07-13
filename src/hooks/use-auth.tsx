@@ -20,6 +20,7 @@ import {
   isAccountRole,
   type AccountRole,
 } from "@/lib/auth/roles";
+import type { UserSubscription } from "@/lib/subscription/plans";
 
 interface Profile {
   id: string;
@@ -102,6 +103,15 @@ interface AuthContextValue {
   canEditSettings: boolean;
   /** True if the caller can send messages and edit operational data (agent+). */
   canSendMessages: boolean;
+
+  // ----------------------------------------------------------
+  // Subscription context
+  // ----------------------------------------------------------
+
+  /** User's current subscription with plan details. Null while loading. */
+  subscription: UserSubscription | null;
+  /** Loading state for subscription data. */
+  subscriptionLoading: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -115,12 +125,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  const [subscription, setSubscription] = useState<UserSubscription | null>(null);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `loading`. The session settles fast (one
   // local cookie read); the profile fetch crosses the network and
   // settles later. Callers that gate on `profile.*` need to know which
   // window they're in — see the type doc above.
   const [profileLoading, setProfileLoading] = useState(true);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(true);
 
   // Tracks the user ID we've successfully initiated/completed fetching
   // a profile for. This prevents redundant re-fetches and toggling
@@ -225,6 +237,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Fetch user's subscription data
+  const fetchSubscription = useCallback(async (userId: string) => {
+    const supabase = createClient();
+    setSubscriptionLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('get_user_subscription', {
+        p_user_id: userId,
+      });
+
+      if (error) {
+        console.error("[AuthProvider] fetchSubscription error:", error);
+        setSubscription(null);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        setSubscription(data[0] as UserSubscription);
+      } else {
+        setSubscription(null);
+      }
+    } catch (err) {
+      console.error("[AuthProvider] fetchSubscription threw:", err);
+      setSubscription(null);
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const supabase = createClient();
     let mounted = true;
@@ -256,11 +296,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // profile enriches async. Callers that need to branch on
           // profile data gate on `profileLoading` instead.
           fetchProfile(currentUser.id);
+          fetchSubscription(currentUser.id);
         } else {
           // No user → no profile to load. Flip profileLoading off so
           // pages that gate on it don't wait forever on the logged-out
           // path (the route guard or redirect should fire instead).
           setProfileLoading(false);
+          setSubscriptionLoading(false);
         }
       } catch (err) {
         console.error("[AuthProvider] init threw:", err);
@@ -282,12 +324,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (currentUser) {
         if (currentUser.id !== lastFetchedUserIdRef.current) {
           fetchProfile(currentUser.id);
+          fetchSubscription(currentUser.id);
         }
       } else {
         lastFetchedUserIdRef.current = null;
         setProfile(null);
         setAccount(null);
+        setSubscription(null);
         setProfileLoading(false);
+        setSubscriptionLoading(false);
       }
 
       setLoading(false);
@@ -298,7 +343,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
-  }, [fetchProfile]);
+  }, [fetchProfile, fetchSubscription]);
 
   const signOut = useCallback(async () => {
     const supabase = createClient();
@@ -306,6 +351,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
+    setSubscription(null);
     window.location.href = "/login";
   }, []);
 
@@ -344,6 +390,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshProfile,
         account,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
+        subscription,
+        subscriptionLoading,
         ...derived,
       }}
     >
@@ -374,6 +422,8 @@ export function useAuth(): AuthContextValue {
       refreshProfile: async () => {},
       account: null,
       defaultCurrency: DEFAULT_CURRENCY,
+      subscription: null,
+      subscriptionLoading: false,
       accountId: null,
       accountRole: null,
       isOwner: false,
