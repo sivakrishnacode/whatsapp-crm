@@ -168,11 +168,7 @@ export class ShopifyClient {
       }
     `;
 
-    try {
-      const data = await this.request(query, { id: customerId });
-      return data?.customer || null;
-    } catch {
-      return null;
-    }
+    const data = await this.request(query, { id: customerId });
+    return data?.customer || null;
   }
 }

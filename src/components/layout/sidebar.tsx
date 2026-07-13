@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
+import React from "react";
 import {
   Bell,
   Bot,
@@ -22,6 +23,7 @@ import {
   Settings,
   Shield,
   ShoppingBag,
+  Store,
   User,
   UserCog,
   Users,
@@ -31,6 +33,31 @@ import {
   Zap,
 } from "lucide-react";
 import type { AccountRole } from "@/lib/auth/roles";
+
+const FacebookIcon = React.forwardRef<SVGSVGElement, React.ComponentPropsWithoutRef<'svg'>>(
+  ({ className, ...props }, ref) => 
+    React.createElement(
+      'svg',
+      {
+        ref,
+        xmlns: 'http://www.w3.org/2000/svg',
+        width: '24',
+        height: '24',
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: '2',
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        className,
+        ...props,
+      },
+      React.createElement('path', {
+        d: 'M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z',
+      })
+    )
+);
+FacebookIcon.displayName = 'FacebookIcon';
 
 // Per-role chip metadata used in the sidebar's account strip + the
 // Members tab roster. Keeping this near both consumers in a single
@@ -85,7 +112,7 @@ import {
 interface NavItem {
   href: string;
   label: string;
-  icon: typeof LayoutDashboard;
+  icon: React.ComponentType<any>;
   /**
    * When true, the nav row renders a small "Beta" chip after the label.
    * Purely informational — doesn't affect routing or access.
@@ -139,7 +166,8 @@ const navGroups: NavGroup[] = [
   {
     label: "Operations",
     items: [
-      { href: "/ecommerce", label: "E-commerce", icon: ShoppingBag },
+      { href: "/integrations", label: "Integrations", icon: Workflow },
+      { href: "/ecommerce", label: "W-Commerce", icon: ShoppingBag },
       { href: "/members", label: "Team members", icon: UsersRound },
     ],
   },
