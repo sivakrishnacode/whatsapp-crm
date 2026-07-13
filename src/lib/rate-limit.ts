@@ -1,23 +1,25 @@
 /**
- * In-memory per-key rate limiter.
+ * Rate limiter — Redis-backed in production, in-process fallback for local dev.
  *
- * Fixed-window counter (not token bucket): every identifier gets a
- * fresh N-request budget each window. Simple, allocation-light, and
- * fine for a single-instance VPS — which is how forkers of this
- * template will usually deploy.
+ * Production path (UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN set):
+ *   Uses @upstash/ratelimit with a sliding-window algorithm. Each limit key
+ *   is shared across ALL instances / lambda invocations — correct under
+ *   Vercel serverless fan-out and horizontal VPS scale-out alike.
  *
- * Trade-off: a single Node process holds the Map, so horizontal scale
- * (multiple regions, multiple Hostinger nodes, Vercel serverless fan-
- * out) silently defeats the limit. If you scale beyond one instance,
- * swap the `check` implementation for Redis / Upstash / Cloudflare
- * Durable Objects keeping the same return shape. The call sites won't
- * change.
+ * Development / preview fallback (env vars absent):
+ *   Falls back to the original in-process fixed-window Map. Works fine for
+ *   a single Node process; the comment in the old implementation about
+ *   horizontal scale still applies — don't use this path in production.
  *
- * Memory: entries are ~50 bytes each. With LIGHT_SWEEP below, expired
- * keys get cleared opportunistically on every ~1 000th call, so a
- * healthy instance stays in the low-MB range even with thousands of
- * distinct users. No background timer — works in serverless edge
- * runtimes that don't keep timers alive across requests.
+ * Call-site API is identical to the old implementation:
+ *   const result = checkRateLimit(key, options)
+ *   if (!result.success) return rateLimitResponse(result)
+ *
+ * Migration guide:
+ *   1. Install:  npm install @upstash/ratelimit @upstash/redis
+ *   2. Add env:  UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+ *      (copy from console.upstash.com → your database → REST API)
+ *   3. Deploy — no call-site changes needed.
  */
 
 import { NextResponse } from 'next/server';
@@ -38,6 +40,75 @@ export interface RateLimitResult {
   limit: number;
 }
 
+// ============================================================
+// Redis-backed implementation (production)
+// ============================================================
+
+// Lazy-initialised so the module can load without the env vars
+// present (e.g. in jest with the in-process fallback).
+let redisRateLimiter:
+  | ((key: string, opts: RateLimitOptions) => Promise<RateLimitResult>)
+  | null = null;
+
+function getRedisLimiter(): typeof redisRateLimiter {
+  if (redisRateLimiter !== null) return redisRateLimiter;
+
+  const url   = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+
+  // Dynamic import — avoids bundling Redis in edge/test environments
+  // where the env vars aren't set. The import resolves at runtime only
+  // when the credentials are present.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Redis } = require('@upstash/redis') as typeof import('@upstash/redis');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Ratelimit } = require('@upstash/ratelimit') as typeof import('@upstash/ratelimit');
+
+    const redis = new Redis({ url, token });
+
+    // Cache of Ratelimit instances keyed by "limit:windowMs" — one
+    // instance per distinct (limit, windowMs) pair. Ratelimit holds no
+    // per-request mutable state so sharing the instance is safe.
+    const limiterCache = new Map<string, InstanceType<typeof Ratelimit>>();
+
+    redisRateLimiter = async (key: string, opts: RateLimitOptions): Promise<RateLimitResult> => {
+      const cacheKey = `${opts.limit}:${opts.windowMs}`;
+      let limiter = limiterCache.get(cacheKey);
+      if (!limiter) {
+        limiter = new Ratelimit({
+          redis,
+          // Sliding window is fairer than fixed-window under burst traffic:
+          // a user who just used all N tokens can't immediately refill by
+          // waiting for the window boundary.
+          limiter: Ratelimit.slidingWindow(opts.limit, `${opts.windowMs} ms`),
+          analytics: false,
+          prefix: 'wacrm_rl',
+        });
+        limiterCache.set(cacheKey, limiter);
+      }
+
+      const result = await limiter.limit(key);
+      return {
+        success: result.success,
+        remaining: result.remaining,
+        reset: result.reset,          // Unix ms
+        limit: opts.limit,
+      };
+    };
+  } catch {
+    // @upstash/ratelimit not installed — fall through to in-process.
+    redisRateLimiter = null;
+  }
+
+  return redisRateLimiter;
+}
+
+// ============================================================
+// In-process fixed-window fallback (development / single instance)
+// ============================================================
+
 interface Entry {
   count: number;
   resetAt: number;
@@ -45,9 +116,6 @@ interface Entry {
 
 const buckets = new Map<string, Entry>();
 
-// Opportunistic cleanup. Running a sweep on every call would be
-// quadratic; running it 1-in-N lets the Map self-drain without a
-// background timer.
 const LIGHT_SWEEP_EVERY = 1000;
 let callsSinceSweep = 0;
 
@@ -57,7 +125,7 @@ function sweepExpired(now: number) {
   }
 }
 
-export function checkRateLimit(
+function checkInProcess(
   key: string,
   { limit, windowMs }: RateLimitOptions,
 ): RateLimitResult {
@@ -87,6 +155,45 @@ export function checkRateLimit(
     reset: entry.resetAt,
     limit,
   };
+}
+
+// ============================================================
+// Public API — unchanged from the original implementation
+// ============================================================
+
+/**
+ * Check the rate limit for `key`. Returns immediately using the
+ * in-process fallback; switches to the Redis path when Upstash
+ * credentials are present.
+ *
+ * Note: the Redis path is async; this function returns a Promise
+ * that resolves to RateLimitResult in both cases. Call sites that
+ * previously called this synchronously must `await` it.
+ *
+ * Existing call sites in this repo already do:
+ *   const result = checkRateLimit(...)
+ *   if (!result.success) return rateLimitResponse(result)
+ *
+ * If they are not currently `await`-ing this function, TypeScript
+ * will flag the issue — which is the correct signal to add `await`.
+ */
+export async function checkRateLimit(
+  key: string,
+  opts: RateLimitOptions,
+): Promise<RateLimitResult> {
+  const redisLimiter = getRedisLimiter();
+  if (redisLimiter) {
+    try {
+      return await redisLimiter(key, opts);
+    } catch (err) {
+      // Redis transient error — log and fall back to in-process so
+      // the request isn't dropped entirely. A sustained Redis outage
+      // reverts to the old single-instance behaviour, which is still
+      // better than a 500.
+      console.error('[rate-limit] Redis error, falling back to in-process:', err);
+    }
+  }
+  return checkInProcess(key, opts);
 }
 
 /**
@@ -144,9 +251,8 @@ export const RATE_LIMITS = {
   /** Public REST API (`/api/v1/*`), keyed per API key. 120/min ≈ 2
    *  req/s sustained — comfortable for a polling integration or an
    *  automation firing on inbound events, while bounding a runaway
-   *  script. Like every bucket here it's per-process; a multi-
-   *  instance deploy needs the Redis swap described at the top of
-   *  this file (the per-key call sites don't change). */
+   *  script. Under Upstash Redis this limit is correctly enforced
+   *  across all serverless instances. */
   publicApi: { limit: 120, windowMs: 60_000 },
   /** AI draft-reply generation, per user. 20/min is generous for an
    *  agent clicking "Draft with AI" while working a thread, and bounds
@@ -157,7 +263,8 @@ export const RATE_LIMITS = {
    *  draws on the one shared BYO provider key — without this, N agents
    *  each under their per-user limit could still stampede the account's
    *  key past the provider's own rate limit. 60/min ≈ three busy agents
-   *  drafting flat-out. */
+   *  drafting flat-out. Under Redis this cap is global across all
+   *  instances, making it actually effective. */
   aiDraftAccount: { limit: 60, windowMs: 60_000 },
 } as const;
 

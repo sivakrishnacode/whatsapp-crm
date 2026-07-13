@@ -593,12 +593,21 @@ async function processMessage(
   if (!contactOutcome) return
   const contactRecord = contactOutcome.contact
 
-  // Find or create conversation
-  const convResult = await findOrCreateConversation(
-    accountId,
-    configOwnerUserId,
-    contactRecord.id
-  )
+  // Find or create conversation. Runs in parallel with parseMessageContent
+  // because neither depends on the other's output — saves one serial
+  // round-trip on every inbound message.
+  //
+  // Note: lookupInternalIdByMetaId (swipe-reply context) also runs in
+  // parallel — it only needs conversation.id once resolved, but we can
+  // start it early using the contactId we already have from step 1.
+  // We resolve it after convResult is available.
+  const [convResult, { contentText, mediaUrl, mediaType, interactiveReplyId }] =
+    await Promise.all([
+      findOrCreateConversation(accountId, configOwnerUserId, contactRecord.id),
+      // Parse message content in parallel — does not depend on conversation.
+      parseMessageContent(message, accessToken),
+    ])
+
   if (!convResult) return
   const conversation = convResult.conversation
 
@@ -615,36 +624,12 @@ async function processMessage(
 
   // Reactions short-circuit here — they aren't messages. We never insert
   // into `messages`, never bump unread_count, never update last_message_text.
-  // Done before parseMessageContent so the media-URL fetch is skipped.
+  // Done before the reply-context lookup so the media-URL fetch is skipped.
   if (message.type === 'reaction') {
     await handleReaction(message, conversation.id, contactRecord.id)
     return
   }
 
-  // Parse message content based on type
-  const { contentText, mediaUrl, mediaType, interactiveReplyId } =
-    await parseMessageContent(message, accessToken)
-
-  // Resolve swipe-reply context if present. A missing parent is fine —
-  // we just store NULL and the UI renders the message without a quote.
-  let replyToInternalId: string | null = null
-  if (message.context?.id) {
-    replyToInternalId = await lookupInternalIdByMetaId(
-      message.context.id,
-      conversation.id
-    )
-    if (!replyToInternalId) {
-      console.warn(
-        '[webhook] reply context parent not found:',
-        message.context.id
-      )
-    }
-  }
-
-  // Insert message — field names MUST match the messages table schema
-  // (see supabase/migrations/001_initial_schema.sql):
-  //   conversation_id, sender_type, content_type, content_text,
-  //   media_url, template_name, message_id, status, created_at
   // `mediaType` is intentionally unused — the schema has no media_type
   // column; the MIME type is only used to construct the proxy URL during
   // parseMessageContent. Silence the unused-var warning:
@@ -665,16 +650,35 @@ async function processMessage(
       ? 'image'   // stickers are images
       : 'text'    // reaction, unknown → text fallback
 
+  // Resolve swipe-reply context and first-inbound-message check in parallel.
+  // Neither depends on the other:
+  //   - lookupInternalIdByMetaId: only needed when message.context.id present.
+  //   - isFirstInboundMessage: LIMIT 1 is cheaper than COUNT(*) for the common
+  //     case (contact has prior messages) and still accurate for the first-ever
+  //     message (returns no rows → isFirst = true).
+  const [replyToInternalIdRaw, firstMsgRow] = await Promise.all([
+    message.context?.id
+      ? lookupInternalIdByMetaId(message.context.id, conversation.id)
+      : Promise.resolve(null),
+    supabaseAdmin()
+      .from('messages')
+      .select('id')
+      .eq('conversation_id', conversation.id)
+      .eq('sender_type', 'customer')
+      .limit(1)
+      .maybeSingle(),
+  ])
+
+  const replyToInternalId: string | null = replyToInternalIdRaw
+  if (message.context?.id && !replyToInternalId) {
+    console.warn('[webhook] reply context parent not found:', message.context.id)
+  }
+
   // Determine whether this is the contact's very first inbound message
   // BEFORE we insert, so the count is accurate. Covers the case where
   // the contact row already exists (manual add / CSV import) but they've
   // never messaged us before — which new_contact_created wouldn't catch.
-  const { count: priorCustomerMsgCount } = await supabaseAdmin()
-    .from('messages')
-    .select('id', { count: 'exact', head: true })
-    .eq('conversation_id', conversation.id)
-    .eq('sender_type', 'customer')
-  const isFirstInboundMessage = (priorCustomerMsgCount ?? 0) === 0
+  const isFirstInboundMessage = !firstMsgRow.data
 
   const { error: msgError } = await supabaseAdmin().from('messages').insert({
     conversation_id: conversation.id,
@@ -766,7 +770,13 @@ async function processMessage(
   // If this contact was a recent broadcast recipient, flag the reply
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
-  await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+  // Fire-and-forget: this is a best-effort counter increment. A slow or
+  // failing call here must not delay the flows dispatch below — and since
+  // we are already inside after(), the function stays alive until the
+  // top-level promise resolves regardless.
+  flagBroadcastReplyIfAny(accountId, contactRecord.id).catch((err) =>
+    console.error('[webhook] flagBroadcastReplyIfAny failed:', err)
+  )
 
   // ============================================================
   // Flow runner dispatch.

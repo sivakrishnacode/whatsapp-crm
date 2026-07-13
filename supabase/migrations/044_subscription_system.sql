@@ -61,6 +61,7 @@ DROP POLICY IF EXISTS subscription_plans_select ON subscription_plans;
 DROP POLICY IF EXISTS subscription_plans_insert ON subscription_plans;
 DROP POLICY IF EXISTS subscription_plans_update ON subscription_plans;
 DROP POLICY IF EXISTS subscription_plans_delete ON subscription_plans;
+DROP POLICY IF EXISTS subscription_plans_manage ON subscription_plans;
 
 -- Everyone can read active plans (for pricing page)
 CREATE POLICY subscription_plans_select ON subscription_plans FOR SELECT USING (is_active = true);

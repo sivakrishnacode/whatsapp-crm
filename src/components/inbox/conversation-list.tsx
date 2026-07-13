@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   CONVERSATION_SELECT,
@@ -9,7 +15,7 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import { Search, ChevronDown, X, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Input } from "@/components/ui/input";
 import {
@@ -19,7 +25,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -51,6 +56,10 @@ const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
   { label: "Closed", value: "closed" },
 ];
 
+// Conversations fetched per page. 30 gives ~2 screens of content at
+// typical item height (~64 px) without pulling the whole table.
+const PAGE_SIZE = 30;
+
 export function ConversationList({
   activeConversationId,
   onSelect,
@@ -68,37 +77,47 @@ export function ConversationList({
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
 
-  // Keep the latest callback in a ref so the fetch effect below can
-  // have a stable, empty-dep identity. Previously the fetch useCallback
-  // depended on `onConversationsLoaded`, which depends on the parent's
-  // `deepLinkConvId` — so every URL change (including one the parent
-  // triggered via router.replace after a click) caused a fresh
-  // conversations fetch. That extra refetch was the trigger for the
-  // deep-link auto-select running a second time and wiping the active
-  // thread's messages.
-  // Mutation lives in an effect (not render) per React 19's refs rule;
-  // the fetch runs once on mount so it's fine to read the slightly
-  // older value — the very next render updates the ref for any
-  // subsequent async completion.
+  // Pagination state.
+  // `cursor` is the `last_message_at` of the last loaded conversation —
+  // used as the "before" cursor for the next page fetch.
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Sentinel div at the bottom of the list; observed by IntersectionObserver
+  // to trigger next-page fetches automatically when the user scrolls down.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Keep the latest callback in a ref so the fetch effect can have a
+  // stable identity. Without this, every parent re-render causes a
+  // fresh conversations fetch (issue documented in original component).
   const onConversationsLoadedRef = useRef(onConversationsLoaded);
   useEffect(() => {
     onConversationsLoadedRef.current = onConversationsLoaded;
   });
 
+  // ── Initial / resync fetch ────────────────────────────────────────
+  // Fetches the first page. On resync (tab focus / realtime reconnect)
+  // we re-fetch page 1 and reset the cursor, discarding stale local
+  // state — simpler and more correct than trying to merge two lists.
   useEffect(() => {
     const supabase = createClient();
     let cancelled = false;
+
+    setLoading(true);
+    setCursor(null);
+    setHasMore(true);
 
     (async () => {
       const { data, error } = await supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
-        .order("last_message_at", { ascending: false });
+        .order("last_message_at", { ascending: false })
+        .limit(PAGE_SIZE);
 
       if (cancelled) return;
 
       if (error) {
-        // Supabase errors have non-enumerable properties — log fields explicitly
         console.error("Failed to fetch conversations:", {
           message: error.message,
           details: error.details,
@@ -109,20 +128,76 @@ export function ConversationList({
         return;
       }
 
-      onConversationsLoadedRef.current(normalizeConversations(data ?? []));
+      const normalized = normalizeConversations(data ?? []);
+      onConversationsLoadedRef.current(normalized);
+
+      // If fewer rows than PAGE_SIZE came back, we've reached the end.
+      setHasMore((data?.length ?? 0) >= PAGE_SIZE);
+
+      // The cursor is the last_message_at of the oldest item in this batch.
+      const lastAt = normalized[normalized.length - 1]?.last_message_at;
+      setCursor(lastAt ?? null);
+
       setLoading(false);
     })();
 
     return () => {
       cancelled = true;
     };
-    // `resyncToken` is included so the parent can force a refetch when
-    // the realtime channel reconnects or the tab regains focus — catches
-    // up on any events sent while the WS was disconnected or throttled.
   }, [resyncToken]);
 
-  // Tag definitions for the filter picker — loaded once so labels/colours
-  // stay stable regardless of which conversations happen to be loaded.
+  // ── Load-more handler ─────────────────────────────────────────────
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || !cursor) return;
+
+    const supabase = createClient();
+    setLoadingMore(true);
+
+    const { data, error } = await supabase
+      .from("conversations")
+      .select(CONVERSATION_SELECT)
+      .order("last_message_at", { ascending: false })
+      // Exclusive cursor: only rows strictly older than the current cursor.
+      .lt("last_message_at", cursor)
+      .limit(PAGE_SIZE);
+
+    if (error) {
+      console.error("Failed to load more conversations:", error.message);
+      setLoadingMore(false);
+      return;
+    }
+
+    const normalized = normalizeConversations(data ?? []);
+
+    // Merge with existing: parent state owns the full list. Append-only
+    // so realtime inserts at the top aren't displaced.
+    onConversationsLoadedRef.current([...conversations, ...normalized]);
+
+    setHasMore((data?.length ?? 0) >= PAGE_SIZE);
+    const lastAt = normalized[normalized.length - 1]?.last_message_at;
+    if (lastAt) setCursor(lastAt);
+
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, cursor, conversations]);
+
+  // ── IntersectionObserver — auto load-more on scroll ───────────────
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMore]);
+
+  // ── Tag list ──────────────────────────────────────────────────────
   useEffect(() => {
     const supabase = createClient();
     let cancelled = false;
@@ -135,9 +210,8 @@ export function ConversationList({
     };
   }, []);
 
-  // Company options are derived from the loaded conversations — there's no
-  // separate companies table, and only companies with a live conversation
-  // are worth offering as an inbox filter.
+  // ── Derived state ─────────────────────────────────────────────────
+
   const companies = useMemo(() => {
     const set = new Set<string>();
     for (const c of conversations) {
@@ -162,7 +236,6 @@ export function ConversationList({
       result = result.filter((c) => c.status === filter);
     }
 
-    // Contact-based filters (tags via OR logic, exact company match).
     if (selectedTagIds.length > 0 || selectedCompany !== null) {
       result = result.filter((c) =>
         matchesContactFilters(c, {
@@ -387,11 +460,13 @@ export function ConversationList({
 
       {/* Conversation Items.
           `min-h-0` is load-bearing: a flex child defaults to
-          min-height:auto, so without it this ScrollArea grows to fit
+          min-height:auto, so without it this div grows to fit
           every conversation instead of shrinking to the remaining
           space — the list then overflows and gets clipped by the
-          parent's overflow-hidden with no scrollbar (issue #229). */}
-      <ScrollArea className="min-h-0 flex-1">
+          parent's overflow-hidden with no scrollbar (issue #229).
+          Replaced ScrollArea with a native overflow-y-auto div so
+          the IntersectionObserver can read the scroll position. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -410,9 +485,26 @@ export function ConversationList({
                 onSelect={handleSelect}
               />
             ))}
+
+            {/* Pagination sentinel — observed by IntersectionObserver.
+                Shown below the last item; when it enters the viewport
+                the observer fires and loadMore() fetches the next page. */}
+            <div ref={sentinelRef} className="h-4 shrink-0" aria-hidden />
+
+            {loadingMore && (
+              <div className="flex items-center justify-center py-3">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              </div>
+            )}
+
+            {!hasMore && conversations.length > PAGE_SIZE && (
+              <p className="py-3 text-center text-[11px] text-muted-foreground">
+                All conversations loaded
+              </p>
+            )}
           </div>
         )}
-      </ScrollArea>
+      </div>
     </div>
   );
 }

@@ -274,13 +274,15 @@ async function logEvent(
 
 /**
  * Idempotency check — has a `reply_received` event with this Meta
- * message_id already been recorded for any of the contact's flow
- * runs? If yes, the inbound is a duplicate (Meta retry) and we
- * exit without re-advancing.
+ * message_id already been recorded for any of the contact's flow runs?
+ * If yes, the inbound is a duplicate (Meta retry) and we exit without
+ * re-advancing.
  *
- * Implementation note: scoped to runs belonging to this user/contact
- * so the lookup is cheap (the index on flow_run_events(flow_run_id,
- * event_type) plus the small set of runs per contact).
+ * Uses a single JOIN query instead of two sequential selects.
+ * The functional index `idx_flow_run_events_meta_message_id`
+ * (migration 046) on `(payload->>'meta_message_id')` WHERE
+ * event_type = 'reply_received' makes the inner scan O(1) in the
+ * common case (no prior duplicate).
  */
 async function isDuplicateInbound(
   db: AdminClient,
@@ -288,23 +290,29 @@ async function isDuplicateInbound(
   contactId: string,
   metaMessageId: string,
 ): Promise<boolean> {
-  // Fetch ALL run ids for this contact in this account (active +
-  // historical). Bounded by how many flows the customer has been
-  // through — small.
-  const { data: runs } = await db
-    .from("flow_runs")
-    .select("id")
-    .eq("account_id", accountId)
-    .eq("contact_id", contactId);
-  if (!runs?.length) return false;
-  const runIds = runs.map((r) => (r as { id: string }).id);
-
-  const { count } = await db
+  // Single query with an inner join: finds any reply_received event
+  // whose parent run belongs to this account + contact, with the
+  // matching meta_message_id.  The LIMIT 1 / head:true means Postgres
+  // stops at the first hit — no full count scan needed.
+  const { count, error } = await db
     .from("flow_run_events")
-    .select("id", { count: "exact", head: true })
-    .in("flow_run_id", runIds)
+    .select("id, flow_runs!inner(account_id, contact_id)", {
+      count: "exact",
+      head: true,
+    })
     .eq("event_type", "reply_received")
-    .filter("payload->>meta_message_id", "eq", metaMessageId);
+    .eq("flow_runs.account_id", accountId)
+    .eq("flow_runs.contact_id", contactId)
+    .filter("payload->>meta_message_id", "eq", metaMessageId)
+    .limit(1);
+
+  if (error) {
+    // Non-fatal — log and let the dispatch continue. A failed check
+    // means we might re-advance on a Meta retry, but that's better
+    // than silently dropping the message.
+    console.error("[flows] isDuplicateInbound check failed:", error.message);
+    return false;
+  }
   return (count ?? 0) > 0;
 }
 
