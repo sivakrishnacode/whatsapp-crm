@@ -621,19 +621,6 @@ export function WhatsAppConfig() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-muted-foreground">Webhook Verify Token</Label>
-              <Input
-                placeholder="Create a custom verify token"
-                value={verifyToken}
-                onChange={(e) => setVerifyToken(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-              <p className="text-xs text-muted-foreground">
-                A custom string you create. Must match the token you set in Meta webhook settings.
-              </p>
-            </div>
-
-            <div className="space-y-2">
               <Label className="text-muted-foreground">
                 Two-step verification PIN
                 <span className="ml-1 text-muted-foreground">(optional)</span>
@@ -677,7 +664,7 @@ export function WhatsAppConfig() {
               Use this URL as your webhook callback in the Meta App Dashboard.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label className="text-muted-foreground">Webhook Callback URL</Label>
               <div className="flex gap-2">
@@ -695,6 +682,19 @@ export function WhatsAppConfig() {
                   <Copy className="size-4" />
                 </Button>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">Webhook Verify Token</Label>
+              <Input
+                placeholder="Create a custom verify token"
+                value={verifyToken}
+                onChange={(e) => setVerifyToken(e.target.value)}
+                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+              />
+              <p className="text-xs text-muted-foreground">
+                A custom string you create. Must match the token you set in Meta webhook settings.
+              </p>
             </div>
           </CardContent>
         </Card>
