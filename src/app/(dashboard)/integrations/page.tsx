@@ -49,6 +49,7 @@ export default function IntegrationsPage() {
   const [loading, setLoading] = useState(true);
   const [fbConnected, setFbConnected] = useState(false);
   const [fbName, setFbName] = useState<string | null>(null);
+  const [zapierCount, setZapierCount] = useState(0);
 
   // E-commerce state
   const [integrations, setIntegrations] = useState<EcommerceIntegration[]>([]);
@@ -88,6 +89,13 @@ export default function IntegrationsPage() {
       const data = await res.json();
       if (res.ok) {
         setIntegrations(data.integrations || []);
+      }
+
+      // Check Zapier connections
+      const zapierRes = await fetch('/api/integrations/zapier');
+      const zapierData = await zapierRes.json();
+      if (zapierRes.ok) {
+        setZapierCount((zapierData.endpoints || []).length);
       }
     } catch (err) {
       console.error('Error fetching integration statuses:', err);
@@ -424,6 +432,50 @@ export default function IntegrationsPage() {
                 {wooConnected ? 'Manage Integration' : 'Connect Account'}
                 <ArrowRight className="size-3.5" />
               </Button>
+            </CardFooter>
+          </Card>
+
+          {/* Zapier Integration Card */}
+          <Card className="border-border bg-card/45 shadow-sm hover:shadow-md transition-shadow flex flex-col w-full max-w-[350px]">
+            <CardHeader className="pb-4">
+              <div className="flex items-start justify-between">
+                <div className="flex size-11 items-center justify-center rounded-xl bg-transparent">
+                  <img src="/icons/zapier.svg" alt="Zapier" className="size-11 object-contain" />
+                </div>
+                {zapierCount > 0 ? (
+                  <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-green-600 dark:text-green-400 text-[10px] font-medium flex items-center gap-1">
+                    <CheckCircle className="size-3" />
+                    Connected ({zapierCount})
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="text-muted-foreground text-[10px] font-medium flex items-center gap-1">
+                    <XCircle className="size-3" />
+                    Not Configured
+                  </Badge>
+                )}
+              </div>
+              <CardTitle className="text-base mt-4 font-semibold text-foreground">Zapier</CardTitle>
+              <CardDescription className="text-xs mt-1.5 leading-relaxed">
+                Trigger Zaps on new contacts, conversations, and messages to automate workflows across thousands of apps.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 py-0 pb-4">
+              {zapierCount > 0 && (
+                <div className="text-[11px] text-muted-foreground bg-muted/40 rounded px-2.5 py-1.5 font-mono truncate">
+                  {zapierCount} webhook{zapierCount === 1 ? '' : 's'} connected
+                </div>
+              )}
+            </CardContent>
+            <CardFooter className="pt-2 border-t border-border">
+              <Link href="/integrations/zapier" className="w-full">
+                <Button
+                  variant={zapierCount > 0 ? "outline" : "default"}
+                  className="w-full text-xs h-9 justify-between font-medium"
+                >
+                  {zapierCount > 0 ? 'Manage Integration' : 'Connect Zapier'}
+                  <ArrowRight className="size-3.5" />
+                </Button>
+              </Link>
             </CardFooter>
           </Card>
         </div>

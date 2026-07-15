@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { dispatchWebhookEvent } from '@/lib/webhooks/deliver';
 
 // Initialize Admin Supabase Client to bypass RLS since webhooks run in background without user session
 const supabaseAdmin = createClient(
@@ -175,6 +176,22 @@ async function processLead(leadgenId: string, pageId: string) {
       }
       contact = newContact;
       console.log(`Created new contact: ${contact.id}`);
+
+      // This route is user_id-scoped (a legacy tenancy model, unlike the
+      // rest of the app's account_id convention), but webhook_endpoints
+      // are looked up by account_id — resolve it once via the profile.
+      const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('account_id')
+        .eq('user_id', page.user_id)
+        .maybeSingle();
+      if (profile?.account_id) {
+        await dispatchWebhookEvent(supabaseAdmin, profile.account_id, 'contact.created', {
+          contact_id: contact.id,
+          phone: cleanPhone,
+          name: contact.name,
+        });
+      }
     } else {
       // Update contact name, email, company if they were empty
       const updates: any = {};

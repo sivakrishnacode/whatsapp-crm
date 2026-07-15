@@ -622,6 +622,18 @@ async function processMessage(
     })
   }
 
+  // Emit contact.created alongside conversation.created — both fire off
+  // the same "first time we heard from this contact" moment, so a
+  // subscriber that only cares about new contacts doesn't have to infer
+  // it from conversation.created's payload.
+  if (contactOutcome.wasCreated) {
+    await dispatchWebhookEvent(supabaseAdmin(), accountId, 'contact.created', {
+      contact_id: contactRecord.id,
+      phone: contactRecord.phone,
+      name: contactRecord.name,
+    })
+  }
+
   // Reactions short-circuit here — they aren't messages. We never insert
   // into `messages`, never bump unread_count, never update last_message_text.
   // Done before the reply-context lookup so the media-URL fetch is skipped.

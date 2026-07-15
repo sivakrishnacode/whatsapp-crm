@@ -142,6 +142,77 @@ async function deliverOne(
   }
 }
 
+export interface TestPingResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
+}
+
+/**
+ * Send a one-off signed test payload to a single endpoint, on demand
+ * (the "Send test event" button in the endpoint management UI). Unlike
+ * `dispatchWebhookEvent`, this reports success/failure back to the
+ * caller and never touches `failure_count` — a deliberate manual test
+ * shouldn't count toward auto-disabling the endpoint.
+ */
+export async function sendTestWebhookPing(
+  db: SupabaseClient,
+  accountId: string,
+  endpointId: string
+): Promise<TestPingResult> {
+  const { data: row, error } = await db
+    .from('webhook_endpoints')
+    .select('id, url, secret')
+    .eq('account_id', accountId)
+    .eq('id', endpointId)
+    .maybeSingle();
+  if (error || !row) return { ok: false, error: 'Webhook endpoint not found' };
+
+  if (!(await isDeliverableUrl(row.url))) {
+    return { ok: false, error: 'This URL is not publicly reachable' };
+  }
+
+  let secret: string;
+  try {
+    secret = decrypt(row.secret);
+  } catch {
+    return { ok: false, error: 'Could not decrypt this endpoint’s signing secret' };
+  }
+
+  const payload = JSON.stringify({
+    id: randomUUID(),
+    event: 'zapier.test',
+    occurred_at: new Date().toISOString(),
+    account_id: accountId,
+    data: { message: 'This is a test event sent from your CRM’s Zapier integration.' },
+  });
+  const tsSeconds = Math.floor(Date.now() / 1000);
+
+  try {
+    const res = await fetch(row.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Conceps-Event': 'zapier.test',
+        'X-Conceps-Webhook-Id': row.id,
+        'X-Conceps-Signature': buildSignatureHeader(payload, secret, tsSeconds),
+      },
+      body: payload,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: `Endpoint responded ${res.status}` };
+    }
+    return { ok: true, status: res.status };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Request failed',
+    };
+  }
+}
+
 async function recordFailure(db: SupabaseClient, row: EndpointRow): Promise<void> {
   // Atomic increment (+ auto-disable at the threshold) via a SQL
   // function — a read-modify-write here would lose increments when two
