@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# dependencies
-/node_modules
+# dependencies (root + every workspace's node_modules)
+node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -13,9 +13,15 @@
 # testing
 /coverage
 
-# next.js
-/.next/
+# next.js (apps/web)
+.next/
 /out/
+
+# nestjs (apps/api)
+dist/
+
+# turborepo
+.turbo/
 
 # production
 /build
