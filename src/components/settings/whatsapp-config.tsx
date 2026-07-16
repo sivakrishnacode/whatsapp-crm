@@ -22,12 +22,14 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
+import { WhatsAppConnectSteps } from './whatsapp-connect-steps';
 import {
   Accordion,
   AccordionItem,
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
 
 const MASKED_TOKEN = '••••••••••••••••';
@@ -53,6 +55,14 @@ export function WhatsAppConfig() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  // Embedded Signup connections carry a long-lived (~60 day) token
+  // rather than a non-expiring one — surfaced so the user re-runs
+  // "Connect with Facebook" before it silently stops working.
+  const [tokenExpiringSoon, setTokenExpiringSoon] = useState(false);
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null);
+  // Which setup path is showing — Embedded Signup ("connect") or the
+  // credential-paste form ("manual").
+  const [setupMode, setSetupMode] = useState<'connect' | 'manual'>('connect');
   // Guards against re-hydrating the form when the load effect below
   // re-runs for reasons unrelated to actually switching accounts —
   // e.g. Supabase's onAuthStateChange fires a token refresh (new
@@ -141,10 +151,14 @@ export function WhatsAppConfig() {
             setConnectionStatus('connected');
             setResetReason(null);
             setStatusMessage('');
+            setTokenExpiringSoon(Boolean(payload.token_expiring_soon));
+            setTokenExpiresAt(payload.token_expires_at ?? null);
           } else {
             setConnectionStatus('disconnected');
             setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
             setStatusMessage(payload.message || '');
+            setTokenExpiringSoon(false);
+            setTokenExpiresAt(null);
           }
         } catch (err) {
           console.error('Health check failed:', err);
@@ -153,6 +167,8 @@ export function WhatsAppConfig() {
       } else {
         setConnectionStatus('disconnected');
         setResetReason(null);
+        setTokenExpiringSoon(false);
+        setTokenExpiresAt(null);
         setStatusMessage('');
       }
     } catch (err) {
@@ -179,6 +195,7 @@ export function WhatsAppConfig() {
     loadedAccountIdRef.current = accountId;
     fetchConfig(accountId);
   }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
+
 
   async function handleSave() {
     if (!phoneNumberId.trim()) {
@@ -356,6 +373,8 @@ export function WhatsAppConfig() {
       setConnectionStatus('disconnected');
       setResetReason(null);
       setStatusMessage('');
+      setTokenExpiringSoon(false);
+      setTokenExpiresAt(null);
     } catch (err) {
       console.error('Reset error:', err);
       toast.error('Failed to reset configuration');
@@ -424,6 +443,27 @@ export function WhatsAppConfig() {
                     </>
                   )}
                 </Button>
+              </div>
+            </div>
+          </Alert>
+        )}
+
+        {/* Long-lived token nearing expiry (Embedded Signup connections only) */}
+        {tokenExpiringSoon && (
+          <Alert className="bg-amber-950/30 border-amber-700/50">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="size-5 text-amber-400 mt-0.5 shrink-0" />
+              <div>
+                <AlertTitle className="text-amber-200 mb-1">
+                  Access token expires soon
+                </AlertTitle>
+                <AlertDescription className="text-amber-100/80 text-sm">
+                  {tokenExpiresAt
+                    ? `Expires ${new Date(tokenExpiresAt).toLocaleDateString()}. `
+                    : ''}
+                  Click <strong>Connect with Facebook</strong> below to refresh it before
+                  messages stop sending.
+                </AlertDescription>
               </div>
             </div>
           </Alert>
@@ -557,164 +597,189 @@ export function WhatsAppConfig() {
           </Alert>
         )}
 
-        {/* API Credentials */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-foreground">API Credentials</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              Enter your Meta WhatsApp Business API credentials.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Phone Number ID</Label>
-              <Input
-                placeholder="e.g. 100234567890123"
-                value={phoneNumberId}
-                onChange={(e) => setPhoneNumberId(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
+        {/* Connect vs. Manual are separate tabs — only one setup path
+            is on screen at a time. */}
+        <Tabs
+          value={setupMode}
+          onValueChange={(v) => setSetupMode((v as 'connect' | 'manual') || 'connect')}
+        >
+          <TabsList>
+            <TabsTrigger value="connect">Connect with Facebook</TabsTrigger>
+            <TabsTrigger value="manual">Manual setup</TabsTrigger>
+          </TabsList>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">WhatsApp Business Account ID</Label>
-              <Input
-                placeholder="e.g. 100234567890456"
-                value={wabaId}
-                onChange={(e) => setWabaId(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
+          <TabsContent value="connect" className="mt-4">
+            <WhatsAppConnectSteps
+              onConnected={() => {
+                if (accountId) void fetchConfig(accountId);
+              }}
+            />
+          </TabsContent>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Permanent Access Token</Label>
-              <div className="relative">
-                <Input
-                  type={showToken ? 'text' : 'password'}
-                  placeholder="Enter your access token"
-                  value={accessToken}
-                  onChange={(e) => {
-                    setAccessToken(e.target.value);
-                    setTokenEdited(true);
-                  }}
-                  onFocus={() => {
-                    if (accessToken === MASKED_TOKEN) {
-                      setAccessToken('');
-                      setTokenEdited(true);
+          <TabsContent value="manual" className="mt-4 space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-foreground">Manual setup (advanced)</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Already have a permanent access token? Enter your Meta WhatsApp Business
+                  API credentials directly.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Phone Number ID</Label>
+                  <Input
+                    placeholder="e.g. 100234567890123"
+                    value={phoneNumberId}
+                    onChange={(e) => setPhoneNumberId(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">WhatsApp Business Account ID</Label>
+                  <Input
+                    placeholder="e.g. 100234567890456"
+                    value={wabaId}
+                    onChange={(e) => setWabaId(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Permanent Access Token</Label>
+                  <div className="relative">
+                    <Input
+                      type={showToken ? 'text' : 'password'}
+                      placeholder="Enter your access token"
+                      value={accessToken}
+                      onChange={(e) => {
+                        setAccessToken(e.target.value);
+                        setTokenEdited(true);
+                      }}
+                      onFocus={() => {
+                        if (accessToken === MASKED_TOKEN) {
+                          setAccessToken('');
+                          setTokenEdited(true);
+                        }
+                      }}
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowToken(!showToken)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {config && !tokenEdited && (
+                    <p className="text-xs text-muted-foreground">
+                      Token is hidden for security. Re-enter it to update configuration.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">
+                    Two-step verification PIN
+                    <span className="ml-1 text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="6-digit PIN from Meta WhatsApp Manager"
+                    value={pin}
+                    onChange={(e) =>
+                      setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
                     }
-                  }}
-                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowToken(!showToken)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
-              {config && !tokenEdited && (
-                <p className="text-xs text-muted-foreground">
-                  Token is hidden for security. Re-enter it to update configuration.
-                </p>
-              )}
-            </div>
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
+                  />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Needed only to wire <strong className="text-muted-foreground">inbound</strong> messages
+                    for a <strong className="text-muted-foreground">production</strong> number. Set it in{' '}
+                    <strong className="text-muted-foreground">
+                      Meta Business Manager → WhatsApp Accounts → Phone
+                      Numbers → Two-step verification
+                    </strong>
+                    , then paste it here so Conceps WA can subscribe the number —
+                    otherwise Meta routes inbound events to whichever app
+                    last claimed it (the symptom that hits second numbers
+                    under a shared WABA).{' '}
+                    <strong className="text-muted-foreground">Meta test numbers</strong> have no
+                    PIN and are pre-registered — leave this blank for them.
+                    Leaving it blank also keeps an existing registration
+                    untouched.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">
-                Two-step verification PIN
-                <span className="ml-1 text-muted-foreground">(optional)</span>
-              </Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="6-digit PIN from Meta WhatsApp Manager"
-                value={pin}
-                onChange={(e) =>
-                  setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
-                }
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
-              />
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Needed only to wire <strong className="text-muted-foreground">inbound</strong> messages
-                for a <strong className="text-muted-foreground">production</strong> number. Set it in{' '}
-                <strong className="text-muted-foreground">
-                  Meta Business Manager → WhatsApp Accounts → Phone
-                  Numbers → Two-step verification
-                </strong>
-                , then paste it here so Conceps WA can subscribe the number —
-                otherwise Meta routes inbound events to whichever app
-                last claimed it (the symptom that hits second numbers
-                under a shared WABA).{' '}
-                <strong className="text-muted-foreground">Meta test numbers</strong> have no
-                PIN and are pre-registered — leave this blank for them.
-                Leaving it blank also keeps an existing registration
-                untouched.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+            {/* Webhook config only applies to the manual path — Embedded
+                Signup connections don't need a hand-entered verify token. */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-foreground">Webhook Configuration</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Use this URL as your webhook callback in the Meta App Dashboard.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Webhook Callback URL</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={webhookUrl}
+                      className="bg-muted border-border text-muted-foreground font-mono text-sm"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={handleCopyWebhookUrl}
+                      className="shrink-0 border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                  </div>
+                </div>
 
-        {/* Webhook URL */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-foreground">Webhook Configuration</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              Use this URL as your webhook callback in the Meta App Dashboard.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Webhook Callback URL</Label>
-              <div className="flex gap-2">
-                <Input
-                  readOnly
-                  value={webhookUrl}
-                  className="bg-muted border-border text-muted-foreground font-mono text-sm"
-                />
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={handleCopyWebhookUrl}
-                  className="shrink-0 border-border text-muted-foreground hover:text-foreground hover:bg-muted"
-                >
-                  <Copy className="size-4" />
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Webhook Verify Token</Label>
-              <Input
-                placeholder="Create a custom verify token"
-                value={verifyToken}
-                onChange={(e) => setVerifyToken(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-              <p className="text-xs text-muted-foreground">
-                A custom string you create. Must match the token you set in Meta webhook settings.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Webhook Verify Token</Label>
+                  <Input
+                    placeholder="Create a custom verify token"
+                    value={verifyToken}
+                    onChange={(e) => setVerifyToken(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    A custom string you create. Must match the token you set in Meta webhook settings.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-3">
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              'Save Configuration'
-            )}
-          </Button>
+          {setupMode === 'manual' && (
+            <Button
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save Configuration'
+              )}
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={handleTestConnection}

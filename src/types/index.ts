@@ -249,6 +249,14 @@ export interface WhatsAppConfig {
   subscribed_apps_at?: string;
   /** Last error from /register; cleared on success. */
   last_registration_error?: string;
+  /** How these credentials were obtained. Defaults to 'manual' for pre-existing rows. */
+  connection_method?: 'manual' | 'embedded_signup';
+  /** Meta Business ID that owns the WABA (Embedded Signup only). */
+  business_id?: string;
+  /** True when the number stays on the WhatsApp Business App instead of migrating to the Cloud API. */
+  coexistence?: boolean;
+  /** Set for embedded_signup rows — the long-lived user token's expiry (~60 days out). Null for manual rows. */
+  token_expires_at?: string;
 }
 
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)

@@ -66,6 +66,68 @@ export async function verifyPhoneNumber(
 }
 
 // ============================================================
+// Embedded Signup — OAuth code exchange
+// ============================================================
+//
+// The Embedded Signup JS SDK popup hands back a one-time-use `code`
+// (never a redirect — this is Meta's "Business Login for Tech
+// Providers" flow, not the classic redirect-based OAuth dance, so no
+// redirect_uri is sent or expected here). That code is exchanged for a
+// short-lived user token, then immediately upgraded to a long-lived
+// one (~60 days) since a 1-2hr token isn't useful for a saved
+// connection. See https://developers.facebook.com/docs/whatsapp/embedded-signup
+
+export interface ExchangeEmbeddedSignupCodeArgs {
+  code: string
+  appId: string
+  appSecret: string
+}
+
+export interface ExchangeEmbeddedSignupCodeResult {
+  accessToken: string
+  /** Seconds until expiry, per Meta's response. Undefined if Meta omits it. */
+  expiresIn?: number
+}
+
+export async function exchangeEmbeddedSignupCode(
+  args: ExchangeEmbeddedSignupCodeArgs
+): Promise<ExchangeEmbeddedSignupCodeResult> {
+  const { code, appId, appSecret } = args
+
+  // Step 1: code -> short-lived user access token.
+  const shortLivedUrl =
+    `${META_API_BASE}/oauth/access_token?client_id=${encodeURIComponent(appId)}` +
+    `&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`
+  const shortLivedRes = await fetch(shortLivedUrl)
+  if (!shortLivedRes.ok) {
+    await throwMetaError(shortLivedRes, 'Failed to exchange authorization code')
+  }
+  const shortLivedData = (await shortLivedRes.json()) as { access_token?: string }
+  if (!shortLivedData.access_token) {
+    throw new Error('Meta did not return an access token for this authorization code')
+  }
+
+  // Step 2: short-lived -> long-lived user access token.
+  const longLivedUrl =
+    `${META_API_BASE}/oauth/access_token?grant_type=fb_exchange_token` +
+    `&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}` +
+    `&fb_exchange_token=${encodeURIComponent(shortLivedData.access_token)}`
+  const longLivedRes = await fetch(longLivedUrl)
+  if (!longLivedRes.ok) {
+    await throwMetaError(longLivedRes, 'Failed to exchange long-lived access token')
+  }
+  const longLivedData = (await longLivedRes.json()) as {
+    access_token?: string
+    expires_in?: number
+  }
+  if (!longLivedData.access_token) {
+    throw new Error('Meta did not return a long-lived access token')
+  }
+
+  return { accessToken: longLivedData.access_token, expiresIn: longLivedData.expires_in }
+}
+
+// ============================================================
 // Cloud API registration (subscription for inbound webhooks)
 // ============================================================
 //
