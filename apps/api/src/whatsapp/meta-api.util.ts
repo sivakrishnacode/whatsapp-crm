@@ -687,3 +687,421 @@ export async function sendProductListMessage(
   const data = (await response.json()) as MetaSendResponse;
   return { messageId: data.messages[0].id };
 }
+
+// ============================================================
+// Phone number / account / Signup
+// ============================================================
+
+export interface MetaPhoneInfo {
+  id: string;
+  display_phone_number: string;
+  verified_name?: string;
+  quality_rating?: string;
+}
+
+export interface VerifyPhoneNumberArgs {
+  phoneNumberId: string;
+  accessToken: string;
+}
+
+/**
+ * Verify a Meta phone number ID by fetching its public metadata.
+ */
+export async function verifyPhoneNumber(
+  args: VerifyPhoneNumberArgs,
+): Promise<MetaPhoneInfo> {
+  const { phoneNumberId, accessToken } = args;
+  const url = `${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  return response.json();
+}
+
+export interface ExchangeEmbeddedSignupCodeArgs {
+  code: string;
+  appId: string;
+  appSecret: string;
+}
+
+export interface ExchangeEmbeddedSignupCodeResult {
+  accessToken: string;
+  expiresIn?: number;
+}
+
+export async function exchangeEmbeddedSignupCode(
+  args: ExchangeEmbeddedSignupCodeArgs,
+): Promise<ExchangeEmbeddedSignupCodeResult> {
+  const { code, appId, appSecret } = args;
+
+  // Step 1: code -> short-lived user access token.
+  const shortLivedUrl =
+    `${META_API_BASE}/oauth/access_token?client_id=${encodeURIComponent(appId)}` +
+    `&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;
+  const shortLivedRes = await fetch(shortLivedUrl);
+  if (!shortLivedRes.ok) {
+    await throwMetaError(shortLivedRes, 'Failed to exchange authorization code');
+  }
+  const shortLivedData = (await shortLivedRes.json()) as { access_token?: string };
+  if (!shortLivedData.access_token) {
+    throw new Error('Meta did not return an access token for this authorization code');
+  }
+
+  // Step 2: short-lived -> long-lived user access token.
+  const longLivedUrl =
+    `${META_API_BASE}/oauth/access_token?grant_type=fb_exchange_token` +
+    `&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}` +
+    `&fb_exchange_token=${encodeURIComponent(shortLivedData.access_token)}`;
+  const longLivedRes = await fetch(longLivedUrl);
+  if (!longLivedRes.ok) {
+    await throwMetaError(longLivedRes, 'Failed to exchange long-lived access token');
+  }
+  const longLivedData = (await longLivedRes.json()) as {
+    access_token?: string;
+    expires_in?: number;
+  };
+  if (!longLivedData.access_token) {
+    throw new Error('Meta did not return a long-lived access token');
+  }
+
+  return { accessToken: longLivedData.access_token, expiresIn: longLivedData.expires_in };
+}
+
+export interface RegisterPhoneNumberArgs {
+  phoneNumberId: string;
+  accessToken: string;
+  pin: string;
+}
+
+export interface RegisterPhoneNumberResult {
+  success: boolean;
+  alreadyRegistered: boolean;
+}
+
+/**
+ * Register a phone number for inbound webhook events.
+ */
+export async function registerPhoneNumber(
+  args: RegisterPhoneNumberArgs,
+): Promise<RegisterPhoneNumberResult> {
+  const { phoneNumberId, accessToken, pin } = args;
+  const url = `${META_API_BASE}/${phoneNumberId}/register`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ messaging_product: 'whatsapp', pin }),
+  });
+
+  if (response.ok) {
+    return { success: true, alreadyRegistered: false };
+  }
+
+  let data: { error?: { message?: string; code?: number; error_subcode?: number } } = {};
+  try {
+    data = await response.json();
+  } catch {
+    /* keep empty */
+  }
+  const message = data.error?.message ?? `Meta API error: ${response.status}`;
+  if (/already.*registered/i.test(message)) {
+    return { success: true, alreadyRegistered: true };
+  }
+  throw new Error(message);
+}
+
+export interface SubscribeWabaToAppArgs {
+  wabaId: string;
+  accessToken: string;
+}
+
+/**
+ * Subscribe the WABA to this Meta app's webhook.
+ */
+export async function subscribeWabaToApp(
+  args: SubscribeWabaToAppArgs,
+): Promise<void> {
+  const { wabaId, accessToken } = args;
+  const url = `${META_API_BASE}/${wabaId}/subscribed_apps`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+}
+
+export interface GetSubscribedAppsArgs {
+  wabaId: string;
+  accessToken: string;
+}
+
+export interface SubscribedApp {
+  whatsapp_business_api_data?: {
+    id?: string;
+    name?: string;
+    link?: string;
+  };
+}
+
+/**
+ * Diagnostic — fetch the list of apps currently subscribed to this WABA.
+ */
+export async function getSubscribedApps(
+  args: GetSubscribedAppsArgs,
+): Promise<SubscribedApp[]> {
+  const { wabaId, accessToken } = args;
+  const url = `${META_API_BASE}/${wabaId}/subscribed_apps`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  const data = (await response.json()) as { data?: SubscribedApp[] };
+  return data.data ?? [];
+}
+
+// ============================================================
+// Resumable Upload
+// ============================================================
+
+export interface UploadResumableMediaArgs {
+  appId: string;
+  accessToken: string;
+  fileName: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}
+
+export async function uploadResumableMedia(
+  args: UploadResumableMediaArgs,
+): Promise<{ handle: string }> {
+  const { appId, accessToken, fileName, mimeType, bytes } = args;
+
+  const startParams = new URLSearchParams({
+    file_name: fileName,
+    file_length: String(bytes.byteLength),
+    file_type: mimeType,
+    access_token: accessToken,
+  });
+  const startRes = await fetch(
+    `${META_API_BASE}/${appId}/uploads?${startParams.toString()}`,
+    { method: 'POST' },
+  );
+  if (!startRes.ok) {
+    await throwMetaError(startRes, `Resumable upload start failed: ${startRes.status}`);
+  }
+  const startData = (await startRes.json()) as { id?: string };
+  if (!startData.id) {
+    throw new Error('Resumable upload did not return a session id.');
+  }
+
+  const uploadRes = await fetch(`${META_API_BASE}/${startData.id}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `OAuth ${accessToken}`,
+      file_offset: '0',
+    },
+    body: bytes as unknown as BodyInit,
+  });
+  if (!uploadRes.ok) {
+    await throwMetaError(uploadRes, `Resumable upload failed: ${uploadRes.status}`);
+  }
+  const uploadData = (await uploadRes.json()) as { h?: string };
+  if (!uploadData.h) {
+    throw new Error('Resumable upload did not return a file handle.');
+  }
+  return { handle: uploadData.h };
+}
+
+// ============================================================
+// Template Submission & Management
+// ============================================================
+
+import type { MetaTemplateSubmitPayload } from '../v1/utils/template-components.util';
+
+export interface SubmitMessageTemplateArgs {
+  wabaId: string;
+  accessToken: string;
+  payload: MetaTemplateSubmitPayload;
+}
+
+export interface SubmitMessageTemplateResult {
+  id: string;
+  status: string;
+  category?: string;
+}
+
+export async function submitMessageTemplate(
+  args: SubmitMessageTemplateArgs,
+): Promise<SubmitMessageTemplateResult> {
+  const { wabaId, accessToken, payload } = args;
+  const url = `${META_API_BASE}/${wabaId}/message_templates`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  const data = await response.json();
+  if (!data?.id) {
+    throw new Error('Meta accepted the template but returned no id.');
+  }
+  return {
+    id: String(data.id),
+    status: typeof data.status === 'string' ? data.status : 'PENDING',
+    category: typeof data.category === 'string' ? data.category : undefined,
+  };
+}
+
+export interface EditMessageTemplateArgs {
+  metaTemplateId: string;
+  accessToken: string;
+  components: MetaTemplateSubmitPayload['components'];
+  category?: MetaTemplateSubmitPayload['category'];
+}
+
+export interface EditMessageTemplateResult {
+  success: boolean;
+}
+
+export async function editMessageTemplate(
+  args: EditMessageTemplateArgs,
+): Promise<EditMessageTemplateResult> {
+  const { metaTemplateId, accessToken, components, category } = args;
+  const body: Record<string, unknown> = { components };
+  if (category) body.category = category;
+  const response = await fetch(`${META_API_BASE}/${metaTemplateId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  const data = await response.json().catch(() => ({}));
+  return { success: data?.success !== false };
+}
+
+export interface DeleteMessageTemplateArgs {
+  wabaId: string;
+  accessToken: string;
+  name: string;
+  metaTemplateId?: string;
+}
+
+export async function deleteMessageTemplate(
+  args: DeleteMessageTemplateArgs,
+): Promise<void> {
+  const { wabaId, accessToken, name, metaTemplateId } = args;
+  const params = new URLSearchParams({ name });
+  if (metaTemplateId) params.set('hsm_id', metaTemplateId);
+  const url = `${META_API_BASE}/${wabaId}/message_templates?${params.toString()}`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (response.status === 404) return;
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+}
+
+// ============================================================
+// Reactions
+// ============================================================
+
+export interface SendReactionMessageArgs {
+  phoneNumberId: string;
+  accessToken: string;
+  to: string;
+  targetMessageId: string;
+  emoji: string;
+}
+
+export async function sendReactionMessage(
+  args: SendReactionMessageArgs,
+): Promise<MetaSendResult> {
+  const { phoneNumberId, accessToken, to, targetMessageId, emoji } = args;
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'reaction',
+      reaction: { message_id: targetMessageId, emoji },
+    }),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  const data = await response.json();
+  return { messageId: data.messages[0].id };
+}
+
+// ============================================================
+// Media Retrieval
+// ============================================================
+
+export interface GetMediaUrlArgs {
+  mediaId: string;
+  accessToken: string;
+}
+
+export async function getMediaUrl(
+  args: GetMediaUrlArgs,
+): Promise<{ url: string; mimeType: string }> {
+  const { mediaId, accessToken } = args;
+  const response = await fetch(`${META_API_BASE}/${mediaId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Media fetch failed: ${response.status}`);
+  }
+  const data = await response.json();
+  if (!data.url) throw new Error('Media URL not found in Meta response');
+  return { url: data.url, mimeType: data.mime_type || 'application/octet-stream' };
+}
+
+export interface DownloadMediaArgs {
+  downloadUrl: string;
+  accessToken: string;
+}
+
+export async function downloadMedia(
+  args: DownloadMediaArgs,
+): Promise<{ buffer: Buffer; contentType: string }> {
+  const { downloadUrl, accessToken } = args;
+  const response = await fetch(downloadUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    throw new Error(`Media download failed: ${response.status}`);
+  }
+  const contentType =
+    response.headers.get('content-type') || 'application/octet-stream';
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return { buffer, contentType };
+}
+

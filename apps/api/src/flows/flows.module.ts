@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { InternalDispatchGuard } from '../automations/guards/internal-dispatch.guard';
@@ -15,7 +15,7 @@ import { FlowsSweepProcessor } from './flows-sweep.processor';
 @Module({
   imports: [
     BullModule.registerQueue({ name: FLOWS_SWEEP_QUEUE }),
-    WhatsappModule,
+    forwardRef(() => WhatsappModule),
   ],
   controllers: [FlowsController, FlowsEngineController],
   providers: [
@@ -28,5 +28,6 @@ import { FlowsSweepProcessor } from './flows-sweep.processor';
     // can instantiate it for FlowsEngineController.
     InternalDispatchGuard,
   ],
+  exports: [FlowDispatchService],
 })
 export class FlowsModule {}

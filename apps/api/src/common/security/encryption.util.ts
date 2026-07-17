@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 /**
- * WhatsApp token encryption.
+ * token encryption.
  *
  * Format — GCM (current):
  *   `<iv-hex>:<ciphertext-hex>:<authTag-hex>`      (three colons)

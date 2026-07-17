@@ -8,6 +8,7 @@ import { HealthModule } from './health/health.module';
 import { AutomationsModule } from './automations/automations.module';
 import { FlowsModule } from './flows/flows.module';
 import { V1Module } from './v1/v1.module';
+import { WhatsappModule } from './whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { V1Module } from './v1/v1.module';
     AutomationsModule,
     FlowsModule,
     V1Module,
+    WhatsappModule,
   ],
 })
 export class AppModule {}

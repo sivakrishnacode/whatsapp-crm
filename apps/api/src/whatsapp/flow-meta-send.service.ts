@@ -9,7 +9,7 @@ import {
   type InteractiveListSection,
   type MediaKind,
 } from './meta-api.util';
-import { decrypt } from './encryption.util';
+import { decrypt } from '../common/security/encryption.util';
 import {
   sanitizePhoneForMeta,
   isValidE164,

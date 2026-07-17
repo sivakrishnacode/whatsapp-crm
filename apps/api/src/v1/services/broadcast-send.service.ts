@@ -1,7 +1,7 @@
 import { Injectable, Logger, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sendTemplateMessage } from '../../whatsapp/meta-api.util';
-import { decrypt } from '../../whatsapp/encryption.util';
+import { decrypt } from '../../common/security/encryption.util';
 import {
   sanitizePhoneForMeta,
   isValidE164,

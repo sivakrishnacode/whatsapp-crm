@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { sendTextMessage, sendTemplateMessage } from './meta-api.util';
-import { decrypt } from './encryption.util';
+import { decrypt } from '../common/security/encryption.util';
 import {
   sanitizePhoneForMeta,
   isValidE164,

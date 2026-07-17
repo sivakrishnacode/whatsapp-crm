@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { AutomationsController } from './automations.controller';
@@ -17,7 +17,7 @@ import { InternalDispatchGuard } from './guards/internal-dispatch.guard';
 @Module({
   imports: [
     BullModule.registerQueue({ name: AUTOMATIONS_PENDING_QUEUE }),
-    WhatsappModule,
+    forwardRef(() => WhatsappModule),
   ],
   controllers: [AutomationsController, AutomationsEngineController],
   providers: [
@@ -29,5 +29,6 @@ import { InternalDispatchGuard } from './guards/internal-dispatch.guard';
     AutomationsProcessor,
     InternalDispatchGuard,
   ],
+  exports: [AutomationDispatchService],
 })
 export class AutomationsModule {}

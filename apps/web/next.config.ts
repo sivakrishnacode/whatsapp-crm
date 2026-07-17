@@ -131,6 +131,7 @@ const nextConfig: NextConfig = {
         { source: "/api/flows", destination: `${nestApiUrl}/flows` },
         { source: "/api/flows/:path*", destination: `${nestApiUrl}/flows/:path*` },
         { source: "/api/v1/:path*", destination: `${nestApiUrl}/v1/:path*` },
+        { source: "/api/whatsapp/:path*", destination: `${nestApiUrl}/whatsapp/:path*` },
       ],
       afterFiles: [],
       fallback: [],

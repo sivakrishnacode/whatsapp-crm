@@ -8,7 +8,7 @@ import {
   sendProductListMessage,
   MediaKind,
 } from '../../whatsapp/meta-api.util';
-import { decrypt, encrypt, isLegacyFormat } from '../../whatsapp/encryption.util';
+import { decrypt, encrypt, isLegacyFormat } from '../../common/security/encryption.util';
 import {
   sanitizePhoneForMeta,
   isValidE164,

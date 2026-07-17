@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { decrypt } from '../../whatsapp/encryption.util';
+import { decrypt } from '../../common/security/encryption.util';
 import { isDeliverableUrl } from '../../common/security/ssrf.util';
 import { buildSignatureHeader } from '../utils/webhook-sign.util';
 import { randomUUID } from 'node:crypto';

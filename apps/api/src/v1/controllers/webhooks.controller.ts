@@ -19,7 +19,7 @@ import type { AccountContext, ApiKeyAccountContext } from '../../auth/types/acco
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApiExceptionFilter } from '../utils/api-exception.filter';
 import { ok, okList, ApiError } from '../utils/respond.util';
-import { encrypt } from '../../whatsapp/encryption.util';
+import { encrypt } from '../../common/security/encryption.util';
 import {
   serializeWebhookEndpoint,
   generateWebhookSecret,
