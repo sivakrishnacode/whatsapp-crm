@@ -1,4 +1,5 @@
-import { Injectable, Logger, HttpStatus, HttpException } from '@nestjs/common';
+import { Injectable, Logger, HttpStatus, HttpException, Inject, forwardRef } from '@nestjs/common';
+import { AiReplyService } from '../../ai/services/ai-reply.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
 import { FlowDispatchService } from '../../flows/services/flow-dispatch.service';
@@ -100,6 +101,8 @@ export class WhatsappWebhookService {
     private readonly webhookDeliver: WebhookDeliverService,
     private readonly flowDispatch: FlowDispatchService,
     private readonly automationDispatch: AutomationDispatchService,
+    @Inject(forwardRef(() => AiReplyService))
+    private readonly aiReplyService: AiReplyService,
   ) {}
 
   /**
@@ -617,22 +620,14 @@ export class WhatsappWebhookService {
         .catch((err) => this.logger.error(`[automations] dispatch failed for ${triggerType}:`, err));
     }
 
-    // Trigger AI Auto-reply via HTTP bridge to frontend
+    // Trigger AI Auto-reply directly in the background
     if (!flowConsumed && !parsedContent.interactiveReplyId && inboundText.trim()) {
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      fetch(`${frontendUrl}/api/internal/ai-reply`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
-        },
-        body: JSON.stringify({
-          accountId,
-          conversationId: conversation.id,
-          contactId: contactRecord.id,
-          configOwnerUserId,
-        }),
-      }).catch((err) => this.logger.error('[ai auto-reply] bridge dispatch failed:', err));
+      void this.aiReplyService.dispatchInboundToAiReply({
+        accountId,
+        conversationId: conversation.id,
+        contactId: contactRecord.id,
+        configOwnerUserId,
+      });
     }
 
     // Trigger message.received event (public API)

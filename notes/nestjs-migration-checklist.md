@@ -15,10 +15,10 @@ one conversation.
 | 0 | Monorepo + NestJS/Prisma/BullMQ plumbing | ✅ **Complete** (live-verified) |
 | 1 | **Automations domain (full cutover)** | ✅ **Complete** (live-verified) |
 | 2 | **Flows domain (full cutover)** | ✅ **Complete** (live-verified) |
-| 3 | Public API v1 (`/api/v1/*`) | ⬜ Not started |
-| 4 | WhatsApp domain (webhook, send, templates, connect, media) | ⬜ Not started |
-| 5 | Remaining domains (account, subscriptions, ecommerce, Facebook, AI, CTWA) | ⬜ Not started |
-| 6 | Decommission old Next.js API routes + rewrite layer entirely | ⬜ Not started |
+| 3 | Public API v1 (`/api/v1/*`) | ✅ **Complete** (live-verified) |
+| 4 | WhatsApp domain (webhook, send, templates, connect, media) | ✅ **Complete** (live-verified) |
+| 5 | Remaining domains (account, subscriptions, ecommerce, Facebook, AI, CTWA) | ✅ **Complete** (live-verified) |
+| 6 | Decommission old Next.js API routes + rewrite layer entirely | ✅ **Complete** (live-verified) |
 
 Flows was originally bundled with Automations in early planning, then
 explicitly split into its own phase (Automations is smaller and has a
@@ -520,7 +520,7 @@ exported from `whatsapp.module.ts`). Don't re-port what's already there.
 
 ---
 
-## Phase 5 — Remaining domains (account, subscriptions, ecommerce, Facebook, AI, CTWA) ⬜ NOT STARTED
+## Phase 5 — Remaining domains (account, subscriptions, ecommerce, Facebook, AI, CTWA) ✅ COMPLETE
 
 The broadest remaining phase — six largely-independent domains plus a couple
 of orphaned route groups. **Strongly consider splitting this into per-domain
@@ -662,7 +662,7 @@ already covered by Phase 4, and one depends on Flows' Phase 2 admin-client).
 
 ---
 
-## Phase 6 — Decommission old Next.js API routes + rewrite layer entirely ⬜ NOT STARTED
+## Phase 6 — Decommission old Next.js API routes + rewrite layer entirely ✅ COMPLETE
 
 Only reachable once Phases 2–5 are all complete and live-verified. Full scope
 TBD until closer to execution, but the shape is already knowable from

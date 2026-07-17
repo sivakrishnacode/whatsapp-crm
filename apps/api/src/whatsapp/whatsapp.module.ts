@@ -11,12 +11,14 @@ import { WhatsappDashboardController } from './controllers/whatsapp-dashboard.co
 import { V1Module } from '../v1/v1.module';
 import { AutomationsModule } from '../automations/automations.module';
 import { FlowsModule } from '../flows/flows.module';
+import { AiModule } from '../ai/ai.module';
 
 @Module({
   imports: [
     V1Module,
     forwardRef(() => AutomationsModule),
     forwardRef(() => FlowsModule),
+    forwardRef(() => AiModule),
   ],
   controllers: [
     WhatsappWebhookController,

@@ -51,6 +51,7 @@ describe('WhatsappWebhookService', () => {
   let webhookDeliver: any;
   let flowDispatch: any;
   let automationDispatch: any;
+  let aiReplyService: any;
   let service: WhatsappWebhookService;
 
   beforeEach(() => {
@@ -58,11 +59,15 @@ describe('WhatsappWebhookService', () => {
     webhookDeliver = makeWebhookDeliverMock();
     flowDispatch = makeFlowDispatchMock();
     automationDispatch = makeAutomationDispatchMock();
+    aiReplyService = {
+      dispatchInboundToAiReply: vi.fn().mockResolvedValue(undefined),
+    };
     service = new WhatsappWebhookService(
       prisma as unknown as PrismaService,
       webhookDeliver as unknown as WebhookDeliverService,
       flowDispatch as unknown as FlowDispatchService,
       automationDispatch as unknown as AutomationDispatchService,
+      aiReplyService as any,
     );
   });
 

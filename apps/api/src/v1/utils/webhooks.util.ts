@@ -1,5 +1,16 @@
 import { randomBytes } from 'node:crypto';
 
+/** Prisma select object for the public-safe columns of webhook_endpoints. */
+export const WEBHOOK_PUBLIC_SELECT = {
+  id: true,
+  url: true,
+  events: true,
+  is_active: true,
+  last_delivery_at: true,
+  failure_count: true,
+  created_at: true,
+} as const;
+
 export const WEBHOOK_SECRET_PREFIX = 'whsec_';
 
 export const WEBHOOK_EVENTS = [
