@@ -312,7 +312,7 @@ mirroring Phase 1's sequencing.
 
 ---
 
-## Phase 3 — Public API v1 (`/api/v1/*`) ⬜ NOT STARTED
+## Phase 3 — Public API v1 (`/api/v1/*`) 🟩 COMPLETED
 
 This is a **migration of an existing, documented, "stable"-status public API**
 (`docs/public-api.md`), not greenfield work. `apps/api` already has the auth
@@ -323,7 +323,7 @@ have been ported yet.
 
 ### Key decisions to make before starting
 
-- [ ] **Sequencing tension with Phase 4 (WhatsApp domain).** `POST /v1/messages`
+- [x] **Sequencing tension with Phase 4 (WhatsApp domain).** `POST /v1/messages`
       depends on `send-message.ts` (`sendMessageToConversation`), and
       `POST /v1/broadcasts` depends on `broadcast-core.ts` — both live in
       `apps/web/src/lib/whatsapp/`, not yet ported. `GET/POST /v1/contacts`
@@ -331,7 +331,7 @@ have been ported yet.
       `lib/contacts/dedupe.ts`. Same choice as Phase 2 vs. Phase 4: either
       port just the needed slices now (recommended, matches the Phase 1
       precedent of porting only what's used), or do Phase 4 first.
-- [ ] **`webhook_endpoints` table is shared** between this phase's
+- [x] **`webhook_endpoints` table is shared** between this phase's
       `/v1/webhooks/**` (registration/management) and the unrelated
       `apps/web/src/app/api/integrations/zapier/**` feature (Phase 5 scope) —
       both are front-ends onto the same table via
@@ -339,7 +339,7 @@ have been ported yet.
       this phase ports the shared webhook-delivery/signing lib wholesale
       (recommended — it's one cohesive unit) even though Zapier itself is
       Phase 5 scope, to avoid a split-brain table owner.
-- [ ] **Replace the `ApiKeyGuard`'s placeholder rate-limit budget.** Its
+- [x] **Replace the `ApiKeyGuard`'s placeholder rate-limit budget.** Its
       source comment already says: *"Placeholder budget — Phase 1 ports the
       real `RATE_LIMITS.publicApi` (120/60s) when `/api/v1` migrates."*
       (Note: that comment says "Phase 1" but means this phase, Phase 3 — the
@@ -350,20 +350,20 @@ have been ported yet.
 
 ### Build checklist
 
-- [ ] **Response envelope** — port `lib/api/v1/respond.ts` (`ApiError`, `ok`,
+- [x] **Response envelope** — port `lib/api/v1/respond.ts` (`ApiError`, `ok`,
       `okList`, `fail`, `toApiErrorResponse`) verbatim. This is a *distinct*
       contract from the dashboard's internal `{error: string}` shape — must
       stay versioned/stable, snake_case, exact error-code enum
       (`unauthorized|forbidden|rate_limited|bad_request|not_found|internal`
       plus send-pipeline codes like `whatsapp_not_configured`/`meta_error`/`template_malformed`).
-- [ ] **Pagination** — port `lib/api/v1/pagination.ts` (opaque base64url keyset
+- [x] **Pagination** — port `lib/api/v1/pagination.ts` (opaque base64url keyset
       cursors, `encodeCursor`/`decodeCursor`) verbatim — cursor format is part
       of the external contract even though clients are told to treat it as
       opaque.
-- [ ] **Serializers** — port `lib/api/v1/contacts.ts` and
+- [x] **Serializers** — port `lib/api/v1/contacts.ts` and
       `lib/api/v1/conversations.ts`'s response-shaping logic (note the
       internal→public rename, e.g. `message_id` → `whatsapp_message_id`).
-- [ ] **11 route files / 16 handlers**, each an apps/api controller+service,
+- [x] **11 route files / 16 handlers**, each an apps/api controller+service,
       preserving exact scope requirements:
       | Route | Method | Scope |
       |---|---|---|
@@ -380,7 +380,7 @@ have been ported yet.
       | `/v1/broadcasts/:id` | GET | `broadcasts:send` |
       | `/v1/webhooks` | GET/POST | `webhooks:manage` |
       | `/v1/webhooks/:id` | GET/PATCH/DELETE | `webhooks:manage` |
-- [ ] **Webhook delivery/signing** — port `lib/webhooks/{deliver,endpoints,events,sign,ssrf}.ts`.
+- [x] **Webhook delivery/signing** — port `lib/webhooks/{deliver,endpoints,events,sign,ssrf}.ts`.
       Reuse the **already-ported** `apps/api/src/common/security/ssrf.util.ts`
       (Phase 1) rather than re-porting `ssrf.ts` a second time — confirm the
       web-side `webhooks/ssrf.ts` and the automations-ported copy haven't
@@ -389,14 +389,14 @@ have been ported yet.
       `{id, event, occurred_at, account_id, data}`,
       headers `X-Conceps-Event`/`X-Conceps-Webhook-Id`/`X-Conceps-Signature`,
       signature `t=<unix>,v1=HMAC-SHA256(secret, "${t}.${rawBody}")`.
-- [ ] **`next.config.ts` rewrites** — `/api/v1` + `/api/v1/:path*` → Nest,
+- [x] **`next.config.ts` rewrites** — `/api/v1` + `/api/v1/:path*` → Nest,
       `beforeFiles`.
-- [ ] **Live verification** — real API key end-to-end through the proxy for
+- [x] **Live verification** — real API key end-to-end through the proxy for
       every route (list/find-or-create contacts, read conversations+messages,
       send a message, launch+poll a broadcast, register/manage a webhook
       endpoint and confirm a real signed delivery lands), rate-limit headers
       correct, pagination cursors round-trip correctly, Vitest suite green.
-- [ ] **Delete old Next.js files** (only after live verification passes):
+- [x] **Delete old Next.js files** (only after live verification passes):
       `src/app/api/v1/**` entirely, plus whichever slices of
       `lib/api/v1/*`/`lib/webhooks/*` end up with zero remaining apps/web
       importers (grep before deleting — `lib/webhooks/deliver.ts` may still be

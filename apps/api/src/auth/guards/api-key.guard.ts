@@ -18,8 +18,8 @@ import type { RequestWithAccountContext } from '../decorators/current-account.de
 
 const API_KEY_PREFIX = 'conceps_live_';
 
-/** Placeholder budget — Phase 1 ports the real RATE_LIMITS.publicApi (120/60s) when /api/v1 migrates. */
-const PLACEHOLDER_RATE_LIMIT = { limit: 120, windowMs: 60_000 };
+/** Rate limit for the public REST API. */
+const PUBLIC_API_RATE_LIMIT = { limit: 120, windowMs: 60_000 };
 
 function extractKey(request: Request): string | null {
   const header = request.headers['authorization'];
@@ -80,7 +80,7 @@ export class ApiKeyGuard implements CanActivate {
     // still can't hammer the endpoint for free.
     const limit = await this.rateLimit.check(
       `apikey:${row.id}`,
-      PLACEHOLDER_RATE_LIMIT,
+      PUBLIC_API_RATE_LIMIT,
     );
     if (!limit.success) {
       throw new ForbiddenException('Rate limit exceeded');

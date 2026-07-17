@@ -15,6 +15,9 @@
  * rather than positional arguments — deliberate, matches the source.
  */
 
+import { buildSendComponents, type SendTimeParams } from '../v1/utils/template-send-builder.util';
+import type { MessageTemplate } from '../v1/types/index';
+
 const META_API_VERSION = 'v21.0';
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`;
 
@@ -96,6 +99,8 @@ export interface SendTemplateMessageArgs {
   language?: string;
   /** Body-only variable values, in order. */
   params?: string[];
+  template?: MessageTemplate;
+  messageParams?: SendTimeParams;
   /** Meta's message_id of the message being replied to. */
   contextMessageId?: string;
 }
@@ -103,10 +108,6 @@ export interface SendTemplateMessageArgs {
 /**
  * Send a pre-approved WhatsApp message template. Required outside the
  * 24-hour window and for any first-touch messaging.
- *
- * Only the legacy body-params path is ported — automation `send_template`
- * steps never pass a full `MessageTemplate` row (that's the flows/inbox
- * caller's structured path, not ported here).
  */
 export async function sendTemplateMessage(
   args: SendTemplateMessageArgs,
@@ -118,6 +119,8 @@ export async function sendTemplateMessage(
     templateName,
     language = 'en_US',
     params,
+    template,
+    messageParams,
     contextMessageId,
   } = args;
   const url = `${META_API_BASE}/${phoneNumberId}/messages`;
@@ -126,7 +129,20 @@ export async function sendTemplateMessage(
     name: templateName,
     language: { code: language },
   };
-  if (params && params.length > 0) {
+
+  if (template) {
+    const components = buildSendComponents(template, {
+      body: messageParams?.body ?? params,
+      headerText: messageParams?.headerText,
+      headerMediaUrl: messageParams?.headerMediaUrl,
+      headerMediaId: messageParams?.headerMediaId,
+      buttonParams: messageParams?.buttonParams,
+    });
+    if (components.length > 0) {
+      templatePayload.components = components;
+    }
+  } else if (params && params.length > 0) {
+    // Legacy body-only path — no template row available.
     templatePayload.components = [
       {
         type: 'body',
@@ -528,4 +544,146 @@ function validateInteractiveHeaderFooter(
       `Interactive footerText exceeds ${INTERACTIVE_LIMITS.footerMaxLength} chars.`,
     );
   }
+}
+
+export interface SendProductMessageArgs {
+  phoneNumberId: string;
+  accessToken: string;
+  to: string;
+  catalogId: string;
+  productRetailerId: string;
+  bodyText?: string;
+  footerText?: string;
+  contextMessageId?: string;
+}
+
+export async function sendProductMessage(
+  args: SendProductMessageArgs,
+): Promise<MetaSendResult> {
+  const {
+    phoneNumberId,
+    accessToken,
+    to,
+    catalogId,
+    productRetailerId,
+    bodyText,
+    footerText,
+    contextMessageId,
+  } = args;
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`;
+  const body: any = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive: {
+      type: 'product',
+      action: {
+        catalog_id: catalogId,
+        product_retailer_id: productRetailerId,
+      },
+    },
+  };
+
+  if (bodyText) {
+    body.interactive.body = { text: bodyText };
+  }
+  if (footerText) {
+    body.interactive.footer = { text: footerText };
+  }
+  if (contextMessageId) {
+    body.context = { message_id: contextMessageId };
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  const data = (await response.json()) as MetaSendResponse;
+  return { messageId: data.messages[0].id };
+}
+
+export interface SendProductListMessageArgs {
+  phoneNumberId: string;
+  accessToken: string;
+  to: string;
+  catalogId: string;
+  headerText: string;
+  bodyText: string;
+  footerText?: string;
+  sections: Array<{
+    title: string;
+    productRetailerIds: string[];
+  }>;
+  contextMessageId?: string;
+}
+
+export async function sendProductListMessage(
+  args: SendProductListMessageArgs,
+): Promise<MetaSendResult> {
+  const {
+    phoneNumberId,
+    accessToken,
+    to,
+    catalogId,
+    headerText,
+    bodyText,
+    footerText,
+    sections,
+    contextMessageId,
+  } = args;
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`;
+  const body: any = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive: {
+      type: 'product_list',
+      header: {
+        type: 'text',
+        text: headerText,
+      },
+      body: {
+        text: bodyText,
+      },
+      action: {
+        catalog_id: catalogId,
+        sections: sections.map((s) => ({
+          title: s.title,
+          product_items: s.productRetailerIds.map((id) => ({
+            product_retailer_id: id,
+          })),
+        })),
+      },
+    },
+  };
+
+  if (footerText) {
+    body.interactive.footer = { text: footerText };
+  }
+  if (contextMessageId) {
+    body.context = { message_id: contextMessageId };
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  const data = (await response.json()) as MetaSendResponse;
+  return { messageId: data.messages[0].id };
 }
