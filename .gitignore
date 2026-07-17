@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# dependencies
-/node_modules
+# dependencies (root + every workspace's node_modules)
+node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -13,13 +13,19 @@
 # testing
 /coverage
 
-# next.js
-/.next/
+# next.js (apps/web)
+.next/
 /out/
+
+# nestjs (apps/api)
+dist/
+
+# turborepo
+.turbo/
 
 # production
 /build
-/notes
+# /notes
 
 # misc
 .DS_Store
@@ -31,7 +37,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — real secrets never belong in git
 .env*
 # keep example files so forkers have a template to copy
 !.env.local.example

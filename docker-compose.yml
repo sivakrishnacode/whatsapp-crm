@@ -1,0 +1,43 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: wacrm-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: wacrm-api
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - apps/api/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PORT=8001
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: wacrm-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    env_file:
+      - apps/web/.env.local
+    environment:
+      - NEST_API_URL=http://api:8001
+      - DOCKERIZED=true
