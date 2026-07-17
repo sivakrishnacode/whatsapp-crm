@@ -25,7 +25,7 @@ dist/
 
 # production
 /build
-/notes
+# /notes
 
 # misc
 .DS_Store
