@@ -30,8 +30,8 @@ model Account {
   conversations                 conversations[]
   custom_fields                 custom_fields[]
   deals                         deals[]
-  flow_runs                     flow_runs[]
-  flows                         flows[]
+  flowRuns                      FlowRun[]
+  flows                         Flow[]
   member_presence               member_presence[]
   message_templates             message_templates[]
   notifications                 notifications[]
@@ -549,8 +549,8 @@ model users {
   deals                                                              deals[]
   facebook_connections                                               facebook_connections[]
   facebook_pages                                                     facebook_pages[]
-  flow_runs                                                          flow_runs[]
-  flows                                                              flows[]
+  flowRuns                                                           FlowRun[]
+  flows                                                              Flow[]
   member_presence                                                    member_presence?
   message_templates                                                  message_templates[]
   notifications_notifications_actor_user_idTousers                   notifications[]                 @relation("notifications_actor_user_idTousers")
@@ -946,7 +946,7 @@ model contacts {
   ctwa_clicks                   ctwa_clicks[]
   deals                         deals[]
   ecommerce_orders              ecommerce_orders[]
-  flow_runs                     flow_runs[]
+  flowRuns                      FlowRun[]
   notifications                 notifications[]
   whatsapp_orders               whatsapp_orders[]
 
@@ -978,7 +978,7 @@ model conversations {
   users                 users               @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   ctwa_clicks           ctwa_clicks[]
   deals                 deals[]
-  flow_runs             flow_runs[]
+  flowRuns              FlowRun[]
   message_reactions     message_reactions[]
   messages              messages[]
   notifications         notifications[]
@@ -1188,98 +1188,102 @@ model facebook_pages {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model flow_nodes {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  flow_id    String   @db.Uuid
-  node_key   String
-  node_type  String
-  config     Json     @default("{}")
-  position_x Int      @default(0)
-  position_y Int      @default(0)
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  flows      flows    @relation(fields: [flow_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model FlowNode {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flowId    String   @map("flow_id") @db.Uuid
+  nodeKey   String   @map("node_key")
+  nodeType  String   @map("node_type")
+  config    Json     @default("{}")
+  positionX Int      @default(0) @map("position_x")
+  positionY Int      @default(0) @map("position_y")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  flow      Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([flow_id, node_key])
-  @@index([flow_id], map: "idx_flow_nodes_flow")
+  @@unique([flowId, nodeKey], map: "flow_nodes_flow_id_node_key_key")
+  @@index([flowId], map: "idx_flow_nodes_flow")
+  @@map("flow_nodes")
   @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
-model flow_run_events {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  flow_run_id String    @db.Uuid
-  event_type  String
-  node_key    String?
-  payload     Json      @default("{}")
-  created_at  DateTime  @default(now()) @db.Timestamptz(6)
-  flow_runs   flow_runs @relation(fields: [flow_run_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model FlowRunEvent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flowRunId String   @map("flow_run_id") @db.Uuid
+  eventType String   @map("event_type")
+  nodeKey   String?  @map("node_key")
+  payload   Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  flowRun   FlowRun  @relation(fields: [flowRunId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([flow_run_id, created_at(sort: Desc)], map: "idx_flow_run_events_run_time")
-  @@index([flow_run_id, event_type], map: "idx_flow_run_events_run_type")
+  @@index([flowRunId, createdAt(sort: Desc)], map: "idx_flow_run_events_run_time")
+  @@index([flowRunId, eventType], map: "idx_flow_run_events_run_type")
+  @@map("flow_run_events")
   @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model flow_runs {
-  id                     String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  flow_id                String            @db.Uuid
-  user_id                String            @db.Uuid
-  contact_id             String?           @db.Uuid
-  conversation_id        String?           @db.Uuid
-  status                 String            @default("active")
-  current_node_key       String?
-  last_prompt_message_id String?           @db.Uuid
-  vars                   Json              @default("{}")
-  reprompt_count         Int               @default(0)
-  started_at             DateTime          @default(now()) @db.Timestamptz(6)
-  last_advanced_at       DateTime          @default(now()) @db.Timestamptz(6)
-  ended_at               DateTime?         @db.Timestamptz(6)
-  end_reason             String?
-  account_id             String            @db.Uuid
-  flow_run_events        flow_run_events[]
-  accounts               Account           @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  contacts               contacts?         @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
-  conversations          conversations?    @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
-  flows                  flows             @relation(fields: [flow_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  messages               messages?         @relation(fields: [last_prompt_message_id], references: [id], onUpdate: NoAction)
-  users                  users             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model FlowRun {
+  id                  String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flowId              String         @map("flow_id") @db.Uuid
+  userId              String         @map("user_id") @db.Uuid
+  contactId           String?        @map("contact_id") @db.Uuid
+  conversationId      String?        @map("conversation_id") @db.Uuid
+  status              String         @default("active")
+  currentNodeKey      String?        @map("current_node_key")
+  lastPromptMessageId String?        @map("last_prompt_message_id") @db.Uuid
+  vars                Json           @default("{}")
+  repromptCount       Int            @default(0) @map("reprompt_count")
+  startedAt           DateTime       @default(now()) @map("started_at") @db.Timestamptz(6)
+  lastAdvancedAt      DateTime       @default(now()) @map("last_advanced_at") @db.Timestamptz(6)
+  endedAt             DateTime?      @map("ended_at") @db.Timestamptz(6)
+  endReason           String?        @map("end_reason")
+  accountId           String         @map("account_id") @db.Uuid
+  events              FlowRunEvent[]
+  account             Account        @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contact             contacts?      @relation(fields: [contactId], references: [id], onUpdate: NoAction)
+  conversation        conversations? @relation(fields: [conversationId], references: [id], onUpdate: NoAction)
+  flow                Flow           @relation(fields: [flowId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  lastPromptMessage   messages?      @relation(fields: [lastPromptMessageId], references: [id], onUpdate: NoAction)
+  users               users          @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([account_id, contact_id], map: "idx_one_active_run_per_contact", where: raw("(status = 'active'::text)"))
-  @@index([account_id], map: "idx_flow_runs_account")
-  @@index([account_id, contact_id, status], map: "idx_flow_runs_account_contact_status", where: raw("(status = 'active'::text)"))
-  @@index([last_advanced_at], map: "idx_flow_runs_active_advanced", where: raw("(status = 'active'::text)"))
-  @@index([flow_id, started_at(sort: Desc)], map: "idx_flow_runs_flow_started")
+  @@unique([accountId, contactId], map: "idx_one_active_run_per_contact", where: raw("(status = 'active'::text)"))
+  @@index([accountId], map: "idx_flow_runs_account")
+  @@index([accountId, contactId, status], map: "idx_flow_runs_account_contact_status", where: raw("(status = 'active'::text)"))
+  @@index([lastAdvancedAt], map: "idx_flow_runs_active_advanced", where: raw("(status = 'active'::text)"))
+  @@index([flowId, startedAt(sort: Desc)], map: "idx_flow_runs_flow_started")
+  @@map("flow_runs")
   @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model flows {
-  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id          String       @db.Uuid
-  name             String
-  description      String?
-  status           String       @default("draft")
-  trigger_type     String
-  trigger_config   Json         @default("{}")
-  entry_node_id    String?
-  fallback_policy  Json         @default("{\"on_exhaust\": \"handoff\", \"max_reprompts\": 2, \"on_timeout_hours\": 24, \"on_unknown_reply\": \"reprompt\"}")
-  execution_count  Int          @default(0)
-  last_executed_at DateTime?    @db.Timestamptz(6)
-  created_at       DateTime     @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime     @default(now()) @db.Timestamptz(6)
-  account_id       String       @db.Uuid
-  flow_nodes       flow_nodes[]
-  flow_runs        flow_runs[]
-  accounts         Account      @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users            users        @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model Flow {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String     @map("user_id") @db.Uuid
+  name           String
+  description    String?
+  status         String     @default("draft")
+  triggerType    String     @map("trigger_type")
+  triggerConfig  Json       @default("{}") @map("trigger_config")
+  entryNodeId    String?    @map("entry_node_id")
+  fallbackPolicy Json       @default("{\"on_exhaust\": \"handoff\", \"max_reprompts\": 2, \"on_timeout_hours\": 24, \"on_unknown_reply\": \"reprompt\"}") @map("fallback_policy")
+  executionCount Int        @default(0) @map("execution_count")
+  lastExecutedAt DateTime?  @map("last_executed_at") @db.Timestamptz(6)
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
+  accountId      String     @map("account_id") @db.Uuid
+  nodes          FlowNode[]
+  runs           FlowRun[]
+  account        Account    @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users          users      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([account_id], map: "idx_flows_account")
-  @@index([account_id], map: "idx_flows_account_active", where: raw("(status = 'active'::text)"))
-  @@index([user_id, trigger_type], map: "idx_flows_active_trigger", where: raw("(status = 'active'::text)"))
+  @@index([accountId], map: "idx_flows_account")
+  @@index([accountId], map: "idx_flows_account_active", where: raw("(status = 'active'::text)"))
+  @@index([userId, triggerType], map: "idx_flows_active_trigger", where: raw("(status = 'active'::text)"))
+  @@map("flows")
   @@schema("public")
 }
 
@@ -1366,7 +1370,7 @@ model messages {
   created_at           DateTime?           @default(now()) @db.Timestamptz(6)
   reply_to_message_id  String?             @db.Uuid
   interactive_reply_id String?
-  flow_runs            flow_runs[]
+  flowRuns             FlowRun[]
   message_reactions    message_reactions[]
   conversations        conversations       @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   messages             messages?           @relation("messagesTomessages", fields: [reply_to_message_id], references: [id], onUpdate: NoAction)

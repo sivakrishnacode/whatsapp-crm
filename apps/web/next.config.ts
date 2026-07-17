@@ -128,7 +128,9 @@ const nextConfig: NextConfig = {
         { source: "/api/_internal/nest-health", destination: `${nestApiUrl}/health` },
         { source: "/api/automations", destination: `${nestApiUrl}/automations` },
         { source: "/api/automations/:path*", destination: `${nestApiUrl}/automations/:path*` },
-        // Phase 2+ adds one entry per migrated domain, e.g.:
+        { source: "/api/flows", destination: `${nestApiUrl}/flows` },
+        { source: "/api/flows/:path*", destination: `${nestApiUrl}/flows/:path*` },
+        // Phase 3+ adds one entry per migrated domain, e.g.:
         // { source: "/api/v1/:path*", destination: `${nestApiUrl}/v1/:path*` },
       ],
       afterFiles: [],

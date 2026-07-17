@@ -5,7 +5,6 @@ import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
-import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
@@ -802,33 +801,54 @@ async function processMessage(
   // `first_inbound_message`) still fire even when consumed — those
   // are about WHO is messaging, not what they said.
   //
-  // Awaited (not fire-and-forget) because we need the `consumed`
-  // result before deciding whether to dispatch automations. The
-  // runner has its own try/catch and never throws. Accounts with
-  // no active flows take the runner's early-exit "no_match" path
-  // basically for free (one indexed SELECT for the active run).
+  // The runner now lives in apps/api (NestJS) — called via the
+  // internal machine-to-machine bridge, same secret as the automations
+  // dispatch below. Awaited (not fire-and-forget) because we need the
+  // `consumed` result before deciding whether to dispatch automations
+  // and the AI auto-reply. A failed/unreachable bridge degrades to
+  // consumed:false (same as the old in-process runner's own catch),
+  // so automations still get their shot at the message.
   // ============================================================
-  const flowResult = await dispatchInboundToFlows({
-    accountId,
-    userId: configOwnerUserId,
-    contactId: contactRecord.id,
-    conversationId: conversation.id,
-    message:
-      interactiveReplyId
-        ? {
-            kind: 'interactive_reply',
-            reply_id: interactiveReplyId,
-            reply_title: contentText ?? '',
-            meta_message_id: message.id,
-          }
-        : {
-            kind: 'text',
-            text: contentText ?? message.text?.body ?? '',
-            meta_message_id: message.id,
-          },
-    isFirstInboundMessage,
-  })
-  const flowConsumed = flowResult.consumed
+  const nestApiUrl = process.env.NEST_API_URL
+  let flowConsumed = false
+  if (nestApiUrl) {
+    try {
+      const flowRes = await fetch(`${nestApiUrl}/internal/flows/dispatch`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
+        },
+        body: JSON.stringify({
+          account_id: accountId,
+          user_id: configOwnerUserId,
+          contact_id: contactRecord.id,
+          conversation_id: conversation.id,
+          is_first_inbound_message: isFirstInboundMessage,
+          message: interactiveReplyId
+            ? {
+                kind: 'interactive_reply',
+                reply_id: interactiveReplyId,
+                reply_title: contentText ?? '',
+                meta_message_id: message.id,
+              }
+            : {
+                kind: 'text',
+                text: contentText ?? message.text?.body ?? '',
+                meta_message_id: message.id,
+              },
+        }),
+      })
+      if (flowRes.ok) {
+        const flowResult = (await flowRes.json()) as { consumed?: boolean }
+        flowConsumed = flowResult.consumed === true
+      } else {
+        console.error(`[flows] internal dispatch returned ${flowRes.status}`)
+      }
+    } catch (err) {
+      console.error('[flows] internal dispatch failed:', err)
+    }
+  }
 
   // Fire any automations that react to this webhook event. All dispatches
   // run here (not earlier) so the contact, conversation, and inbound
@@ -861,7 +881,6 @@ async function processMessage(
   // Nest call can't block this webhook's 200 OK response to Meta. Called
   // directly at NEST_API_URL (not through next.config.ts's rewrite) since
   // this is server-to-server, not a browser request.
-  const nestApiUrl = process.env.NEST_API_URL
   for (const triggerType of automationTriggers) {
     if (!nestApiUrl) continue
     fetch(`${nestApiUrl}/internal/automations/dispatch`, {
