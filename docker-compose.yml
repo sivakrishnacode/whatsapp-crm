@@ -2,9 +2,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: wacrm-redis
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: [ "redis-server", "--save", "", "--appendonly", "no" ]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -31,7 +31,7 @@ services:
       dockerfile: apps/web/Dockerfile
     container_name: wacrm-web
     ports:
-      - "3030:3000"
+      - "3031:3000"
     depends_on:
       - api
     env_file:
