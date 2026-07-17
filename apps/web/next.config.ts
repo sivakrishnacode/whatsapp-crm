@@ -117,13 +117,16 @@ const nextConfig: NextConfig = {
    * src/app/api/** folder is deleted.
    */
   async rewrites() {
-    // NEST_API_URL always wins (docker-compose sets it to http://api:8001);
-    // the /.dockerenv probe only covers a container started without it.
+    // Docker MUST win over NEST_API_URL here: rewrites are resolved at
+    // BUILD time (routes-manifest.json), and the image build copies
+    // .env.local (required for NEXT_PUBLIC_* client inlining) whose
+    // NEST_API_URL=http://localhost:8001 would otherwise get baked in.
+    // Dockerfile sets DOCKERIZED=true so the build takes this branch.
     const isDocker =
       existsSync("/.dockerenv") || process.env.DOCKERIZED === "true";
-    const nestApiUrl =
-      process.env.NEST_API_URL ||
-      (isDocker ? "http://api:8001" : "http://localhost:8001");
+    const nestApiUrl = isDocker
+      ? "http://api:8001"
+      : process.env.NEST_API_URL || "http://localhost:8001";
     return {
       // `beforeFiles` so these take priority over the still-present
       // src/app/api/** route handlers they're replacing — Next's default
