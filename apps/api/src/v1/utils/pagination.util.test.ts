@@ -3,31 +3,32 @@ import {
   parseListParams,
   encodeCursor,
   decodeCursor,
-  keysetFilter,
+  getKeysetWhereClause,
   buildPage,
   DEFAULT_LIMIT,
   MAX_LIMIT,
-} from './pagination';
+} from './pagination.util';
 
-const req = (qs: string) => new Request(`https://x.test/api/v1/contacts${qs}`);
+// Near-verbatim port of the legacy apps/web lib/api/v1/pagination.test.ts —
+// the cursor format is part of the external public-API contract.
 
 describe('parseListParams', () => {
   it('defaults limit and cursor', () => {
-    expect(parseListParams(req(''))).toEqual({
+    expect(parseListParams({})).toEqual({
       limit: DEFAULT_LIMIT,
       cursor: null,
     });
   });
 
   it('clamps limit to MAX_LIMIT and floors it', () => {
-    expect(parseListParams(req('?limit=9999')).limit).toBe(MAX_LIMIT);
-    expect(parseListParams(req('?limit=10.9')).limit).toBe(10);
+    expect(parseListParams({ limit: '9999' }).limit).toBe(MAX_LIMIT);
+    expect(parseListParams({ limit: '10.9' }).limit).toBe(10);
   });
 
   it('falls back to default on non-positive / NaN limit', () => {
-    expect(parseListParams(req('?limit=0')).limit).toBe(DEFAULT_LIMIT);
-    expect(parseListParams(req('?limit=-5')).limit).toBe(DEFAULT_LIMIT);
-    expect(parseListParams(req('?limit=abc')).limit).toBe(DEFAULT_LIMIT);
+    expect(parseListParams({ limit: '0' }).limit).toBe(DEFAULT_LIMIT);
+    expect(parseListParams({ limit: '-5' }).limit).toBe(DEFAULT_LIMIT);
+    expect(parseListParams({ limit: 'abc' }).limit).toBe(DEFAULT_LIMIT);
   });
 
   it('decodes a valid cursor and ignores a malformed one', () => {
@@ -35,11 +36,11 @@ describe('parseListParams', () => {
       created_at: '2026-01-01T00:00:00Z',
       id: '11111111-1111-4111-8111-111111111111',
     });
-    expect(parseListParams(req(`?cursor=${c}`)).cursor).toEqual({
-      createdAt: '2026-01-01T00:00:00Z',
+    expect(parseListParams({ cursor: c }).cursor).toEqual({
+      createdAt: '2026-01-01T00:00:00.000Z',
       id: '11111111-1111-4111-8111-111111111111',
     });
-    expect(parseListParams(req('?cursor=@@notbase64@@')).cursor).toBeNull();
+    expect(parseListParams({ cursor: '@@notbase64@@' }).cursor).toBeNull();
   });
 });
 
@@ -55,6 +56,17 @@ describe('encode/decodeCursor round-trip', () => {
     });
   });
 
+  it('accepts a Date created_at', () => {
+    const row = {
+      created_at: new Date('2026-06-30T12:00:00.123Z'),
+      id: 'abcdef01-2345-4678-8abc-def012345678',
+    };
+    expect(decodeCursor(encodeCursor(row))).toEqual({
+      createdAt: '2026-06-30T12:00:00.123Z',
+      id: 'abcdef01-2345-4678-8abc-def012345678',
+    });
+  });
+
   it('returns null for empty / separator-less input', () => {
     expect(decodeCursor(null)).toBeNull();
     expect(decodeCursor('')).toBeNull();
@@ -62,11 +74,11 @@ describe('encode/decodeCursor round-trip', () => {
   });
 
   it('rejects a crafted cursor whose id is not a UUID (filter-injection guard)', () => {
-    // A hand-built cursor trying to smuggle PostgREST filter syntax
-    // through keysetFilter must be refused, not decoded.
+    // A hand-built cursor trying to smuggle filter syntax through the
+    // keyset where-clause must be refused, not decoded.
     const evil = Buffer.from(
       '2026-01-01T00:00:00Z|x),or(account_id.neq.0',
-      'utf8'
+      'utf8',
     ).toString('base64url');
     expect(decodeCursor(evil)).toBeNull();
   });
@@ -74,21 +86,31 @@ describe('encode/decodeCursor round-trip', () => {
   it('rejects a cursor whose timestamp is not parseable', () => {
     const bad = Buffer.from(
       'not-a-date|11111111-1111-4111-8111-111111111111',
-      'utf8'
+      'utf8',
     ).toString('base64url');
     expect(decodeCursor(bad)).toBeNull();
   });
 });
 
-describe('keysetFilter', () => {
-  it('is null on the first page', () => {
-    expect(keysetFilter(null)).toBeNull();
+describe('getKeysetWhereClause', () => {
+  it('is empty on the first page', () => {
+    expect(getKeysetWhereClause(null)).toEqual({});
   });
 
   it('walks strictly past the cursor row (older, or same-ts smaller id)', () => {
-    expect(keysetFilter({ createdAt: '2026-01-01T00:00:00Z', id: 'x' })).toBe(
-      'created_at.lt.2026-01-01T00:00:00Z,and(created_at.eq.2026-01-01T00:00:00Z,id.lt.x)'
-    );
+    const cursor = {
+      createdAt: '2026-01-01T00:00:00Z',
+      id: '11111111-1111-4111-8111-111111111111',
+    };
+    expect(getKeysetWhereClause(cursor)).toEqual({
+      OR: [
+        { created_at: { lt: new Date('2026-01-01T00:00:00Z') } },
+        {
+          created_at: new Date('2026-01-01T00:00:00Z'),
+          id: { lt: '11111111-1111-4111-8111-111111111111' },
+        },
+      ],
+    });
   });
 });
 

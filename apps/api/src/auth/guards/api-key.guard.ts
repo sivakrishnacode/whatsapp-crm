@@ -1,15 +1,14 @@
 import { createHash } from 'node:crypto';
-import {
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RateLimitService } from '../../common/rate-limit/rate-limit.service';
+import {
+  forbidden,
+  rateLimited,
+  unauthorized,
+} from '../../v1/utils/respond.util';
 import {
   REQUIRE_SCOPE_KEY,
   type ApiScope,
@@ -59,7 +58,7 @@ export class ApiKeyGuard implements CanActivate {
 
     const presented = extractKey(request);
     if (!presented || !looksLikeApiKey(presented)) {
-      throw new UnauthorizedException();
+      throw unauthorized();
     }
 
     const row = await this.prisma.apiKey.findUnique({
@@ -73,7 +72,7 @@ export class ApiKeyGuard implements CanActivate {
       row.revokedAt ||
       (row.expiresAt && row.expiresAt.getTime() <= Date.now())
     ) {
-      throw new UnauthorizedException();
+      throw unauthorized();
     }
 
     // Rate-limit before the scope check so an unauthorized-scope caller
@@ -83,7 +82,9 @@ export class ApiKeyGuard implements CanActivate {
       PUBLIC_API_RATE_LIMIT,
     );
     if (!limit.success) {
-      throw new ForbiddenException('Rate limit exceeded');
+      // 429 + Retry-After / X-RateLimit-* headers — the documented public
+      // contract (docs/public-api.md), matching the legacy requireApiKey().
+      throw rateLimited(limit);
     }
 
     const requiredScope = this.reflector.get<ApiScope | undefined>(
@@ -91,9 +92,7 @@ export class ApiKeyGuard implements CanActivate {
       context.getHandler(),
     );
     if (requiredScope && !row.scopes.includes(requiredScope)) {
-      throw new ForbiddenException(
-        `This API key is missing the '${requiredScope}' scope`,
-      );
+      throw forbidden(`This API key is missing the '${requiredScope}' scope`);
     }
 
     // Fire-and-forget — must never fail the request it authenticates.

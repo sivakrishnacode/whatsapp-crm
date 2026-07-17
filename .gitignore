@@ -37,11 +37,11 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# # env files (can opt-in for committing if needed)
-# .env*
-# # keep example files so forkers have a template to copy
-# !.env.local.example
-# !.env.example
+# env files — real secrets never belong in git
+.env*
+# keep example files so forkers have a template to copy
+!.env.local.example
+!.env.example
 
 # vercel
 .vercel

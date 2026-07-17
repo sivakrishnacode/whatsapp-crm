@@ -8,6 +8,7 @@ import { WhatsappConnectController } from './controllers/whatsapp-connect.contro
 import { WhatsappTemplatesController } from './controllers/whatsapp-templates.controller';
 import { WhatsappMediaController } from './controllers/whatsapp-media.controller';
 import { WhatsappDashboardController } from './controllers/whatsapp-dashboard.controller';
+import { WhatsappShopController } from './controllers/whatsapp-shop.controller';
 import { V1Module } from '../v1/v1.module';
 import { AutomationsModule } from '../automations/automations.module';
 import { FlowsModule } from '../flows/flows.module';
@@ -26,6 +27,7 @@ import { AiModule } from '../ai/ai.module';
     WhatsappTemplatesController,
     WhatsappMediaController,
     WhatsappDashboardController,
+    WhatsappShopController,
   ],
   providers: [
     AutomationMetaSendService,

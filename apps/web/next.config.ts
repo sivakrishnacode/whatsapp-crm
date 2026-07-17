@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
 
@@ -116,8 +117,13 @@ const nextConfig: NextConfig = {
    * src/app/api/** folder is deleted.
    */
   async rewrites() {
-    const nestApiUrl = process.env.NEST_API_URL;
-    if (!nestApiUrl) return { beforeFiles: [], afterFiles: [], fallback: [] };
+    // NEST_API_URL always wins (docker-compose sets it to http://api:8001);
+    // the /.dockerenv probe only covers a container started without it.
+    const isDocker =
+      existsSync("/.dockerenv") || process.env.DOCKERIZED === "true";
+    const nestApiUrl =
+      process.env.NEST_API_URL ||
+      (isDocker ? "http://api:8001" : "http://localhost:8001");
     return {
       // `beforeFiles` so these take priority over the still-present
       // src/app/api/** route handlers they're replacing — Next's default

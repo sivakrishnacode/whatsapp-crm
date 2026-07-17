@@ -16,9 +16,9 @@ one conversation.
 | 1 | **Automations domain (full cutover)** | ✅ **Complete** (live-verified) |
 | 2 | **Flows domain (full cutover)** | ✅ **Complete** (live-verified) |
 | 3 | Public API v1 (`/api/v1/*`) | ✅ **Complete** (live-verified) |
-| 4 | WhatsApp domain (webhook, send, templates, connect, media) | ✅ **Complete** (live-verified) |
-| 5 | Remaining domains (account, subscriptions, ecommerce, Facebook, AI, CTWA) | ✅ **Complete** (live-verified) |
-| 6 | Decommission old Next.js API routes + rewrite layer entirely | ✅ **Complete** (live-verified) |
+| 4 | WhatsApp domain (webhook, send, templates, connect, media) | ✅ **Complete** (code + tests; live verification deferred — no working Meta App) |
+| 5 | Remaining domains (account, subscriptions, ecommerce, Facebook, AI, CTWA) | ✅ **Complete** (code; live verification of billing/ecommerce/FB pending) |
+| 6 | Decommission old Next.js API routes + rewrite layer entirely | ✅ **Complete** (see 2026-07-17 review pass below for gaps found & fixed) |
 
 Flows was originally bundled with Automations in early planning, then
 explicitly split into its own phase (Automations is smaller and has a
@@ -431,18 +431,17 @@ exported from `whatsapp.module.ts`). Don't re-port what's already there.
       Phase 2 into `meta-api.util.ts`. Nothing to do here.
 - [x] **`encryption.util.ts` relocation.** Relocated to `apps/api/src/common/security/encryption.util.ts`.
       All internal consumers updated. Legacy `apps/api/src/whatsapp/encryption.util.ts` removed.
-- [ ] **`message_templates` unique constraint is user-scoped, not
-      account-scoped** (`@@unique([user_id, name, language])`) — the original
-      web route has a TODO flagging this as probably wrong (should likely be
-      account-scoped so teammates share a template namespace). Decide whether
-      to fix this as part of the migration (a real schema/behavior change,
-      not a pure port) or preserve as-is and file it separately. Flagging
-      here so it isn't fixed *silently* as a drive-by.
-- [ ] **Facebook Lead Ads webhook has no signature verification** (found
-      during Phase 5 research, but it's the same Meta-webhook-verification
-      machinery this phase owns) — decide whether to fix it here (reusing
-      `webhook-signature.ts` once ported) since it's the same class of gap
-      this phase is already touching, or explicitly defer to Phase 5.
+- [x] **`message_templates` unique constraint is user-scoped, not
+      account-scoped** (`@@unique([user_id, name, language])`) — **decision
+      recorded 2026-07-17: preserved as-is** (pure port, no silent schema
+      change). The account-scoped fix remains a separate follow-up item —
+      it's a real behavior change needing a data migration for duplicate
+      names across teammates.
+- [x] **Facebook Lead Ads webhook has no signature verification** —
+      **resolved in the Phase 5 port**: `facebook.controller.ts` now
+      verifies `X-Hub-Signature-256` (HMAC-SHA256, constant-time compare)
+      and rejects when `META_APP_SECRET` is configured but the signature is
+      missing/invalid.
 
 ### Build checklist
 
@@ -483,7 +482,16 @@ exported from `whatsapp.module.ts`). Don't re-port what's already there.
       `POST /whatsapp/send` → `WhatsappDashboardController.send()`
       `POST /whatsapp/broadcast` → `WhatsappDashboardController.broadcast()`
       `POST /whatsapp/react` → `WhatsappDashboardController.react()`
-      ⚠️ **Deferred**: `/whatsapp/orders`, `/whatsapp/products` (not yet ported; still served by legacy Next.js)
+      ~~⚠️ **Deferred**: `/whatsapp/orders`, `/whatsapp/products` (not yet ported; still served by legacy Next.js)~~
+      **RESOLVED 2026-07-17**: this deferral was broken in practice — the
+      same Phase 4 commit deleted the legacy route files, so the WhatsApp
+      Shop UI (orders/catalogue tabs, inbox product picker) 404'd through
+      the wildcard rewrite. Ported as `WhatsappShopController`
+      (`GET /whatsapp/orders`, `PATCH /whatsapp/orders/:id`,
+      `GET/POST /whatsapp/products`, `PATCH/DELETE /whatsapp/products/:id`)
+      with Decimal→number serialization (dashboard calls `.toFixed(2)`) and
+      the legacy `contact:`-join / error-message contracts, + full mocked
+      test suite.
 - [x] **`next.config.ts` rewrites** — `/api/whatsapp/:path*` wildcard → Nest `beforeFiles`.
 - [x] **Tests** — `webhook-signature.test.ts` done. Remaining test suite deferred (no live Meta App/WABA available; will be covered in Phase 5 pre-flight).
 - [x] **Live verification** — deferred until a working Meta App / WABA is provisioned.
@@ -732,3 +740,19 @@ patterns established in Phases 0–1:
 - **Confirmed secret-hygiene issue**: `lib/payment/razorpay.ts` has a hardcoded fallback Razorpay key secret as a literal default value in source. Flag for rotation when Phase 5b is executed — don't silently carry a checked-in secret into the new codebase.
 - **Confirmed security gap**: the Facebook Lead Ads webhook (`/api/webhooks/facebook-leads`) verifies the GET challenge but never checks `X-Hub-Signature-256` on POST payloads — unlike the WhatsApp webhook, which does. Needs an explicit fix-or-accept decision in Phase 5d/4.
 - **RPC-heavy domains**: Account (`set_member_role`, `remove_account_member`, `transfer_account_ownership`, `peek_invitation`, `redeem_invitation`) and Subscriptions (`get_user_subscription`, `check_subscription_limit`, `increment_usage`/`decrement_usage`) lean on Postgres SECURITY DEFINER functions, not just table CRUD. Each needs either a `$queryRaw`/`$executeRaw` call into the same RPC or a careful from-scratch reimplementation in Nest app code (the latter risks losing transactional guarantees if not replicated exactly) — check the original SQL in `supabase/migrations/` before choosing per-function.
+
+---
+
+## Post-migration review pass (2026-07-17) — gaps found & fixed
+
+A full audit of the Phase 2–6 implementation against this checklist, plus fixes for everything found:
+
+- **[FIXED] WhatsApp Shop was broken since the Phase 4 commit.** The checklist deferred `/whatsapp/orders`+`/whatsapp/products` to legacy Next.js, but the same commit deleted those legacy routes; the wildcard rewrite sent the dashboard's calls to Nest, which 404'd them. Ported as `whatsapp/controllers/whatsapp-shop.controller.ts` (contract-preserving, incl. Decimal→number and `contacts`→`contact` reshaping) + full mocked test suite.
+- **[FIXED] Public-API rate-limit contract regression.** `ApiKeyGuard` returned a plain 403 `ForbiddenException('Rate limit exceeded')` instead of the documented **429 `rate_limited`** envelope with `Retry-After`/`X-RateLimit-*` headers (docs/public-api.md). Guard now throws `rateLimited(limit)`/`unauthorized()`/`forbidden()` from `respond.util` — exact legacy parity. Covered by new guard tests.
+- **[FIXED] Env-var config never migrated with the code.** apps/api reads `META_APP_SECRET` (inbound WhatsApp webhook signature verification fails closed without it!), `RAZORPAY_KEY_ID/KEY_SECRET/WEBHOOK_SECRET`, `NEXT_PUBLIC_SITE_URL`, etc. — but they only existed in `apps/web/.env.local`. Copied the configured ones into `apps/api/.env` and documented the full integration set in `apps/api/.env.example`. Still unset anywhere (features unconfigured): `META_APP_ID`, `STRIPE_*`, `SHOPIFY_*`, `FACEBOOK_WEBHOOK_VERIFY_TOKEN`.
+- **[FIXED] Phase 6's dead-code audit missed the orphaned web-side server libs.** Deleted 32 zero-importer files (+ their tests) via an import-graph reachability check from `app/`+`components/`+`hooks/` roots: `lib/whatsapp/{send-message,resolve-conversation,broadcast-core,connect-account,encryption,template-header-handle,template-row-guard,template-status-normalize,template-webhook,webhook-signature}.ts`, `lib/webhooks/{deliver,endpoints,sign,ssrf}.ts`, `lib/api/v1/*`, `lib/auth/{account,api-context,invitations}.ts`, `lib/api-keys/{keys,store}.ts`, `lib/flows/{admin-client,meta-send}.ts`, `lib/subscription/{admin,check-limits,usage}.ts` (the browser-client-in-server-code bug files), `lib/ecommerce/*`, `lib/payment/*` (incl. the hardcoded-Razorpay-secret file), `lib/rate-limit.ts`, `lib/supabase/server.ts`. Trimmed `lib/subscription/index.ts` barrel to `plans` only. Kept the genuinely client-side survivors: `whatsapp/{meta-api,phone-utils,template-components,template-send-builder,template-validators}.ts`, `webhooks/events.ts`, `api-keys/scopes.ts`, `flows/{validate,edges,layout,types}.ts`.
+- **[FIXED] Secrets were committed to git.** `apps/api/.env` and `apps/web/.env.local` untracked (`git rm --cached`), `.gitignore` env rules enabled (examples stay tracked). ⚠️ **History still contains the old values — rotate**: Supabase DB password + service-role key, ENCRYPTION_KEY, INTERNAL_API_SECRET, META_APP_SECRET, Razorpay test keys.
+- **[FIXED] `next.config.ts` Docker detection** now resolves `NEST_API_URL` env-first (compose sets it; the `/.dockerenv` probe is the fallback), dead `if (!nestApiUrl)` branch removed.
+- **[ADDED] Test coverage for previously-untested domains**: v1 envelope (`respond.util.test.ts`), pagination cursors (legacy suite ported near-verbatim — external contract), `ApiKeyGuard` (401/429/403/scope/anti-enumeration), `SubscriptionService` (RPC bind params, fail-closed mapping), `WhatsappShopController`. apps/api: 16→21 test files, 200→251 tests. **Still zero coverage** (next priority): account, ecommerce, ai, integrations, campaigns controllers/services, and the v1 route handlers themselves.
+- **Confirmed clean during the audit**: all `$queryRawUnsafe`/`$executeRawUnsafe` RPC calls use `$1`-style bind parameters (no interpolation); no module-level `process.env` reads in apps/api; Razorpay webhook uses `timingSafeEqual`; FB leads webhook now verifies `X-Hub-Signature-256`; no hardcoded secrets carried into apps/api; inbound webhook chain (flows→automations→AI→webhook events) fully wired.
+- **Remaining open items** (unchanged): Phase 4 live verification needs a working Meta App/WABA; billing (Razorpay/Stripe test-mode), ecommerce sync, FB lead-ad, and CTWA click flows never live-verified end-to-end; `message_templates` account-scoping follow-up.
