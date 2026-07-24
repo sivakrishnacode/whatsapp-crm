@@ -18,10 +18,22 @@ import { CurrentAccount } from '../../auth/decorators/current-account.decorator'
 import { RequireRole } from '../../auth/decorators/require-role.decorator';
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
+import { decrypt } from '../../common/security/encryption.util';
+import {
+  syncCatalogItems,
+  deleteCatalogItems,
+  getCatalogBatchStatus,
+  getCatalogInfo,
+  fetchCatalogProducts,
+  type CatalogProductInput,
+  type CatalogBatchItemError,
+} from '../meta-api.util';
 
 const ORDER_STATUSES = ['pending', 'confirmed', 'cancelled', 'fulfilled'];
 
 const CONTACT_SELECT = { select: { id: true, name: true, phone: true } };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * WhatsApp Shop endpoints (catalogue + orders tabs, inbox product picker):
@@ -125,6 +137,214 @@ export class WhatsappShopController {
         .status(HttpStatus.INTERNAL_SERVER_ERROR)
         .json({ error: 'Failed to fetch products' });
     }
+  }
+
+  /**
+   * POST /whatsapp/products/sync
+   *
+   * Push every local product into the Meta Commerce catalog linked to this
+   * account (upsert by retailer_id). This is what makes product messages
+   * actually deliverable — a product_retailer_id only works if the SKU exists
+   * in the catalog. Requires a catalog id to be set (see PATCH /config/catalog).
+   */
+  @Post('products/sync')
+  @RequireRole('agent')
+  async syncProductsToMeta(
+    @CurrentAccount() account: SupabaseAccountContext,
+    @Res() res: Response,
+  ) {
+    const creds = await this.loadCatalogCredentials(account.accountId);
+    if ('error' in creds) {
+      return res.status(creds.status).json({ error: creds.error });
+    }
+
+    const products = await this.prisma.whatsapp_products.findMany({
+      where: { account_id: account.accountId },
+    });
+    if (products.length === 0) {
+      return res
+        .status(HttpStatus.OK)
+        .json({ synced: 0, message: 'No products to sync.' });
+    }
+
+    const items: CatalogProductInput[] = products.map((p) => ({
+      retailerId: p.retailer_id,
+      name: p.name,
+      description: p.description,
+      priceAmount: Number(p.price),
+      currency: p.currency || 'INR',
+      imageUrl: p.image_url,
+      available: p.is_active !== false,
+    }));
+
+    try {
+      // Preflight: confirm the token can actually reach this catalog. The most
+      // common sync failure is the WhatsApp token's system user not being
+      // assigned to the catalog (or the token missing `catalog_management`),
+      // which otherwise surfaces as an opaque items_batch error mid-batch.
+      await getCatalogInfo({
+        catalogId: creds.catalogId,
+        accessToken: creds.accessToken,
+      });
+
+      const { handles } = await syncCatalogItems({
+        catalogId: creds.catalogId,
+        accessToken: creds.accessToken,
+        products: items,
+      });
+      const errors = await this.pollBatchErrors(
+        creds.catalogId,
+        creds.accessToken,
+        handles,
+      );
+      if (errors.length > 0) {
+        return res.status(HttpStatus.OK).json({
+          synced: products.length - errors.length,
+          failed: errors.length,
+          errors: errors.slice(0, 20),
+        });
+      }
+      return res.status(HttpStatus.OK).json({ synced: products.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Catalog sync failed';
+      this.logger.error(`[WhatsApp catalog sync] ${message}`);
+      return res
+        .status(HttpStatus.BAD_GATEWAY)
+        .json({ error: this.formatCatalogError(creds.catalogId, message) });
+    }
+  }
+
+  /**
+   * POST /whatsapp/products/import
+   *
+   * Pull direction (reverse of /products/sync): read every item from the Meta
+   * Commerce catalog linked to this account and upsert it into local
+   * `whatsapp_products` by retailer_id. This is how a catalog built in Commerce
+   * Manager (or elsewhere) becomes visible/editable in the dashboard. Requires
+   * a catalog id (see PATCH /config/catalog); does NOT require any local
+   * products to already exist.
+   */
+  @Post('products/import')
+  @RequireRole('agent')
+  async importProductsFromMeta(
+    @CurrentAccount() account: SupabaseAccountContext,
+    @Res() res: Response,
+  ) {
+    const creds = await this.loadCatalogCredentials(account.accountId);
+    if ('error' in creds) {
+      return res.status(creds.status).json({ error: creds.error });
+    }
+
+    let remote;
+    try {
+      remote = await fetchCatalogProducts({
+        catalogId: creds.catalogId,
+        accessToken: creds.accessToken,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Catalog import failed';
+      this.logger.error(`[WhatsApp catalog import] ${message}`);
+      return res
+        .status(HttpStatus.BAD_GATEWAY)
+        .json({ error: this.formatCatalogError(creds.catalogId, message) });
+    }
+
+    // Items without a retailer_id can't be keyed/sent — skip them.
+    const usable = remote.filter((p) => p.retailerId && p.name);
+    const skipped = remote.length - usable.length;
+    if (usable.length === 0) {
+      return res.status(HttpStatus.OK).json({
+        imported: 0,
+        updated: 0,
+        skipped,
+        message:
+          remote.length === 0
+            ? 'This catalog has no products.'
+            : 'No importable products (all items were missing a Content ID / SKU).',
+      });
+    }
+
+    // Classify created vs updated up front — upsert alone can't tell us.
+    const existing = await this.prisma.whatsapp_products.findMany({
+      where: {
+        account_id: account.accountId,
+        retailer_id: { in: usable.map((p) => p.retailerId) },
+      },
+      select: { retailer_id: true },
+    });
+    const existingIds = new Set(existing.map((e) => e.retailer_id));
+
+    let imported = 0;
+    let updated = 0;
+    let failed = 0;
+    for (const p of usable) {
+      try {
+        await this.prisma.whatsapp_products.upsert({
+          where: {
+            account_id_retailer_id: {
+              account_id: account.accountId,
+              retailer_id: p.retailerId,
+            },
+          },
+          create: {
+            account_id: account.accountId,
+            retailer_id: p.retailerId,
+            name: p.name,
+            description: p.description,
+            price: p.priceAmount,
+            currency: p.currency || 'INR',
+            image_url: p.imageUrl,
+            is_active: p.available,
+          },
+          update: {
+            name: p.name,
+            description: p.description,
+            price: p.priceAmount,
+            currency: p.currency || 'INR',
+            image_url: p.imageUrl,
+            is_active: p.available,
+            updated_at: new Date(),
+          },
+        });
+        if (existingIds.has(p.retailerId)) updated++;
+        else imported++;
+      } catch (err) {
+        failed++;
+        this.logger.warn(
+          `[WhatsApp catalog import] upsert of "${p.retailerId}" failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    return res
+      .status(HttpStatus.OK)
+      .json({ imported, updated, skipped, failed });
+  }
+
+  /**
+   * Turn Meta's opaque "object does not exist / missing permissions" family of
+   * errors into an actionable message. The catalog almost always DOES exist —
+   * the WhatsApp token just can't manage it.
+   */
+  private formatCatalogError(catalogId: string, message: string): string {
+    const permissionish =
+      /does not exist|missing permission|cannot be loaded|does not support this operation|catalog_management|unsupported (get|post) request|not been approved to use this api|application does not have|check the application capabilities|permission(s)? (error|denied)/i.test(
+        message,
+      );
+    if (!permissionish) return message;
+    return (
+      `Meta won't let your WhatsApp access token manage catalog ${catalogId}. ` +
+      `This almost always means the "catalog_management" permission is missing. Fix it: ` +
+      `(1) In your Meta app → Use cases → Permissions and features, add "catalog_management" ` +
+      `(it's fine while the app is in testing — Standard Access covers admins/developers/testers). ` +
+      `(2) In Meta Business Settings, assign the System User that owns this token to the catalog ` +
+      `with full control (Business Settings → Data Sources → Catalogs → select the catalog → ` +
+      `Assign/Add People). (3) Regenerate the token WITH the "catalog_management" scope and re-save ` +
+      `it in WhatsApp settings. Meta's original error: ${message}`
+    );
   }
 
   @Post('products')
@@ -267,6 +487,12 @@ export class WhatsappShopController {
       await this.prisma.whatsapp_products.deleteMany({
         where: { id, account_id: account.accountId },
       });
+
+      // Best-effort: drop it from the Meta catalog too so we don't leave an
+      // orphaned item that could still be sent. Fire-and-forget and fully
+      // self-contained so it can never turn a successful delete into an error.
+      void this.removeFromMetaCatalog(account.accountId, product.retailer_id);
+
       return res.status(HttpStatus.OK).json({ success: true });
     } catch (err) {
       this.logger.error('[WhatsApp Products DELETE]', err);
@@ -274,6 +500,106 @@ export class WhatsappShopController {
         .status(HttpStatus.INTERNAL_SERVER_ERROR)
         .json({ error: 'Failed to delete product' });
     }
+  }
+
+  /**
+   * Resolve the Meta catalog id + decrypted access token for an account, with
+   * user-facing errors for each missing-prerequisite case.
+   */
+  private async loadCatalogCredentials(
+    accountId: string,
+  ): Promise<
+    | { catalogId: string; accessToken: string }
+    | { error: string; status: number }
+  > {
+    const config = await this.prisma.whatsapp_config.findFirst({
+      where: { account_id: accountId },
+      select: { catalog_id: true, access_token: true },
+    });
+    if (!config) {
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        error: 'WhatsApp is not connected. Connect it before syncing the catalog.',
+      };
+    }
+    if (!config.catalog_id) {
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        error:
+          'No Meta Catalog ID is set. Add your Catalog ID above before syncing products.',
+      };
+    }
+    try {
+      return {
+        catalogId: config.catalog_id,
+        accessToken: decrypt(config.access_token),
+      };
+    } catch {
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        error:
+          'Stored access token could not be decrypted. Reset your WhatsApp connection.',
+      };
+    }
+  }
+
+  /**
+   * Best-effort removal of a single item from the Meta catalog. Never throws —
+   * catalog cleanup must not affect the local delete's outcome.
+   */
+  private async removeFromMetaCatalog(
+    accountId: string,
+    retailerId: string,
+  ): Promise<void> {
+    try {
+      const creds = await this.loadCatalogCredentials(accountId);
+      if ('error' in creds) return;
+      await deleteCatalogItems({
+        catalogId: creds.catalogId,
+        accessToken: creds.accessToken,
+        retailerIds: [retailerId],
+      });
+    } catch (err) {
+      this.logger.warn(
+        `[WhatsApp catalog] delete of "${retailerId}" from Meta failed (non-fatal): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Batch submission is async — poll the first handle briefly to catch item
+   * validation errors. Bounded so the request stays responsive; if Meta is
+   * still processing after a few tries we treat the batch as accepted.
+   */
+  private async pollBatchErrors(
+    catalogId: string,
+    accessToken: string,
+    handles: string[],
+  ): Promise<CatalogBatchItemError[]> {
+    if (handles.length === 0) return [];
+    const handle = handles[0];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const status = await getCatalogBatchStatus({
+          catalogId,
+          accessToken,
+          handle,
+        });
+        if (status.errors.length > 0) return status.errors;
+        if (status.finished) return [];
+      } catch (err) {
+        this.logger.warn(
+          `[WhatsApp catalog] status check failed (non-fatal): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        return [];
+      }
+      await sleep(1200);
+    }
+    return [];
   }
 
   /** Rename the Prisma `contacts` relation to the legacy `contact` key and numberify Decimals. */

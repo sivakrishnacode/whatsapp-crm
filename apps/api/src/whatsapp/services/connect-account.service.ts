@@ -29,6 +29,12 @@ export interface SaveWhatsAppConnectionArgs {
   businessId?: string | null;
   connectionMethod?: 'manual' | 'embedded_signup';
   tokenExpiresAt?: string | null;
+  /**
+   * Meta Commerce catalog id linked to this WABA. Required to send product /
+   * product-list messages. `undefined` leaves any existing value untouched;
+   * an empty string clears it.
+   */
+  catalogId?: string | null;
 }
 
 export type SaveWhatsAppConnectionResult =
@@ -66,6 +72,7 @@ export class ConnectAccountService {
       businessId,
       connectionMethod = 'manual',
       tokenExpiresAt,
+      catalogId,
     } = args;
 
     try {
@@ -185,6 +192,9 @@ export class ConnectAccountService {
         coexistence: Boolean(skipRegistration),
         token_expires_at: tokenExpiresAt ? new Date(tokenExpiresAt) : null,
         updated_at: new Date(),
+        // Only touch catalog_id when the caller supplied one, so re-saving the
+        // connection form (which omits it) never wipes a configured catalog.
+        ...(catalogId !== undefined ? { catalog_id: catalogId || null } : {}),
       };
 
       if (existing) {

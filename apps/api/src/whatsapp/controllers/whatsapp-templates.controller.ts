@@ -95,8 +95,10 @@ export class WhatsappTemplatesController {
   /**
    * POST /api/whatsapp/templates/sync
    *
-   * Paginated pull of all templates from Meta → upserts into message_templates.
-   * Locally-created templates are NOT deleted.
+   * Paginated pull of all templates from Meta, then mirrors that set locally:
+   * upserts every template Meta returned, and deletes local rows that came
+   * from Meta (meta_template_id set) but are no longer there. Purely-local
+   * drafts that were never pushed to Meta (meta_template_id = null) are kept.
    */
   @Post('templates/sync')
   async sync(
@@ -232,13 +234,37 @@ export class WhatsappTemplatesController {
       }
     }
 
+    // Reconcile: mirror Meta by removing local templates that originated from
+    // Meta (they carry a meta_template_id) but are no longer in the pull —
+    // deleted in Meta, or left behind after switching to a different WABA.
+    // These are already gone from Meta, so no Meta delete call is needed; we
+    // only drop the stale local row. Purely-local drafts (meta_template_id =
+    // null, never pushed to Meta) are preserved. Skipped on a truncated pull:
+    // without the full Meta list we'd wrongly delete templates that do exist
+    // but weren't fetched this run.
+    const truncated = pageCount >= PAGE_CAP && nextUrl !== null;
+    let deleted = 0;
+    if (!truncated) {
+      const liveMetaIds = metaTemplates
+        .map((t) => t.id)
+        .filter((id): id is string => Boolean(id));
+      const removal = await this.prisma.message_templates.deleteMany({
+        where: {
+          account_id: account.accountId,
+          meta_template_id: { not: null, notIn: liveMetaIds },
+        },
+      });
+      deleted = removal.count;
+    }
+
     return res.status(HttpStatus.OK).json({
       success: errors.length === 0,
       total: metaTemplates.length,
       inserted,
       updated,
+      deleted,
       errors,
-      truncated: pageCount >= PAGE_CAP && nextUrl !== null,
+      truncated,
     });
   }
 

@@ -268,6 +268,7 @@ export const INTERACTIVE_LIMITS = {
   buttonTitleMaxLength: 20,
   maxListSections: 10,
   maxListRowsTotal: 10,
+  listSectionTitleMaxLength: 24,
   listRowTitleMaxLength: 24,
   listRowDescriptionMaxLength: 72,
   bodyMaxLength: 1024,
@@ -451,6 +452,11 @@ export async function sendInteractiveList(
   }
   const seenIds = new Set<string>();
   for (const section of sections) {
+    if (section.title && section.title.length > INTERACTIVE_LIMITS.listSectionTitleMaxLength) {
+      throw new Error(
+        `Interactive list section title "${section.title}" exceeds ${INTERACTIVE_LIMITS.listSectionTitleMaxLength} chars.`,
+      );
+    }
     for (const row of section.rows) {
       if (!row.id) throw new Error('Interactive list row missing id.');
       if (seenIds.has(row.id)) {
@@ -570,6 +576,7 @@ export async function sendProductMessage(
     footerText,
     contextMessageId,
   } = args;
+  
   const url = `${META_API_BASE}/${phoneNumberId}/messages`;
   const body: any = {
     messaging_product: 'whatsapp',
@@ -1103,5 +1110,338 @@ export async function downloadMedia(
     response.headers.get('content-type') || 'application/octet-stream';
   const buffer = Buffer.from(await response.arrayBuffer());
   return { buffer, contentType };
+}
+
+// ============================================================
+// Commerce Catalog — product sync (Catalog Batch API)
+// ============================================================
+//
+// Products sent in WhatsApp product / product-list messages must exist in the
+// Meta Commerce catalog linked to the WABA, keyed by `retailer_id` (the SKU).
+// We upsert local `whatsapp_products` into that catalog via the Catalog Batch
+// API: POST /{catalog-id}/items_batch.
+//
+// IMPORTANT: this endpoint is asynchronous. A 2xx response means Meta *queued*
+// the batch — it does NOT mean every item passed validation. It returns
+// `handles` which must be polled via `getCatalogBatchStatus` to surface
+// per-item errors (bad price format, missing required field, etc.).
+//
+// Price must be formatted as "<amount> <ISO-4217 currency>", e.g. "129.99 INR"
+// — a decimal string with the currency code, NOT integer minor units.
+
+export interface CatalogProductInput {
+  /** The SKU. Becomes the catalog item id + the product_retailer_id used when sending. */
+  retailerId: string;
+  name: string;
+  description?: string | null;
+  /** Numeric price amount, e.g. 129.99. */
+  priceAmount: number;
+  /** ISO 4217 code, e.g. "INR". */
+  currency: string;
+  imageUrl?: string | null;
+  /** Merchant website link for the item. Optional for WhatsApp catalogs. */
+  url?: string | null;
+  brand?: string | null;
+  available: boolean;
+}
+
+export interface CatalogBatchResult {
+  handles: string[];
+}
+
+function buildCatalogItemData(p: CatalogProductInput): Record<string, unknown> {
+  const data: Record<string, unknown> = {
+    id: p.retailerId,
+    title: p.name,
+    // description is a required field and cannot be blank — fall back to name.
+    description: p.description?.trim() || p.name,
+    price: `${p.priceAmount.toFixed(2)} ${p.currency.toUpperCase()}`,
+    availability: p.available ? 'in stock' : 'out of stock',
+    condition: 'new',
+  };
+  if (p.imageUrl) data.image_link = p.imageUrl;
+  if (p.url) data.link = p.url;
+  if (p.brand) data.brand = p.brand;
+  return data;
+}
+
+export interface SyncCatalogItemsArgs {
+  catalogId: string;
+  accessToken: string;
+  products: CatalogProductInput[];
+}
+
+/**
+ * Upsert products into a Meta Commerce catalog (method UPDATE = create-or-update).
+ * Returns the batch handles for status polling. See the section header for the
+ * async-validation caveat.
+ */
+export async function syncCatalogItems(
+  args: SyncCatalogItemsArgs,
+): Promise<CatalogBatchResult> {
+  const { catalogId, accessToken, products } = args;
+  if (!catalogId) throw new Error('syncCatalogItems requires a catalogId.');
+  if (products.length === 0) return { handles: [] };
+
+  const url = `${META_API_BASE}/${catalogId}/items_batch`;
+  const body = {
+    item_type: 'PRODUCT_ITEM',
+    requests: products.map((p) => ({
+      method: 'UPDATE',
+      retailer_id: p.retailerId,
+      data: buildCatalogItemData(p),
+    })),
+  };
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Catalog sync failed: ${response.status}`);
+  }
+  const data = (await response.json()) as { handles?: string[] };
+  return { handles: data.handles ?? [] };
+}
+
+export interface DeleteCatalogItemsArgs {
+  catalogId: string;
+  accessToken: string;
+  retailerIds: string[];
+}
+
+/**
+ * Remove items from a Meta Commerce catalog by retailer_id (SKU). Best-effort:
+ * unknown ids are ignored by Meta.
+ */
+export async function deleteCatalogItems(
+  args: DeleteCatalogItemsArgs,
+): Promise<CatalogBatchResult> {
+  const { catalogId, accessToken, retailerIds } = args;
+  if (!catalogId) throw new Error('deleteCatalogItems requires a catalogId.');
+  if (retailerIds.length === 0) return { handles: [] };
+
+  const url = `${META_API_BASE}/${catalogId}/items_batch`;
+  const body = {
+    item_type: 'PRODUCT_ITEM',
+    requests: retailerIds.map((rid) => ({
+      method: 'DELETE',
+      retailer_id: rid,
+      data: { id: rid },
+    })),
+  };
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Catalog delete failed: ${response.status}`);
+  }
+  const data = (await response.json()) as { handles?: string[] };
+  return { handles: data.handles ?? [] };
+}
+
+export interface CatalogBatchStatusArgs {
+  catalogId: string;
+  accessToken: string;
+  handle: string;
+}
+
+export interface CatalogBatchItemError {
+  message: string;
+  retailerId?: string;
+}
+
+export interface CatalogBatchStatus {
+  /** Meta reports e.g. "in_progress" / "finished". */
+  status: string;
+  finished: boolean;
+  errors: CatalogBatchItemError[];
+}
+
+/**
+ * Poll the status of a batch by its handle. Parsed defensively — Meta's error
+ * envelope shape has varied across versions, so we scan for anything that
+ * looks like a per-item error rather than assuming one exact layout.
+ */
+export async function getCatalogBatchStatus(
+  args: CatalogBatchStatusArgs,
+): Promise<CatalogBatchStatus> {
+  const { catalogId, accessToken, handle } = args;
+  const params = new URLSearchParams({ handle });
+  const url = `${META_API_BASE}/${catalogId}/check_batch_request_status?${params.toString()}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Catalog status check failed: ${response.status}`);
+  }
+  const json = (await response.json()) as {
+    data?: Array<{
+      status?: string;
+      errors?:
+        | { data?: Array<{ message?: string; retailer_id?: string }> }
+        | Array<{ message?: string; retailer_id?: string }>;
+    }>;
+  };
+  const first = json.data?.[0];
+  const status = first?.status ?? 'unknown';
+  const rawErrors = Array.isArray(first?.errors)
+    ? first?.errors
+    : (first?.errors?.data ?? []);
+  return {
+    status,
+    finished: /finish|complet|done/i.test(status),
+    errors: (rawErrors ?? []).map((e) => ({
+      message: e.message ?? 'Unknown error',
+      retailerId: e.retailer_id,
+    })),
+  };
+}
+
+export interface FetchCatalogProductsArgs {
+  catalogId: string;
+  accessToken: string;
+  /** Safety cap on total items pulled (protects against huge catalogs). */
+  maxItems?: number;
+}
+
+export interface CatalogProductRecord {
+  /** The SKU / content id. Empty items are filtered out by the caller. */
+  retailerId: string;
+  name: string;
+  description: string | null;
+  /** Major-unit amount, e.g. 1999.00 (Meta returns minor units — already converted). */
+  priceAmount: number;
+  currency: string;
+  imageUrl: string | null;
+  available: boolean;
+}
+
+/**
+ * Meta returns a product item's `price` as an int64 in the currency's minor
+ * units (e.g. 199900 = 1,999.00). Convert to a major-unit amount. Parsed
+ * defensively so a formatted string ("₹1,999.00", "1999.00 INR") — which some
+ * API versions/fields return — is also handled: a decimal point means the value
+ * is already in major units, a bare integer means minor units.
+ */
+function parseMetaCatalogPrice(raw: unknown): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return Math.round(raw) / 100;
+  }
+  if (typeof raw === 'string') {
+    const s = raw.trim();
+    if (!s) return 0;
+    if (s.includes('.')) {
+      const n = parseFloat(s.replace(/[^\d.]/g, ''));
+      return Number.isFinite(n) ? n : 0;
+    }
+    const digits = s.replace(/[^\d]/g, '');
+    return digits ? parseInt(digits, 10) / 100 : 0;
+  }
+  return 0;
+}
+
+/**
+ * Read every product in a Meta Commerce catalog (the reverse of
+ * `syncCatalogItems`): GET /{catalog-id}/products, following `paging.next`
+ * until exhausted or `maxItems` is reached. Used to import a catalog that was
+ * built in Commerce Manager into local `whatsapp_products`.
+ */
+export async function fetchCatalogProducts(
+  args: FetchCatalogProductsArgs,
+): Promise<CatalogProductRecord[]> {
+  const { catalogId, accessToken, maxItems = 2000 } = args;
+  if (!catalogId) throw new Error('fetchCatalogProducts requires a catalogId.');
+
+  const fields =
+    'retailer_id,name,description,price,currency,availability,image_url';
+  let url:
+    | string
+    | null = `${META_API_BASE}/${catalogId}/products?fields=${fields}&limit=100`;
+
+  const out: CatalogProductRecord[] = [];
+  // Bounded page walk — 100/page against a 2000 default cap is 20 pages max.
+  for (let page = 0; url && out.length < maxItems && page < 50; page++) {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) {
+      await throwMetaError(response, `Catalog products fetch failed: ${response.status}`);
+    }
+    const json = (await response.json()) as {
+      data?: Array<{
+        retailer_id?: string;
+        name?: string;
+        description?: string | null;
+        price?: unknown;
+        currency?: string;
+        availability?: string;
+        image_url?: string | null;
+      }>;
+      paging?: { next?: string };
+    };
+    for (const item of json.data ?? []) {
+      out.push({
+        retailerId: (item.retailer_id ?? '').trim(),
+        name: item.name ?? '',
+        description: item.description ?? null,
+        priceAmount: parseMetaCatalogPrice(item.price),
+        currency: (item.currency || 'INR').toUpperCase(),
+        imageUrl: item.image_url ?? null,
+        available: (item.availability ?? 'in stock').toLowerCase() === 'in stock',
+      });
+    }
+    url = json.paging?.next ?? null;
+  }
+  return out;
+}
+
+export interface GetCatalogInfoArgs {
+  catalogId: string;
+  accessToken: string;
+}
+
+export interface CatalogInfo {
+  id: string;
+  name: string;
+  productCount?: number;
+}
+
+/**
+ * Fetch basic catalog metadata. Used as a preflight before a sync: if the
+ * token can't read the catalog (wrong id, or — far more commonly — the token's
+ * system user isn't assigned to the catalog / lacks `catalog_management`),
+ * this fails fast with Meta's real message instead of an opaque items_batch
+ * error deep in the batch.
+ */
+export async function getCatalogInfo(
+  args: GetCatalogInfoArgs,
+): Promise<CatalogInfo> {
+  const { catalogId, accessToken } = args;
+  const url = `${META_API_BASE}/${catalogId}?fields=name,product_count`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Catalog lookup failed: ${response.status}`);
+  }
+  const data = (await response.json()) as {
+    id?: string;
+    name?: string;
+    product_count?: number;
+  };
+  return {
+    id: data.id ?? catalogId,
+    name: data.name ?? '',
+    productCount: data.product_count,
+  };
 }
 

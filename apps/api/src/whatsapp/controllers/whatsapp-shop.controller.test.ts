@@ -39,6 +39,9 @@ function makePrismaMock() {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    whatsapp_config: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
   };
 }
 
@@ -234,6 +237,35 @@ describe('WhatsappShopController', () => {
         where: { id: 'prod-1', account_id: 'acc-1' },
       });
       expect(res.json).toHaveBeenCalledWith({ success: true });
+    });
+  });
+
+  describe('catalog sync', () => {
+    it('400s when WhatsApp is not connected (no config row)', async () => {
+      prisma.whatsapp_config.findFirst.mockResolvedValueOnce(null);
+      const res = makeRes();
+
+      await controller.syncProductsToMeta(account, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      const body = res.json.mock.calls[0][0] as { error: string };
+      expect(body.error).toMatch(/not connected/i);
+      expect(prisma.whatsapp_products.findMany).not.toHaveBeenCalled();
+    });
+
+    it('400s when no Meta Catalog ID is configured', async () => {
+      prisma.whatsapp_config.findFirst.mockResolvedValueOnce({
+        catalog_id: null,
+        access_token: 'enc',
+      });
+      const res = makeRes();
+
+      await controller.syncProductsToMeta(account, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      const body = res.json.mock.calls[0][0] as { error: string };
+      expect(body.error).toMatch(/catalog id/i);
+      expect(prisma.whatsapp_products.findMany).not.toHaveBeenCalled();
     });
   });
 });

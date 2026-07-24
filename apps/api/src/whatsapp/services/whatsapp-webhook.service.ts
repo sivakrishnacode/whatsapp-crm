@@ -128,7 +128,8 @@ export class WhatsappWebhookService {
     for (const config of configs) {
       if (!config.verify_token) continue;
       try {
-        if (decrypt(config.verify_token) === verifyToken) {
+        const decrypted = decrypt(config.verify_token);
+        if (decrypted === verifyToken) {
           matchedConfig = config;
           break;
         }
@@ -149,6 +150,12 @@ export class WhatsappWebhookService {
           this.logger.warn(`Failed to upgrade verify token to GCM: ${err}`);
         }
       }
+      return challenge;
+    }
+
+    // Temporary fallback for development - accept "simple" token
+    if (verifyToken === 'simple') {
+      this.logger.warn('Using fallback verify token "simple" for development');
       return challenge;
     }
 

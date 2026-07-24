@@ -308,11 +308,14 @@ export function TemplateManager() {
       if (!res.ok) {
         throw new Error(data?.error || `Sync failed (HTTP ${res.status})`);
       }
+      const changes = [
+        data.inserted ? `${data.inserted} new` : '',
+        data.updated ? `${data.updated} updated` : '',
+        data.deleted ? `${data.deleted} removed` : '',
+      ].filter(Boolean);
       toast.success(
         `Synced ${data.total} template${data.total === 1 ? '' : 's'} from Meta` +
-          (data.inserted || data.updated
-            ? ` (${data.inserted} new, ${data.updated} updated)`
-            : ''),
+          (changes.length ? ` (${changes.join(', ')})` : ''),
       );
       if (Array.isArray(data.errors) && data.errors.length > 0) {
         const preview = data.errors.slice(0, 3).map(

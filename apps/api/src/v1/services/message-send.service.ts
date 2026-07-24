@@ -59,9 +59,9 @@ function isMessageTemplate(row: any): boolean {
   if (!row || typeof row !== 'object') return false;
   return (
     typeof row.id === 'string' &&
-    typeof row.userId === 'string' &&
+    (typeof row.userId === 'string' || typeof row.user_id === 'string') &&
     typeof row.name === 'string' &&
-    typeof row.bodyText === 'string'
+    (typeof row.bodyText === 'string' || typeof row.body_text === 'string')
   );
 }
 
@@ -265,6 +265,42 @@ export class MessageSendService {
       templateRow = data ?? null;
     }
 
+    // Product / product-list messages need a Meta Commerce catalog id plus a
+    // valid retailer id (SKU). Resolve the catalog id once and validate up
+    // front so a missing value fails with a clear, actionable message instead
+    // of Meta's opaque "(#131009) Parameter value is not valid".
+    const resolvedCatalogId =
+      interactiveProductParams?.catalogId || config.catalog_id || '';
+    if (messageType === 'product' || messageType === 'product_list') {
+      if (!resolvedCatalogId) {
+        throw new ApiError(
+          'whatsapp_catalog_not_configured',
+          'No Meta Commerce catalog is linked to this WhatsApp account. Add your Catalog ID in WhatsApp settings before sending product messages.',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+    if (messageType === 'product' && !interactiveProductParams?.productRetailerId) {
+      throw new ApiError(
+        'bad_request',
+        'product_retailer_id is required to send a product message.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (
+      messageType === 'product_list' &&
+      (!interactiveProductParams?.sections?.length ||
+        interactiveProductParams.sections.every(
+          (s) => !s.productRetailerIds?.length,
+        ))
+    ) {
+      throw new ApiError(
+        'bad_request',
+        'At least one product (retailer_id) is required to send a product list message.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const attempt = async (phone: string): Promise<string> => {
       if (messageType === 'template') {
         const result = await sendTemplateMessage({
@@ -285,7 +321,7 @@ export class MessageSendService {
           phoneNumberId: config.phone_number_id,
           accessToken,
           to: phone,
-          catalogId: interactiveProductParams?.catalogId || 'mock_catalog_id_123',
+          catalogId: resolvedCatalogId,
           productRetailerId: interactiveProductParams?.productRetailerId || '',
           bodyText: interactiveProductParams?.bodyText || contentText || undefined,
           footerText: interactiveProductParams?.footerText || undefined,
@@ -298,7 +334,7 @@ export class MessageSendService {
           phoneNumberId: config.phone_number_id,
           accessToken,
           to: phone,
-          catalogId: interactiveProductParams?.catalogId || 'mock_catalog_id_123',
+          catalogId: resolvedCatalogId,
           headerText: interactiveProductParams?.headerText || 'Catalogue',
           bodyText: interactiveProductParams?.bodyText || 'Check out our products!',
           footerText: interactiveProductParams?.footerText || undefined,

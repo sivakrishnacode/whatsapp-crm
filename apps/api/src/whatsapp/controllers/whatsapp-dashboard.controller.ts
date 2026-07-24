@@ -100,7 +100,9 @@ export class WhatsappDashboardController {
       });
     } catch (err) {
       if (err instanceof ApiError) {
-        return res.status(err.getStatus()).json({ error: err.message });
+        const responseBody = err.getResponse() as any;
+        const errorMessage = responseBody?.error?.message || err.message;
+        return res.status(err.getStatus()).json({ error: errorMessage });
       }
       throw err;
     }
@@ -187,7 +189,12 @@ export class WhatsappDashboardController {
       });
     } catch (err) {
       if (err instanceof ApiError) {
-        return res.status(err.getStatus()).json({ error: err.message });
+        const responseBody = err.getResponse() as any;
+        const errorMessage = responseBody?.error?.message || err.message;
+        this.logger.error(
+          `Dashboard send failed (ApiError): ${errorMessage}`,
+        );
+        return res.status(err.getStatus()).json({ error: errorMessage });
       }
       this.logger.error(
         `Dashboard send failed: ${err instanceof Error ? err.message : err}`,

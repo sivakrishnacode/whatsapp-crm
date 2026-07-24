@@ -1576,6 +1576,7 @@ model whatsapp_config {
   user_id                 String    @db.Uuid
   phone_number_id         String    @unique
   waba_id                 String?
+  catalog_id              String?
   access_token            String
   verify_token            String?
   status                  String    @default("disconnected")

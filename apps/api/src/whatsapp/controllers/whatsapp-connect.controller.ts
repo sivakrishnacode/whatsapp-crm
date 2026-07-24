@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Body,
   Res,
@@ -132,6 +133,7 @@ export class WhatsappConnectController {
         access_token: true,
         status: true,
         token_expires_at: true,
+        catalog_id: true,
       },
     });
 
@@ -175,6 +177,7 @@ export class WhatsappConnectController {
         phone_info: phoneInfo,
         token_expires_at: tokenExpiresAt,
         token_expiring_soon: tokenExpiringSoon,
+        catalog_id: config.catalog_id ?? null,
       });
     } catch (err) {
       const message =
@@ -198,7 +201,8 @@ export class WhatsappConnectController {
     @Body() body: any,
     @Res() res: Response,
   ) {
-    const { phone_number_id, waba_id, access_token, verify_token, pin } = body;
+    const { phone_number_id, waba_id, access_token, verify_token, pin, catalog_id } =
+      body;
 
     if (!access_token || !phone_number_id) {
       return res.status(HttpStatus.BAD_REQUEST).json({
@@ -223,6 +227,7 @@ export class WhatsappConnectController {
       verifyToken: verify_token || null,
       pin: pin || null,
       connectionMethod: 'manual',
+      catalogId: catalog_id === undefined ? undefined : String(catalog_id).trim(),
     });
 
     if (!result.ok) {
@@ -246,6 +251,44 @@ export class WhatsappConnectController {
       registration_skipped: result.registration_skipped,
       phone_info: result.phone_info,
     });
+  }
+
+  /**
+   * PATCH /api/whatsapp/config/catalog
+   *
+   * Sets (or clears) the Meta Commerce catalog id used for product /
+   * product-list messages. Kept separate from POST /config so a merchant —
+   * especially an Embedded Signup one with no manual form — can set the
+   * catalog id without re-entering their access token.
+   */
+  @Patch('config/catalog')
+  async setCatalogId(
+    @CurrentAccount() account: SupabaseAccountContext,
+    @Body() body: { catalog_id?: string | null },
+    @Res() res: Response,
+  ) {
+    const raw = body?.catalog_id;
+    const catalogId = raw == null ? '' : String(raw).trim();
+    if (catalogId && !/^\d+$/.test(catalogId)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        error: 'Catalog ID must be the numeric id from Meta Commerce Manager.',
+      });
+    }
+
+    const { count } = await this.prisma.whatsapp_config.updateMany({
+      where: { account_id: account.accountId },
+      data: { catalog_id: catalogId || null, updated_at: new Date() },
+    });
+    if (count === 0) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        error:
+          'Connect your WhatsApp account before setting a catalog id.',
+      });
+    }
+
+    return res
+      .status(HttpStatus.OK)
+      .json({ success: true, catalog_id: catalogId || null });
   }
 
   /**

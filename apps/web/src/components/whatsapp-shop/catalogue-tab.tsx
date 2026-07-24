@@ -33,6 +33,7 @@ import {
   Image as ImageIcon,
   Loader2,
   RefreshCw,
+  DownloadCloud,
   LayoutGrid,
   List,
   CheckCircle,
@@ -57,6 +58,13 @@ export function CatalogueTab() {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [syncingMeta, setSyncingMeta] = useState(false);
+  const [importingMeta, setImportingMeta] = useState(false);
+
+  // Meta Commerce catalog id — required for product / product-list messages.
+  // `savedCatalogId` reflects what's persisted; `catalogIdInput` is the field.
+  const [savedCatalogId, setSavedCatalogId] = useState<string | null>(null);
+  const [catalogIdInput, setCatalogIdInput] = useState('');
+  const [savingCatalog, setSavingCatalog] = useState(false);
 
   // Dialog states
   const [addOpen, setAddOpen] = useState(false);
@@ -91,8 +99,46 @@ export function CatalogueTab() {
     }
   }
 
+  async function fetchCatalogId() {
+    try {
+      const res = await fetch('/api/whatsapp/config');
+      const data = await res.json();
+      const id: string | null = data?.catalog_id ?? null;
+      setSavedCatalogId(id);
+      setCatalogIdInput(id ?? '');
+    } catch {
+      // Non-fatal — the field just starts empty.
+    }
+  }
+
+  async function handleSaveCatalogId() {
+    const value = catalogIdInput.trim();
+    setSavingCatalog(true);
+    try {
+      const res = await fetch('/api/whatsapp/config/catalog', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ catalog_id: value || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save Catalog ID');
+      setSavedCatalogId(data.catalog_id ?? null);
+      setCatalogIdInput(data.catalog_id ?? '');
+      toast.success(
+        data.catalog_id
+          ? 'Catalog ID saved. Product messages can now be sent.'
+          : 'Catalog ID cleared.',
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save Catalog ID');
+    } finally {
+      setSavingCatalog(false);
+    }
+  }
+
   useEffect(() => {
     fetchProducts();
+    fetchCatalogId();
   }, []);
 
   const handleOpenAdd = () => {
@@ -196,11 +242,68 @@ export function CatalogueTab() {
   };
 
   const handleSyncMetaCatalog = async () => {
+    if (!savedCatalogId) {
+      toast.error('Set your Meta Catalog ID first, then sync.');
+      return;
+    }
     setSyncingMeta(true);
-    setTimeout(() => {
+    try {
+      const res = await fetch('/api/whatsapp/products/sync', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to sync catalog');
+      }
+      if (data.failed > 0) {
+        const first = data.errors?.[0]?.message
+          ? ` First error: ${data.errors[0].message}`
+          : '';
+        toast.error(
+          `Synced ${data.synced} product(s); ${data.failed} rejected by Meta.${first}`,
+          { duration: 10000 },
+        );
+      } else {
+        toast.success(
+          `Successfully synced ${data.synced} product(s) to Meta Catalog Manager.`,
+        );
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to sync catalog');
+    } finally {
       setSyncingMeta(false);
-      toast.success(`Successfully batch-synced ${products.length} products to Meta Catalog Manager.`);
-    }, 1500);
+    }
+  };
+
+  const handleImportFromMeta = async () => {
+    if (!savedCatalogId) {
+      toast.error('Set your Meta Catalog ID first, then import.');
+      return;
+    }
+    setImportingMeta(true);
+    try {
+      const res = await fetch('/api/whatsapp/products/import', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to import catalog');
+      }
+      const parts: string[] = [];
+      if (data.imported) parts.push(`${data.imported} new`);
+      if (data.updated) parts.push(`${data.updated} updated`);
+      if (data.imported || data.updated) {
+        toast.success(`Imported from Meta Catalog: ${parts.join(', ')}.`);
+      } else {
+        toast.info(data.message || 'No products found in your Meta Catalog.');
+      }
+      if (data.skipped > 0) {
+        toast.warning(
+          `${data.skipped} item(s) skipped — missing a Content ID / SKU in Meta.`,
+        );
+      }
+      fetchProducts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to import catalog');
+    } finally {
+      setImportingMeta(false);
+    }
   };
 
   const filteredProducts = products.filter(
@@ -212,6 +315,48 @@ export function CatalogueTab() {
 
   return (
     <div className="space-y-4">
+      {/* Meta Commerce catalog id — without it, product messages fail with
+          Meta error (#131009). Surface it here so merchants can set it. */}
+      <div className="rounded-xl border border-border bg-card/50 p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex-1 space-y-1.5 sm:max-w-md">
+            <Label className="text-muted-foreground">Meta Catalog ID</Label>
+            <Input
+              placeholder="e.g. 367025965434465"
+              inputMode="numeric"
+              value={catalogIdInput}
+              onChange={(e) =>
+                setCatalogIdInput(e.target.value.replace(/[^\d]/g, ''))
+              }
+              className="bg-muted/20 border-border font-mono"
+            />
+            <p className="text-xs text-muted-foreground">
+              Required to send product messages. Find it in Meta Commerce
+              Manager → your catalog → Settings.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className="self-end border-border hover:bg-muted/30"
+            onClick={handleSaveCatalogId}
+            disabled={savingCatalog || catalogIdInput.trim() === (savedCatalogId ?? '')}
+          >
+            {savingCatalog ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <CheckCircle className="h-4 w-4 mr-2" />
+            )}
+            Save Catalog ID
+          </Button>
+        </div>
+        {!savedCatalogId && (
+          <p className="mt-2 text-xs text-amber-500">
+            No Catalog ID set yet — product messages will be rejected by Meta
+            until you add one.
+          </p>
+        )}
+      </div>
+
       {/* Search and Action Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="relative flex-1 max-w-sm">
@@ -247,8 +392,32 @@ export function CatalogueTab() {
           <Button
             variant="outline"
             className="border-border hover:bg-muted/30"
+            onClick={handleImportFromMeta}
+            disabled={importingMeta || !savedCatalogId}
+            title={
+              savedCatalogId
+                ? 'Pull products that already exist in your Meta Catalog into this app'
+                : 'Set your Meta Catalog ID first'
+            }
+          >
+            {importingMeta ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <DownloadCloud className="h-4 w-4 mr-2" />
+            )}
+            Import from Meta
+          </Button>
+
+          <Button
+            variant="outline"
+            className="border-border hover:bg-muted/30"
             onClick={handleSyncMetaCatalog}
             disabled={syncingMeta || products.length === 0}
+            title={
+              products.length === 0
+                ? 'No local products to push — add products or import from Meta first'
+                : 'Push local products up to your Meta Catalog'
+            }
           >
             {syncingMeta ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -278,13 +447,33 @@ export function CatalogueTab() {
           <ImageIcon className="h-10 w-10 text-muted-foreground mb-3" />
           <p className="text-sm font-medium text-foreground">No products found</p>
           <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-            {searchQuery ? 'Try adjusting your search terms.' : 'Create products natively to make them available in the WhatsApp catalog.'}
+            {searchQuery
+              ? 'Try adjusting your search terms.'
+              : savedCatalogId
+                ? 'Create products natively, or import the ones already in your Meta Catalog.'
+                : 'Create products natively to make them available in the WhatsApp catalog.'}
           </p>
           {!searchQuery && (
-            <Button className="mt-4" onClick={handleOpenAdd}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              Create First Product
-            </Button>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              {savedCatalogId && (
+                <Button
+                  variant="outline"
+                  onClick={handleImportFromMeta}
+                  disabled={importingMeta}
+                >
+                  {importingMeta ? (
+                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  ) : (
+                    <DownloadCloud className="h-4 w-4 mr-1.5" />
+                  )}
+                  Import from Meta
+                </Button>
+              )}
+              <Button onClick={handleOpenAdd}>
+                <Plus className="h-4 w-4 mr-1.5" />
+                Create First Product
+              </Button>
+            </div>
           )}
         </div>
       ) : viewMode === 'grid' ? (
