@@ -1,0 +1,344 @@
+# WhatsApp Messaging Tier Visibility
+
+Add per-account messaging tier, quality rating, and live usage to the CRM dashboard so operators know their limits before running a broadcast.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Caching strategy decision** — see Open Questions Q1. The answer determines whether we add fields to `whatsapp_config` or create a new `whatsapp_limits` table.
+
+> [!IMPORTANT]
+> **BullMQ scheduler vs NestJS `@Cron`** — you already have BullMQ wired. The plan proposes a BullMQ repeatable job for the sync, consistent with your existing infrastructure. If you prefer `@nestjs/schedule` (`@Cron`), that's a simpler drop-in but won't show up in your BullMQ dashboard.
+
+> [!WARNING]
+> **New Prisma migration** — one new SQL migration is required to add the limit/rating columns (or new table). No destructive changes to existing rows.
+
+> [!CAUTION]
+> **Access token refresh** — the `embedded_signup` token (`token_expires_at` already tracked) must be refreshed before calling the Meta Graph API in the sync job. If expired, the job skips the account and emits a warning log; the UI shows a "token expired — reconnect" state. This is not implemented today and **is a prerequisite for embedded_signup accounts**.
+
+---
+
+## Open Questions
+
+> [!IMPORTANT]
+> **Q1 — Schema placement**: Should the tier/rating data live as new columns on `whatsapp_config`, or in a separate `whatsapp_limits` table?  
+> - **Inline (recommended)** — `whatsapp_config` already has one row per account; adding ~4 nullable columns keeps it simple and avoids a JOIN everywhere.  
+> - **Separate table** — better if you plan to store a historical audit trail (e.g. "tier changed from 1K→10K on date X") or want to track portfolio-level numbers. Adds a JOIN.
+
+> [!IMPORTANT]
+> **Q2 — Sync interval**: How often should we poll Meta for tier + quality rating?  
+> - **Every 6 hours (recommended)** — tier changes are rare; quality rating moves slowly. Keeps API calls well under any rate limits.  
+> - **Every 1 hour** — more responsive but 6× the API calls across all accounts.  
+> - **On-demand only** — only fetch when the user opens the dashboard widget (cache TTL = 6 h). Simpler but loses push updates.
+
+> [!IMPORTANT]
+> **Q3 — Live usage source**: The "messages sent in the rolling 24-hour window" counter is **not available directly from the Meta Graph API**. Two options:  
+> - **Count from your own DB** (recommended) — `SELECT COUNT(*) FROM broadcast_recipients WHERE account_id=? AND status IN ('sent','delivered','read') AND sent_at > NOW()-INTERVAL '24h'`. No extra API call. Limitation: only counts broadcast messages, not automation/flow/inbox sends.  
+> - **Aggregate across all send sources** — requires tagging every outbound message (broadcasts + automations + flows + inbox) with `sent_at` in a central ledger. More accurate but a larger cross-cutting change.
+
+> [!IMPORTANT]
+> **Q4 — Portfolio-level numbers**: If a WABA has multiple phone numbers under it, Meta enforces a single shared limit across all of them. Do you want to show the portfolio limit (WABA-level) alongside the per-number usage, or show only per-number metrics?
+
+> [!NOTE]
+> **Q5 — Broadcast pre-flight gate**: Should the broadcast composer hard-block submission if `remaining < recipients`? Or only show a warning banner and let the user proceed?
+
+---
+
+## Background
+
+Meta's WhatsApp Business API tiers (messaging limits) control how many unique conversations a phone number can initiate per rolling 24-hour window. The current schema stores credentials but not tier/quality data, so operators have no way to know their limits from within the CRM.
+
+Key API facts:
+- **Endpoint for tier + quality**: `GET /{phone-number-id}?fields=messaging_limit_tier,quality_rating` (note: `messaging_limit_tier` is the *field name* on the phone number object, not a deprecated endpoint — the deprecated thing was the old `messaging_limit_tier` _value_ of `STANDARD`; the field itself and values `TIER_1K`, `TIER_10K`, `TIER_100K`, `UNLIMITED` remain current as of Graph API v21.0).
+- **WABA-level portfolio limit**: `GET /{waba-id}?fields=message_template_status_change_subscriptions,on_behalf_of_business_info` does NOT directly return the portfolio limit. Portfolio limit is surfaced via `GET /{waba-id}/phone_numbers?fields=messaging_limit_tier,quality_rating`. For a single-number account the distinction is moot.
+- **Webhook push for limit changes**: The `business_capability_update` webhook change field fires when Meta changes an account's messaging tier.
+- **Live usage**: Meta does NOT expose a "messages sent in last 24h" counter via the Cloud API. Must be computed from your own data.
+
+---
+
+## Proposed Changes
+
+### 1 — Data Model
+
+---
+
+#### [NEW] Migration `049_whatsapp_messaging_limits.sql`
+
+Adds four nullable columns to `whatsapp_config` (inline approach, see Q1):
+
+```sql
+ALTER TABLE whatsapp_config
+  ADD COLUMN IF NOT EXISTS messaging_limit_tier  TEXT
+    CHECK (messaging_limit_tier IN ('TIER_250', 'TIER_1K', 'TIER_10K', 'TIER_100K', 'UNLIMITED')),
+  ADD COLUMN IF NOT EXISTS quality_rating        TEXT
+    CHECK (quality_rating IN ('GREEN', 'YELLOW', 'RED', 'UNKNOWN')),
+  ADD COLUMN IF NOT EXISTS tier_daily_limit      INTEGER,      -- denormalized int: 250, 1000, 10000, 100000, NULL=unlimited
+  ADD COLUMN IF NOT EXISTS limits_synced_at      TIMESTAMPTZ;  -- NULL = never synced
+
+CREATE INDEX IF NOT EXISTS idx_whatsapp_config_limits_synced_at
+  ON whatsapp_config (limits_synced_at)
+  WHERE limits_synced_at IS NOT NULL;
+```
+
+**Tier → limit mapping** (maintained in code, not DB):
+
+| `messaging_limit_tier` | `tier_daily_limit` | Label shown in UI |
+|---|---|---|
+| `TIER_250` | 250 | Unverified (250/day) |
+| `TIER_1K` | 1,000 | Tier 1 (1K/day) |
+| `TIER_10K` | 10,000 | Tier 2 (10K/day) |
+| `TIER_100K` | 100,000 | Tier 3 (100K/day) |
+| `UNLIMITED` | NULL | Unlimited |
+| `NULL` | NULL | Not synced yet |
+
+**Caching strategy**: Polling sync every **6 hours** (BullMQ repeatable job). The data is stale-tolerable; tier changes happen at most daily. The UI always shows `limits_synced_at` so the user knows the age of the data. A manual "Refresh" button on the widget triggers a live re-fetch.
+
+---
+
+### 2 — Meta API Integration
+
+---
+
+#### [MODIFY] [meta-api.util.ts](file:///c:/Users/OMEN/Siva/whatsapp-crm/apps/api/src/whatsapp/meta-api.util.ts)
+
+Add two new exported functions:
+
+**`fetchPhoneNumberLimits(phoneNumberId, accessToken)`**
+```
+GET https://graph.facebook.com/v21.0/{phone-number-id}
+    ?fields=messaging_limit_tier,quality_rating,display_phone_number,verified_name
+    &access_token={token}
+```
+Returns `{ messagingLimitTier, qualityRating }`. Throws a typed `MetaTokenExpiredError` (error code 190) so the caller can handle expiry specifically.
+
+**`fetchWabaPhoneNumbers(wabaId, accessToken)`** *(future use, portfolio Q4)*  
+```
+GET /{waba-id}/phone_numbers?fields=messaging_limit_tier,quality_rating
+```
+
+**Error handling**:
+- HTTP 401 / `error.code === 190` → throw `MetaTokenExpiredError`
+- HTTP 429 → throw `MetaRateLimitError`
+- Other non-2xx → throw generic `MetaApiError`
+
+---
+
+#### [MODIFY] [whatsapp-webhook.service.ts](file:///c:/Users/OMEN/Siva/whatsapp-crm/apps/api/src/whatsapp/services/whatsapp-webhook.service.ts)
+
+Add handling for the `business_capability_update` change field inside `processWebhook`:
+
+```typescript
+// In processWebhook → for entry.changes loop:
+if (change.field === 'business_capability_update') {
+  await this.handleBusinessCapabilityUpdate(change.value, entry.id);
+  continue;
+}
+```
+
+New private method `handleBusinessCapabilityUpdate(value, wabaId)`:
+- Reads `value.current_limit` (the new tier string)
+- Finds the `whatsapp_config` by `waba_id`
+- Updates `messaging_limit_tier`, `tier_daily_limit`, `limits_synced_at` in DB
+- Logs the change at INFO level
+
+> [!NOTE]
+> The webhook app subscription for `business_capability_update` must be enabled in Meta's Developer Console under **Webhooks → WhatsApp Business Account → business_capability_update**. This is a one-time manual step outside the codebase.
+
+---
+
+### 3 — Backend (NestJS)
+
+---
+
+#### [NEW] `apps/api/src/whatsapp/services/messaging-limits.service.ts`
+
+Core service. Injected into the scheduler, the webhook handler, and the HTTP endpoint.
+
+**Methods**:
+
+1. **`syncAccountLimits(accountId: string): Promise<void>`**  
+   - Loads `whatsapp_config` for account (decrypt token, check expiry)  
+   - Calls `fetchPhoneNumberLimits(phoneNumberId, token)` from meta-api.util  
+   - Maps tier string → `tier_daily_limit`  
+   - `prisma.whatsapp_config.update({ messaging_limit_tier, quality_rating, tier_daily_limit, limits_synced_at: new Date() })`  
+   - On `MetaTokenExpiredError`: logs warning, does NOT throw (job continues with other accounts)
+
+2. **`getLiveUsage(accountId: string): Promise<number>`**  
+   - `COUNT(broadcast_recipients WHERE account_id=? AND status IN ('sent','delivered','read','replied') AND updated_at > NOW()-INTERVAL '24h')`  
+   - Returns 0 if no `whatsapp_config` found  
+   - Add automation/flow counts if Q3 choice is "aggregate all sources"
+
+3. **`getTierStatus(accountId: string): Promise<TierStatusDto>`**  
+   Returns `{ tier, dailyLimit, used, remaining, qualityRating, lastSyncedAt, tokenExpired }` in a single method — used by the HTTP endpoint.
+
+```typescript
+export interface TierStatusDto {
+  tier: 'TIER_250' | 'TIER_1K' | 'TIER_10K' | 'TIER_100K' | 'UNLIMITED' | null;
+  dailyLimit: number | null;          // null = unlimited or not synced
+  used: number;                       // from your own DB, last 24h
+  remaining: number | null;           // dailyLimit - used, null if unlimited
+  qualityRating: 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN' | null;
+  lastSyncedAt: string | null;        // ISO timestamp
+  tokenExpired: boolean;              // access token is past token_expires_at
+}
+```
+
+---
+
+#### [NEW] `apps/api/src/whatsapp/services/messaging-limits-sync.job.ts`
+
+BullMQ repeatable job (named `'sync-messaging-limits'` on a new `'whatsapp-limits'` queue):
+
+```typescript
+@Processor('whatsapp-limits')
+export class MessagingLimitsSyncJob extends WorkerHost {
+  async process(job: Job<{ accountId?: string }>): Promise<void> {
+    if (job.data.accountId) {
+      // On-demand single account refresh (triggered by the "Refresh" button)
+      await this.limitsService.syncAccountLimits(job.data.accountId);
+    } else {
+      // Scheduled global sweep — paginate to avoid OOM
+      const configs = await this.prisma.whatsapp_config.findMany({
+        where: { status: 'connected' },
+        select: { account_id: true },
+      });
+      for (const cfg of configs) {
+        await this.limitsService.syncAccountLimits(cfg.account_id);
+      }
+    }
+  }
+}
+```
+
+**Registration in `whatsapp.module.ts`**:
+```typescript
+BullModule.registerQueue({ name: 'whatsapp-limits' })
+```
+
+**Enqueue repeatable job on app bootstrap** (in `MessagingLimitsService.onModuleInit`):
+```typescript
+await this.limitsQueue.add(
+  'global-sync',
+  {},
+  { repeat: { every: 6 * 60 * 60 * 1000 }, jobId: 'limits-global-sync' }
+);
+```
+
+---
+
+#### [NEW] `GET /whatsapp/tier-status` in [whatsapp-dashboard.controller.ts](file:///c:/Users/OMEN/Siva/whatsapp-crm/apps/api/src/whatsapp/controllers/whatsapp-dashboard.controller.ts)
+
+```typescript
+@Get('tier-status')
+async getTierStatus(@CurrentAccount() account: SupabaseAccountContext, @Res() res: Response) {
+  const status = await this.limitsService.getTierStatus(account.accountId);
+  return res.status(200).json(status);
+}
+```
+
+**`POST /whatsapp/tier-status/refresh`** — enqueues an on-demand `accountId`-scoped sync job (returns 202 immediately; client polls `GET /tier-status` after ~3s).
+
+---
+
+### 4 — Frontend (Next.js)
+
+---
+
+#### [NEW] `apps/web/src/components/dashboard/messaging-tier-card.tsx`
+
+A self-contained "WhatsApp Limit" card component.
+
+**What it shows**:
+- **Current tier label** ("Tier 2 — 10,000/day", "Unverified — 250/day", "Unlimited")
+- **Usage progress bar** — `X used / Y limit`, color-coded (green <70%, amber 70–90%, red >90%)
+- **Quality rating badge** — pill with color (🟢 GREEN / 🟡 YELLOW / 🔴 RED / ⚪ UNKNOWN)
+- **Last synced** — "Updated 2 hours ago" relative timestamp
+- **Refresh button** — calls `POST /whatsapp/tier-status/refresh`, then re-fetches after 3s
+- **Warning state** — amber banner if usage >70% of limit, red if >90%
+- **Unverified state** — special banner: "Your number is unverified (250 msg/day limit). Verify your business in Meta Business Manager to upgrade."
+- **Token expired** — "Access token expired — reconnect your WhatsApp to re-enable syncing" with a link to Settings → WhatsApp
+
+**Placement**: Added to the **broadcast composer** (`/broadcasts/new`) as a **pre-flight warning card** above the "Send" button. Also added to the **main dashboard** as a sidebar widget below QuickActions. **Not** shown in settings (that's the credentials page, different context).
+
+**Broadcast composer gate**: If `remaining !== null && recipients > remaining`, show a red blocking banner and disable the Send button with message: "This broadcast (N recipients) would exceed your daily remaining limit (M). Reduce audience size or wait until the window resets." If quality is RED, show a non-blocking amber warning (Meta may restrict delivery).
+
+---
+
+#### [NEW] `apps/web/src/hooks/use-tier-status.ts`
+
+```typescript
+export function useTierStatus() {
+  // SWR or React Query, 5-minute client-side refresh
+  // GET /api/whatsapp/tier-status
+  // Returns TierStatusDto | null + isLoading + refresh()
+}
+```
+
+Uses the existing API proxy pattern (`/api/whatsapp/*` → NestJS backend).
+
+---
+
+#### [MODIFY] [broadcasts/new page](file:///c:/Users/OMEN/Siva/whatsapp-crm/apps/web/src/app/(dashboard)/broadcasts/new)
+
+Import `MessagingTierCard` and `useTierStatus`. Pass `recipientCount` to the card to compute the pre-flight gate.
+
+---
+
+### 5 — Edge Cases
+
+| Scenario | Behaviour |
+|---|---|
+| Account never synced (`limits_synced_at IS NULL`) | UI shows a "Checking limits…" shimmer on first mount; if GET returns `tier: null`, shows "Limits not yet loaded — click Refresh." |
+| `TIER_250` (unverified) | Dedicated blue info banner: "Upgrade your tier in Meta Business Manager." Link to Meta docs. No red warning — it's expected state. |
+| Token expired (`tokenExpired: true`) | Sync job skips account. UI shows amber banner with reconnect CTA. Does NOT block broadcasts (credentials still work for sending). |
+| Portfolio-level shared limit (Q4) | If `waba_id` is set, the `fetchWabaPhoneNumbers` call returns all numbers under the WABA. If there are >1 numbers, show a note: "Limit shared across N phone numbers under this WABA." |
+| Meta API down (sync job) | Job catches HTTP errors, does NOT update `limits_synced_at`. On next run it retries. UI continues showing last known data + stale indicator if `limits_synced_at > 12h ago`. |
+| `quality_rating = RED` | Non-blocking amber warning on broadcast composer: "Your number's quality rating is Red. Meta may pause message delivery. Avoid sending bulk messages until it recovers." |
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+```bash
+# Unit tests
+cd apps/api && npm test -- --filter "messaging-limits.service"
+# Integration test: mock Meta HTTP, verify DB update
+cd apps/api && npm test -- --filter "messaging-limits-sync"
+```
+
+Tests to write:
+- `MessagingLimitsService.syncAccountLimits` — mocks `fetchPhoneNumberLimits`, verifies DB write
+- `syncAccountLimits` with expired token — verifies skip + log, no throw
+- `getLiveUsage` — verifies correct SQL window (24h) and account scoping
+- `handleBusinessCapabilityUpdate` webhook path — verifies DB update on tier change webhook
+- `GET /whatsapp/tier-status` controller — verifies 200 + shape of `TierStatusDto`
+
+### Manual Verification
+
+1. Connect a test account → verify `limits_synced_at` populates after 6h (or trigger on-demand refresh)
+2. Hit "Refresh" button in UI → `POST /tier-status/refresh` → spinner → updated data
+3. Manually set `messaging_limit_tier = 'TIER_250'` in DB → verify unverified banner shows in UI
+4. Fake `quality_rating = 'RED'` in DB → verify composer warning shows
+5. Set `recipients > remaining` in broadcast form → verify Send button disables
+6. Send a `business_capability_update` webhook payload to `/whatsapp/webhook` → verify DB tier updates
+
+---
+
+## Execution Order
+
+1. `[MIGRATION]` `049_whatsapp_messaging_limits.sql`
+2. `[MODIFY]` `meta-api.util.ts` — add `fetchPhoneNumberLimits`, error types
+3. `[NEW]` `messaging-limits.service.ts` — `syncAccountLimits`, `getLiveUsage`, `getTierStatus`
+4. `[NEW]` `messaging-limits-sync.job.ts` — BullMQ processor + repeatable registration
+5. `[MODIFY]` `whatsapp-webhook.service.ts` — handle `business_capability_update`
+6. `[MODIFY]` `whatsapp-dashboard.controller.ts` — add `GET /tier-status` + `POST /tier-status/refresh`
+7. `[MODIFY]` `whatsapp.module.ts` — register `'whatsapp-limits'` queue + new providers
+8. `[NEW]` `use-tier-status.ts` hook (web)
+9. `[NEW]` `messaging-tier-card.tsx` component (web)
+10. `[MODIFY]` dashboard `page.tsx` — embed card
+11. `[MODIFY]` broadcasts `new` page — embed pre-flight gate
+12. `[NEW]` Unit/integration tests
