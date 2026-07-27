@@ -144,7 +144,7 @@ function SignupPageInner() {
           <CardDescription className="text-muted-foreground">
             {inviteToken
               ? "Verify your email, then accept the invitation to join your team."
-              : "Get started with Conceps WA"}
+              : "Get started with Converse360"}
           </CardDescription>
         </CardHeader>
         <CardContent>

@@ -17,7 +17,7 @@
 --   Until those two complete successfully, Meta routes inbound
 --   events to whichever app last registered the number (often the
 --   one that did Embedded Signup originally). Symptom: a second
---   Conceps WA user adds a second number under the same WABA, the UI
+--   Converse360 user adds a second number under the same WABA, the UI
 --   reports "Connected" because metadata verification succeeds,
 --   but Meta's activity log shows zero events for that number.
 --

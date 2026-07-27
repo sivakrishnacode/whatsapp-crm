@@ -94,7 +94,7 @@ export class ConnectAccountService {
           ok: false,
           status: HttpStatus.CONFLICT,
           error:
-            'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one Conceps WA user.',
+            'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one Converse360 user.',
         };
       }
 

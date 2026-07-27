@@ -22,17 +22,17 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Conceps WA",
-    template: "%s — Conceps WA",
+    default: "Converse360",
+    template: "%s — Converse360",
   },
   description: "Self-hostable WhatsApp CRM platform for agencies.",
   robots: {
     index: false,
     follow: false,
   },
-  icons: {
-    icon: [{ url: "/conceps-logo/conceps-logo.jpg" }],
-  },
+  // No `icons` override: `src/app/icon.tsx` generates the favicon from the
+  // brand mark and Next auto-injects the <link rel="icon"> for it. Declaring
+  // one here would take precedence and shadow that.
   formatDetection: {
     email: false,
     address: false,

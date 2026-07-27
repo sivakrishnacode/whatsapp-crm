@@ -50,7 +50,7 @@ function getBaseUrl(req: Request): string {
   const host = req.headers.host;
   if (host) return `${req.protocol}://${host}`;
 
-  return 'https://conceps.tech';
+  return 'https://converse360.com';
 }
 
 @Controller('account')

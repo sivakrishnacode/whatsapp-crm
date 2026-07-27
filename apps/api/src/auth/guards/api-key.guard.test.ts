@@ -11,7 +11,7 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import type { RateLimitService } from '../../common/rate-limit/rate-limit.service';
 import type { RequestWithAccountContext } from '../decorators/current-account.decorator';
 
-const VALID_KEY = 'conceps_live_abc123';
+const VALID_KEY = 'converse360_live_abc123';
 const KEY_HASH = createHash('sha256').update(VALID_KEY).digest('hex');
 
 const KEY_ROW = {
@@ -94,7 +94,7 @@ describe('ApiKeyGuard', () => {
   });
 
   it('401 when the bearer value does not look like an API key', async () => {
-    const { context, reflector } = makeContext('Bearer not-a-conceps-key');
+    const { context, reflector } = makeContext('Bearer not-a-converse360-key');
     await expectApiError(guardFor(reflector).canActivate(context), 401, 'unauthorized');
     expect(prisma.apiKey.findUnique).not.toHaveBeenCalled();
   });

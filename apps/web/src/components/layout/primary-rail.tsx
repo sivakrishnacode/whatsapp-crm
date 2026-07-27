@@ -16,11 +16,12 @@ import {
   RAIL_ONBOARDING,
   RAIL_WORKSPACE,
   channelLandingHref,
+  type NavIcon,
   type PanelGroup,
   type RailItem,
 } from '@/lib/nav/nav-config';
 import { ROLE_META } from '@/components/settings/role-meta';
-import { PresenceDot } from '@/components/presence/presence-dot';
+import { PRESENCE_DOT_CLASS, PresenceDot } from '@/components/presence/presence-dot';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -72,14 +73,60 @@ function withTooltip(element: ReactElement, label: string | null): ReactNode {
   );
 }
 
-function UnreadDot({ count }: { count: number }) {
+function UnreadDot({ count, className }: { count: number; className?: string }) {
   return (
     <span
       aria-label={`${count} unread conversation${count === 1 ? '' : 's'}`}
-      className="relative flex size-2 shrink-0"
+      className={cn('relative flex size-2 shrink-0', className)}
     >
       <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-75" />
       <span className="relative inline-flex size-2 rounded-full bg-primary" />
+    </span>
+  );
+}
+
+/**
+ * The icon slot for a rail row, with an optional status pip.
+ *
+ * At the collapsed width a row is icon-only and centred, so an inline pip
+ * after the icon would push the icon off-centre — flex centres `icon + pip`
+ * as a pair, not the icon. The pip therefore becomes a corner badge on the
+ * icon itself: the icon stays optically centred and the state is still
+ * visible. `ring-card` knocks the badge out from the icon behind it so it
+ * reads as a separate element at 8px.
+ *
+ * `pipClass` is the pip's colour; `badgeClass` controls whether the corner
+ * variant is showing (collapsed desktop only).
+ */
+function RailIconSlot({
+  icon: Icon,
+  iconClassName,
+  pipClass,
+  pipLabel,
+  pipTitle,
+  badgeClass,
+}: {
+  icon: NavIcon;
+  iconClassName?: string;
+  pipClass?: string | null;
+  pipLabel?: string;
+  pipTitle?: string;
+  badgeClass: string;
+}) {
+  return (
+    <span className="relative flex shrink-0">
+      <Icon className={cn('size-4 shrink-0', iconClassName)} />
+      {pipClass ? (
+        <span
+          aria-label={pipLabel}
+          title={pipTitle}
+          className={cn(
+            'absolute -top-1 -right-1 size-2 rounded-full ring-2 ring-card',
+            pipClass,
+            badgeClass,
+          )}
+        />
+      ) : null}
     </span>
   );
 }
@@ -118,7 +165,10 @@ export function PrimaryRail({
   // Collapse only takes effect at lg+, so every "is it narrow?" class is
   // an `lg:` variant. See the component docblock.
   const rowClass = collapsed ? 'px-3 lg:justify-center lg:px-0' : 'px-3';
+  /** Hidden at the collapsed desktop width; visible everywhere else. */
   const labelClass = collapsed ? 'lg:hidden' : '';
+  /** The inverse: visible ONLY at the collapsed desktop width. */
+  const badgeClass = collapsed ? 'hidden lg:block' : 'hidden';
 
   const rowShell = (active: boolean, extra?: string) =>
     cn(
@@ -139,9 +189,16 @@ export function PrimaryRail({
         aria-current={isActive ? 'page' : undefined}
         className={rowShell(isActive)}
       >
-        <item.icon className="size-4 shrink-0" />
+        <RailIconSlot
+          icon={item.icon}
+          pipClass={showDot ? 'bg-primary' : null}
+          pipLabel={`${totalUnread} unread`}
+          badgeClass={badgeClass}
+        />
         <span className={cn('flex-1 truncate', labelClass)}>{item.label}</span>
-        {showDot ? <UnreadDot count={totalUnread} /> : null}
+        {/* Inline pip for the labelled widths; the corner badge above
+            covers the collapsed one. */}
+        {showDot ? <UnreadDot count={totalUnread} className={labelClass} /> : null}
       </Link>
     );
     return <li key={item.id}>{withTooltip(row, collapsed ? item.label : null)}</li>;
@@ -181,24 +238,51 @@ export function PrimaryRail({
             collapsed ? 'px-3 lg:justify-center lg:px-0' : 'px-3',
           )}
         >
+          {/* Brand lockup.
+              Both assets sit on an explicit white plate: the wordmark's
+              type is #191919, which disappears against `bg-card` in dark
+              mode. The plate is the logo's background, not the rail's.
+
+              Two assets rather than one because the lockup is 6.8:1 — it
+              cannot render legibly in the 56px collapsed rail, so that
+              width gets the square "C" crop instead. Both are viewBox
+              crops of the same source artwork. */}
           <Link
             href="/dashboard"
-            className="flex min-w-0 items-center gap-2"
-            aria-label="Conceps WA home"
+            className={cn(
+              'flex min-w-0 items-center',
+              // `flex-1` makes the link fill the row so the mobile close
+              // button is pushed to the far edge — but a stretched child
+              // cancels the parent's `lg:justify-center`, which left the
+              // collapsed mark pinned to the left. Release it at the
+              // collapsed width so the centring actually applies.
+              collapsed ? 'flex-1 lg:flex-none' : 'flex-1',
+            )}
+            aria-label="Converse360 home"
           >
-            <img
-              src="/conceps-logo/conceps-logo-01.svg"
-              alt=""
-              className="size-8 shrink-0 rounded-lg"
-            />
+            {/* Wordmark — hidden at the collapsed desktop width. */}
             <span
               className={cn(
-                'truncate text-sm font-semibold text-foreground',
+                'flex min-w-0 items-center rounded-lg bg-white px-2 py-1.5',
                 labelClass,
               )}
             >
-              Conceps WA
+              <img
+                src="/brand/converse360-wordmark.svg"
+                alt="Converse360"
+                className="h-5 w-auto max-w-full object-contain"
+              />
             </span>
+            {/* Square mark — only at the collapsed desktop width. */}
+            {collapsed ? (
+              <span className="hidden size-8 shrink-0 items-center justify-center rounded-lg bg-white lg:flex">
+                <img
+                  src="/brand/converse360-mark.svg"
+                  alt="Converse360"
+                  className="size-6 object-contain"
+                />
+              </span>
+            ) : null}
           </Link>
           {/* Desktop collapse toggle — the "pin" from the reference. */}
           <button
@@ -297,26 +381,47 @@ export function PrimaryRail({
               const locked = channel.status === 'locked';
               const status = statuses[channel.id];
 
+              // Connection state, as a pip colour. Replaces the old red
+              // warning dot that used to hang off the Settings row.
+              const pipClass =
+                status?.state === 'connected'
+                  ? PRESENCE_DOT_CLASS.online
+                  : status?.state === 'not_connected'
+                    ? 'bg-red-500'
+                    : null;
+              const pipLabel =
+                status?.state === 'connected'
+                  ? `${channel.label} connected`
+                  : status?.state === 'not_connected'
+                    ? `${channel.label} not connected`
+                    : undefined;
+
               // Row innards are identical whether the row is a link or a
               // locked span, so build them once.
               const inner = (
                 <>
-                  <channel.icon
-                    className={cn('size-4 shrink-0', !locked && channel.accentClass)}
+                  <RailIconSlot
+                    icon={channel.icon}
+                    iconClassName={!locked ? channel.accentClass : undefined}
+                    pipClass={pipClass}
+                    pipLabel={pipLabel}
+                    pipTitle={status?.message}
+                    badgeClass={badgeClass}
                   />
                   <span className={cn('flex-1 truncate', labelClass)}>
                     {channel.label}
                   </span>
-                  {/* Connection dot — replaces the old red warning dot
-                      that used to hang off the Settings row. */}
-                  {status?.state === 'connected' ? (
-                    <PresenceDot status="online" label={`${channel.label} connected`} />
-                  ) : null}
-                  {status?.state === 'not_connected' ? (
+                  {/* Inline pip for the labelled widths; the corner badge
+                      in the icon slot covers the collapsed one. */}
+                  {pipClass ? (
                     <span
-                      aria-label={`${channel.label} not connected`}
-                      title={status.message}
-                      className="inline-block size-2 shrink-0 rounded-full bg-red-500"
+                      aria-label={pipLabel}
+                      title={status?.message}
+                      className={cn(
+                        'inline-block size-2 shrink-0 rounded-full',
+                        pipClass,
+                        labelClass,
+                      )}
                     />
                   ) : null}
                 </>
@@ -450,20 +555,20 @@ export function PrimaryRail({
                 </p>
                 {accountRole
                   ? (() => {
-                      const meta = ROLE_META[accountRole];
-                      const Icon = meta.icon;
-                      return (
-                        <span
-                          className={cn(
-                            'mt-1.5 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase',
-                            meta.className,
-                          )}
-                        >
-                          <Icon className="size-3" />
-                          {meta.label}
-                        </span>
-                      );
-                    })()
+                    const meta = ROLE_META[accountRole];
+                    const Icon = meta.icon;
+                    return (
+                      <span
+                        className={cn(
+                          'mt-1.5 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase',
+                          meta.className,
+                        )}
+                      >
+                        <Icon className="size-3" />
+                        {meta.label}
+                      </span>
+                    );
+                  })()
                   : null}
               </div>
               <DropdownMenuSeparator className="bg-border" />

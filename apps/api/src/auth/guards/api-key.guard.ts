@@ -14,8 +14,9 @@ import {
   type ApiScope,
 } from '../decorators/require-scope.decorator';
 import type { RequestWithAccountContext } from '../decorators/current-account.decorator';
-
-const API_KEY_PREFIX = 'conceps_live_';
+// Imported rather than re-declared: a second copy of this string would let
+// key generation and key validation drift apart silently.
+import { API_KEY_PREFIX } from '../../account/utils/api-keys.util';
 
 /** Rate limit for the public REST API. */
 const PUBLIC_API_RATE_LIMIT = { limit: 120, windowMs: 60_000 };

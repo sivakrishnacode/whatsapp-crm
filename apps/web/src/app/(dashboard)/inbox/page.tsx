@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
-const CONTACT_PANEL_STORAGE_KEY = "conceps:inbox:contact-panel-open";
+const CONTACT_PANEL_STORAGE_KEY = "converse360:inbox:contact-panel-open";
 
 export default function InboxPage() {
   const router = useRouter();

@@ -1,8 +1,8 @@
 {
   "name": "api",
   "version": "0.0.1",
-  "description": "Conceps WA — NestJS + Prisma backend",
-  "author": "Conceps",
+  "description": "Converse360 — NestJS + Prisma backend",
+  "author": "Converse360",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {

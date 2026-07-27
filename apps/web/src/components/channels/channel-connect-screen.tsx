@@ -56,11 +56,13 @@ export function ChannelConnectScreen({
           channel.connectArtClass,
         )}
       >
-        <div className="flex size-28 items-center justify-center rounded-full bg-card shadow-sm">
+        {/* White plate, not `bg-card`: the mark's type is #191919 and would
+            vanish against the dark-mode card surface. */}
+        <div className="flex size-28 items-center justify-center rounded-full bg-white shadow-sm">
           <img
-            src="/conceps-logo/conceps-logo-01.svg"
+            src="/brand/converse360-mark.svg"
             alt=""
-            className="size-14 rounded-lg"
+            className="size-14 object-contain"
           />
         </div>
         <ArrowLeftRight className="size-8 text-foreground/70" />

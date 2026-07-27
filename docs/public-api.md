@@ -1,6 +1,6 @@
 # Public API (`/api/v1`)
 
-The public API lets you drive your Conceps WA instance from your own
+The public API lets you drive your Converse360 instance from your own
 scripts and automations — send messages, manage contacts, launch
 broadcasts — without going through the dashboard UI.
 
@@ -14,7 +14,7 @@ Every request authenticates with an **API key**, sent as a bearer
 token:
 
 ```
-Authorization: Bearer conceps_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+Authorization: Bearer converse360_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 Keys are **account-scoped**: a key acts on exactly one account, the
@@ -27,7 +27,7 @@ In the dashboard: **Settings → API keys → New API key**. Only
 
 1. Give the key a name (after the integration that will use it).
 2. Grant the **scopes** it needs — nothing more (see below).
-3. Copy the key. **The full key is shown exactly once.** Conceps WA
+3. Copy the key. **The full key is shown exactly once.** Converse360
    stores only a SHA-256 hash, so it can never be shown again. If you
    lose it, revoke it and create a new one.
 
@@ -103,7 +103,7 @@ and to discover its scopes.
 
 ```bash
 curl https://your-crm.example.com/api/v1/me \
-  -H "Authorization: Bearer conceps_live_xxx"
+  -H "Authorization: Bearer converse360_live_xxx"
 ```
 
 ```json
@@ -123,7 +123,7 @@ finds-or-creates the contact + conversation, then sends.
 
 ```bash
 curl -X POST https://your-crm.example.com/api/v1/messages \
-  -H "Authorization: Bearer conceps_live_xxx" \
+  -H "Authorization: Bearer converse360_live_xxx" \
   -H "Content-Type: application/json" \
   -d '{ "to": "+14155550123", "type": "text", "text": "Hi 👋" }'
 ```
@@ -228,7 +228,7 @@ returns fast — poll `GET /api/v1/broadcasts/{id}` for progress.
 
 ```bash
 curl -X POST https://your-crm.example.com/api/v1/broadcasts \
-  -H "Authorization: Bearer conceps_live_xxx" \
+  -H "Authorization: Bearer converse360_live_xxx" \
   -H "Content-Type: application/json" \
   -d '{
         "name": "July promo",
@@ -283,7 +283,7 @@ last page.
 
 ## Webhooks
 
-Rather than polling, register an endpoint and Conceps WA will POST to it when
+Rather than polling, register an endpoint and Converse360 will POST to it when
 things happen in your account. **Migration required:** apply
 `supabase/migrations/028_webhook_endpoints.sql`.
 
@@ -299,7 +299,7 @@ things happen in your account. **Migration required:** apply
 
 All under scope `webhooks:manage`.
 
-- `POST /api/v1/webhooks` — register `{ "url": "https://…", "events": ["message.received"] }`. `url` must be `https://`. **The response includes `secret` exactly once** — store it to verify signatures; Conceps WA keeps only an encrypted copy.
+- `POST /api/v1/webhooks` — register `{ "url": "https://…", "events": ["message.received"] }`. `url` must be `https://`. **The response includes `secret` exactly once** — store it to verify signatures; Converse360 keeps only an encrypted copy.
 - `GET /api/v1/webhooks` — list your endpoints (never returns the secret).
 - `GET /api/v1/webhooks/{id}` — read one.
 - `PATCH /api/v1/webhooks/{id}` — update `url`, `events`, or `is_active` (re-enabling clears the failure counter).
@@ -307,9 +307,9 @@ All under scope `webhooks:manage`.
 
 ```bash
 curl -X POST https://your-crm.example.com/api/v1/webhooks \
-  -H "Authorization: Bearer conceps_live_xxx" \
+  -H "Authorization: Bearer converse360_live_xxx" \
   -H "Content-Type: application/json" \
-  -d '{ "url": "https://example.com/hooks/conceps", "events": ["message.received"] }'
+  -d '{ "url": "https://example.com/hooks/converse360", "events": ["message.received"] }'
 # → 201 { "data": { "id": "…", "url": "…", "events": [...], "secret": "whsec_…" } }
 ```
 
@@ -339,11 +339,11 @@ delivery uuid you can dedupe on, and `data` varies by `event`:
 { "whatsapp_message_id": "wamid.…", "conversation_id": "…", "status": "delivered" }
 ```
 
-Headers: `X-Conceps-Event`, `X-Conceps-Webhook-Id`, and `X-Conceps-Signature`.
+Headers: `X-Converse360-Event`, `X-Converse360-Webhook-Id`, and `X-Converse360-Signature`.
 
 ### Verifying the signature
 
-`X-Conceps-Signature: t=<unix_seconds>,v1=<hex>` where `v1 =
+`X-Converse360-Signature: t=<unix_seconds>,v1=<hex>` where `v1 =
 HMAC-SHA256(secret, "${t}.${rawBody}")`. Recompute it over the **raw
 request body** and compare in constant time; reject if `t` is more than
 a few minutes old (replay protection).
@@ -359,7 +359,7 @@ const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1));
 
 Delivery is **best-effort**: a single attempt per event with a short
 timeout, and **redirects are not followed**. `message.status_updated`
-covers messages Conceps WA stores (inbox + API sends), not broadcast-only
+covers messages Converse360 stores (inbox + API sends), not broadcast-only
 sends, and — because providers re-send and re-order status callbacks —
 the same status may arrive more than once or out of order; **dedupe on
 `id` and don't assume ordering**. Each consecutive failure increments
@@ -378,6 +378,6 @@ internal targets are refused at delivery time.
 
 The public API now covers messaging, contacts, conversations,
 broadcasts, and outbound webhooks — the full scope of
-[#245](https://github.com/your-org/conceps-wa/issues/245). Future ideas
+[#245](https://github.com/your-org/converse360/issues/245). Future ideas
 (deals/pipelines, templates, flows, a delivery queue for webhooks) are
 not yet scheduled.

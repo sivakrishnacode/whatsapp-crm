@@ -5,7 +5,15 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 
-export const API_KEY_PREFIX = 'conceps_live_';
+/**
+ * Prefix on every issued key, and the first thing the auth guard checks.
+ *
+ * Single source of truth on purpose: this used to be duplicated as a
+ * private const inside api-key.guard.ts, which meant editing it in one
+ * place would issue keys the other place rejects. Any future rebrand that
+ * touches this string must only have to touch it here.
+ */
+export const API_KEY_PREFIX = 'converse360_live_';
 const DISPLAY_BODY_CHARS = 8;
 
 export interface GeneratedApiKey {

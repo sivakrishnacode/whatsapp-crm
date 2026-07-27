@@ -7,7 +7,7 @@
 -- rows returned") and the webhook silently drops every inbound
 -- message — see issue #136.
 --
--- Conceps WA is single-tenant per WhatsApp number by design (RLS on
+-- Converse360 is single-tenant per WhatsApp number by design (RLS on
 -- conversations / messages is `auth.uid() = user_id`, so another user
 -- physically cannot read a conversation routed to a different owner).
 -- A UNIQUE constraint at the DB level makes that intent enforceable

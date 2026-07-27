@@ -387,7 +387,7 @@ have been ported yet.
       drifted before assuming byte-identical behavior. Preserve the delivery
       envelope/signature format exactly:
       `{id, event, occurred_at, account_id, data}`,
-      headers `X-Conceps-Event`/`X-Conceps-Webhook-Id`/`X-Conceps-Signature`,
+      headers `X-Converse360-Event`/`X-Converse360-Webhook-Id`/`X-Converse360-Signature`,
       signature `t=<unix>,v1=HMAC-SHA256(secret, "${t}.${rawBody}")`.
 - [x] **`next.config.ts` rewrites** — `/api/v1` + `/api/v1/:path*` → Nest,
       `beforeFiles`.

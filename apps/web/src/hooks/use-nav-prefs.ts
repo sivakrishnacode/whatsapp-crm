@@ -21,8 +21,8 @@ import { useCallback, useSyncExternalStore } from 'react';
  *     subscription, so collapsing the rail in one tab updates the others.
  */
 
-const RAIL_KEY = 'conceps:nav:rail-expanded';
-const PANEL_KEY = 'conceps:nav:panel-open';
+const RAIL_KEY = 'converse360:nav:rail-expanded';
+const PANEL_KEY = 'converse360:nav:panel-open';
 
 type Listener = () => void;
 const listeners = new Set<Listener>();

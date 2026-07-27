@@ -1,17 +1,17 @@
 {
-  "name": "conceps-wa",
+  "name": "converse360",
   "version": "1.0.0",
   "private": true,
-  "description": "Conceps WA — WhatsApp CRM and automation platform for agencies",
+  "description": "Converse360 — WhatsApp CRM and automation platform for agencies",
   "license": "MIT",
-  "author": "Conceps",
-  "homepage": "https://github.com/your-org/conceps-wa",
+  "author": "Converse360",
+  "homepage": "https://github.com/your-org/converse360",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/conceps-wa.git"
+    "url": "git+https://github.com/your-org/converse360.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/conceps-wa/issues"
+    "url": "https://github.com/your-org/converse360/issues"
   },
   "workspaces": [
     "apps/*",

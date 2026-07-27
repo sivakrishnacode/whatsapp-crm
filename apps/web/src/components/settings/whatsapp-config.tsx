@@ -534,7 +534,7 @@ export function WhatsAppConfig() {
                   }
                 >
                   {isRegistered
-                    ? 'Registered — Meta will deliver events to Conceps WA'
+                    ? 'Registered — Meta will deliver events to Converse360'
                     : 'Not registered — Meta will not deliver events'}
                 </AlertTitle>
               </div>
@@ -722,7 +722,7 @@ export function WhatsAppConfig() {
                       Meta Business Manager → WhatsApp Accounts → Phone
                       Numbers → Two-step verification
                     </strong>
-                    , then paste it here so Conceps WA can subscribe the number —
+                    , then paste it here so Converse360 can subscribe the number —
                     otherwise Meta routes inbound events to whichever app
                     last claimed it (the symptom that hits second numbers
                     under a shared WABA).{' '}

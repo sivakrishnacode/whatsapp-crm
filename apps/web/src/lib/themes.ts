@@ -25,7 +25,7 @@ export type ThemeId = (typeof THEME_IDS)[number];
 
 export const DEFAULT_THEME: ThemeId = "violet";
 
-export const STORAGE_KEY = "conceps.theme";
+export const STORAGE_KEY = "converse360.theme";
 
 /**
  * MODE — the light/dark dimension, orthogonal to the accent theme.
@@ -45,7 +45,7 @@ export type Mode = (typeof MODES)[number];
 
 export const DEFAULT_MODE: Mode = "dark";
 
-export const MODE_STORAGE_KEY = "conceps.mode";
+export const MODE_STORAGE_KEY = "converse360.mode";
 
 export function isMode(value: unknown): value is Mode {
   return (

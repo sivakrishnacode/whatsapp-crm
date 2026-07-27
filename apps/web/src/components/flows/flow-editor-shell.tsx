@@ -47,7 +47,7 @@ const MOBILE_BREAKPOINT = "(max-width: 767px)";
 
 type View = "canvas" | "list";
 
-const STORAGE_KEY = "conceps.flowEditor.view";
+const STORAGE_KEY = "converse360.flowEditor.view";
 
 // Legend covers every node type, derived from NODE_META so a new type
 // can't silently go undocumented. NODE_META's key order already reads

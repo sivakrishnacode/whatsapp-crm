@@ -3,7 +3,7 @@
 --
 -- Adds a lightweight presence layer so the Team members roster (and
 -- the inbox Assign dropdown) can show who is actively using the
--- dashboard, idle, or gone. Implements conceps-wa#269.
+-- dashboard, idle, or gone. Implements converse360#269.
 --
 -- Design
 --

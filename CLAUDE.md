@@ -9,7 +9,7 @@
 
 ## What this is
 
-`conceps-wa` (dir: `wacrm`) — a **WhatsApp CRM** platform. It connects a business's
+`converse360` (dir: `wacrm`) — a **WhatsApp CRM** platform. It connects a business's
 WhatsApp Business account (via the **Meta WhatsApp Cloud API**) and layers on contacts,
 conversations/inbox, broadcasts/campaigns, deal pipelines, no-code **automations** and
 **flows**, e-commerce, an AI assistant, and a public/partner API — all multi-tenant

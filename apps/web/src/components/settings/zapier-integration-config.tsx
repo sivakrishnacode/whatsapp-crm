@@ -221,7 +221,7 @@ export function ZapierIntegrationConfig() {
               Signing secret (shown once)
             </p>
             <p className="text-muted-foreground leading-relaxed">
-              Optional — use this to verify the <code className="bg-muted/50 px-1 rounded">X-Conceps-Signature</code>{' '}
+              Optional — use this to verify the <code className="bg-muted/50 px-1 rounded">X-Converse360-Signature</code>{' '}
               header in a &quot;Code by Zapier&quot; step. Zapier&apos;s Catch Hook trigger works fine without it.
             </p>
             <div className="flex gap-2">
