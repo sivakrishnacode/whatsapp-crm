@@ -34,7 +34,7 @@
 //   <GatedButton
 //     canAct={canCreate}
 //     gateReason="create broadcasts"
-//     onClick={() => router.push("/broadcasts/new")}
+//     onClick={() => router.push("/channels/whatsapp/broadcasts/new")}
 //   >
 //     <Plus className="h-4 w-4" /> New Broadcast
 //   </GatedButton>

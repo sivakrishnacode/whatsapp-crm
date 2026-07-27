@@ -159,6 +159,38 @@ const nextConfig: NextConfig = {
       fallback: [],
     };
   },
+  /**
+   * Legacy flat routes → their channel-scoped homes.
+   *
+   * The dual-sidebar IA moved every WhatsApp-specific page under
+   * `/channels/whatsapp/*`. These keep bookmarks, shared links and any
+   * still-cached HTML working.
+   *
+   * `permanent: false` (307/308) on purpose: a permanent redirect gets
+   * cached hard by browsers and the CDN, which would make a future
+   * reshuffle of this IA very painful to undo. Flip to `true` once the
+   * structure has settled.
+   *
+   * Query strings pass through automatically, so `/ecommerce?tab=orders`
+   * lands on `/channels/whatsapp/commerce?tab=orders`. Note that
+   * `redirects` run BEFORE proxy/middleware — the destinations must
+   * therefore also be covered by `protectedPaths` in middleware.ts.
+   */
+  async redirects() {
+    const moved: [string, string][] = [
+      ["/broadcasts", "/channels/whatsapp/broadcasts"],
+      ["/campaigns", "/channels/whatsapp/campaigns"],
+      ["/templates", "/channels/whatsapp/templates"],
+      ["/whatsapp-flows", "/channels/whatsapp/flows"],
+      ["/ecommerce", "/channels/whatsapp/commerce"],
+      ["/ctwa", "/channels/whatsapp/ctwa"],
+    ];
+    return moved.flatMap(([from, to]) => [
+      { source: from, destination: to, permanent: false },
+      // Nested paths too: /broadcasts/new, /broadcasts/<id>, /whatsapp-flows/<id>.
+      { source: `${from}/:path*`, destination: `${to}/:path*`, permanent: false },
+    ]);
+  },
   async headers() {
     return [
       {

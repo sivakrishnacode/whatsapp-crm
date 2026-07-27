@@ -124,7 +124,7 @@ export default function NewBroadcastPage() {
       return;
     }
     toast.success('Draft saved');
-    router.push('/broadcasts');
+    router.push('/channels/whatsapp/broadcasts');
   }
 
   return (
@@ -191,7 +191,7 @@ export default function NewBroadcastPage() {
               selectedTemplate={template}
               onSelect={setTemplate}
               onNext={() => setCurrentStep(1)}
-              onBack={() => router.push('/broadcasts')}
+              onBack={() => router.push('/channels/whatsapp/broadcasts')}
             />
           )}
           {currentStep === 1 && (

@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 // Favicon — the Conceps "C" brand mark (red) on a transparent background.
-// Matches the sidebar logo in `src/components/layout/sidebar.tsx`.
+// Matches the rail logo in `src/components/layout/primary-rail.tsx`.
 // Next.js renders this at build time and auto-injects <link rel="icon">.
 
 export const runtime = "edge";

@@ -1,22 +1,32 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { CatalogueTab } from '@/components/whatsapp-shop/catalogue-tab';
 import { OrdersTab } from '@/components/whatsapp-shop/orders-tab';
 import { ShoppingBag } from 'lucide-react';
 
-export default function EcommercePage() {
-  const [activeTab, setActiveTab] = useState<'catalogue' | 'orders'>('catalogue');
+type CommerceTab = 'catalogue' | 'orders';
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const tab = params.get('tab');
-      if (tab === 'catalogue' || tab === 'orders') {
-        setActiveTab(tab);
-      }
-    }
-  }, []);
+/**
+ * WhatsApp Commerce — catalogue + orders.
+ *
+ * `?tab=` is the source of truth rather than local state seeded from a
+ * mount-time `window.location.search` read. That mattered once the second
+ * sidebar gained separate Catalog and Orders rows pointing at this same
+ * page: the old mount-only effect never re-ran on a client-side
+ * navigation, so going Catalog → Orders changed the URL but left the
+ * catalogue rendered. `useSearchParams` is reactive, so both rows work
+ * and each tab stays deep-linkable.
+ */
+export default function WhatsAppCommercePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const raw = searchParams.get('tab');
+  const activeTab: CommerceTab = raw === 'orders' ? 'orders' : 'catalogue';
+
+  const setActiveTab = (tab: CommerceTab) => {
+    router.replace(`/channels/whatsapp/commerce?tab=${tab}`, { scroll: false });
+  };
 
   return (
     <div className="space-y-6">

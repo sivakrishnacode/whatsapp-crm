@@ -1,11 +1,8 @@
 'use client';
 
-import { useMemo, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-import { useAuth } from '@/hooks/use-auth';
-import { useTheme } from '@/hooks/use-theme';
-import { SettingsRail } from '@/components/settings/settings-rail';
 import { SettingsOverview } from '@/components/settings/settings-overview';
 import { ProfileForm } from '@/components/settings/profile-form';
 import { SecurityPanel } from '@/components/settings/security-panel';
@@ -16,41 +13,27 @@ import { DealsSettings } from '@/components/settings/deals-settings';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { PricingSettings } from '@/components/settings/pricing-settings';
 import {
+  SECTION_META,
   resolveSection,
   type SettingsSection,
 } from '@/components/settings/settings-sections';
 
+/**
+ * Settings — panel host only.
+ *
+ * The section list used to be an in-page left rail (`<SettingsRail>`);
+ * it is now the app's second sidebar, so this page renders just the
+ * selected panel. `?tab=` remains the single source of truth for which
+ * section is active — deep-linkable, and `resolveSection` still maps the
+ * legacy `tags` / `custom-fields` values onto their merged home, so
+ * every existing link keeps working.
+ */
 export default function SettingsPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const { defaultCurrency } = useAuth();
-  const { mode } = useTheme();
-
-  // The URL (`?tab=`) is the single source of truth for the active
-  // section — deep-linkable, and it keeps the existing links in the
-  // app sidebar/header working. Legacy tab values (tags, custom-fields)
-  // resolve onto their new home; unknown/empty → the Overview landing.
   const section = resolveSection(searchParams.get('tab'));
 
-  const go = (next: SettingsSection) => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set('tab', next);
-    router.replace(`/settings?${params.toString()}`, { scroll: false });
-  };
-
-  // Cheap, fetch-free rail hints. The Overview landing carries the
-  // full live status/counts; the rail just surfaces the two that are
-  // already in context.
-  const hints: Partial<Record<SettingsSection, ReactNode>> = useMemo(
-    () => ({
-      appearance: mode.charAt(0).toUpperCase() + mode.slice(1),
-      deals: defaultCurrency,
-    }),
-    [mode, defaultCurrency],
-  );
-
   const panel: Record<SettingsSection, ReactNode> = {
-    overview: <SettingsOverview onSelect={go} />,
+    overview: <SettingsOverviewLanding />,
     profile: <ProfileForm />,
     security: <SecurityPanel />,
     appearance: <AppearancePanel />,
@@ -61,21 +44,38 @@ export default function SettingsPage() {
     pricing: <PricingSettings />,
   };
 
+  const meta = SECTION_META[section];
+
+  return (
+    <div className="mx-auto max-w-4xl">
+      {section !== 'overview' ? (
+        <h1 className="mb-6 text-2xl font-bold tracking-tight text-foreground">
+          {meta.label}
+        </h1>
+      ) : null}
+      <div className="min-w-0">{panel[section]}</div>
+    </div>
+  );
+}
+
+/**
+ * The Overview landing keeps its own heading + intro. Its cards navigate
+ * by `?tab=` — the same URL contract the sidebar uses, so the second
+ * sidebar's highlight follows along with no extra wiring.
+ */
+function SettingsOverviewLanding() {
+  const router = useRouter();
   return (
     <div>
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          Settings
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Everything in one place — your account and your workspace. Pick a
-          section to manage it.
-        </p>
-      </div>
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
-        <SettingsRail active={section} onSelect={go} hints={hints} />
-        <div className="min-w-0">{panel[section]}</div>
+      <h1 className="text-2xl font-bold tracking-tight text-foreground">Settings</h1>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Everything in one place — your account and your workspace. Pick a section to
+        manage it.
+      </p>
+      <div className="mt-6">
+        <SettingsOverview
+          onSelect={(next) => router.push(`/settings?tab=${next}`, { scroll: false })}
+        />
       </div>
     </div>
   );

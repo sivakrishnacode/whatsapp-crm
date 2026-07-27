@@ -70,7 +70,24 @@ export async function middleware(request: NextRequest) {
   }
 
   // Protected pages - redirect to login if not authenticated
-  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings']
+  // NOTE: next.config.ts `redirects()` runs BEFORE this, so the legacy
+  // flat paths (/broadcasts, /templates, …) never reach here — their
+  // channel-scoped destinations under /channels do, hence the entry below.
+  const protectedPaths = [
+    '/dashboard',
+    '/onboarding',
+    '/inbox',
+    '/contacts',
+    '/pipelines',
+    '/channels',
+    '/automations',
+    '/flows',
+    '/agents',
+    '/notifications',
+    '/members',
+    '/integrations',
+    '/settings',
+  ]
   if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'

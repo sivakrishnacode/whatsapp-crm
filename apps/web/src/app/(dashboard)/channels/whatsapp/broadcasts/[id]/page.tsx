@@ -298,7 +298,7 @@ export default function BroadcastDetailPage() {
       return;
     }
     toast.success('Broadcast deleted');
-    router.push('/broadcasts');
+    router.push('/channels/whatsapp/broadcasts');
   }
 
   if (loading) {
@@ -313,7 +313,7 @@ export default function BroadcastDetailPage() {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
         <p className="text-sm text-red-400">{error ?? 'Broadcast not found'}</p>
-        <Button variant="outline" onClick={() => router.push('/broadcasts')}>
+        <Button variant="outline" onClick={() => router.push('/channels/whatsapp/broadcasts')}>
           Back to Broadcasts
         </Button>
       </div>
@@ -337,7 +337,7 @@ export default function BroadcastDetailPage() {
           <Button
             variant="outline"
             size="icon"
-            onClick={() => router.push('/broadcasts')}
+            onClick={() => router.push('/channels/whatsapp/broadcasts')}
             className="border-border"
           >
             <ArrowLeft className="h-4 w-4" />

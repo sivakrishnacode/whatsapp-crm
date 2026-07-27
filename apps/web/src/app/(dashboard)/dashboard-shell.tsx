@@ -1,24 +1,46 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Settings as SettingsIcon } from "lucide-react";
+
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
-import { Sidebar } from "@/components/layout/sidebar";
+import { useNavPrefs } from "@/hooks/use-nav-prefs";
+import { ChannelStatusProvider } from "@/hooks/use-channel-status";
+import { PrimaryRail } from "@/components/layout/primary-rail";
+import { SecondaryPanel } from "@/components/layout/secondary-panel";
 import { Header } from "@/components/layout/header";
 import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { resolveNavContext } from "@/lib/nav/nav-config";
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
 // itself can stay a server component and export metadata (noindex) —
 // client components can't export Next's metadata object.
+//
+// Layout is now three columns: primary rail | secondary panel (only on
+// routes that have one) | header + main. Which panel to show, which rows
+// to highlight and what the header says all come from a single
+// `resolveNavContext(pathname, search)` call — see lib/nav/nav-config.ts.
 
-function DashboardShellInner({ children }: { children: React.ReactNode }) {
+/**
+ * Auth gate — owns the loading / signed-out branches.
+ *
+ * Deliberately OUTSIDE the `<Suspense>` boundary below, and it must stay
+ * there. Suspense boundaries hydrate independently of their parents: when
+ * this branch lived inside the boundary, `AuthProvider` (outside it)
+ * hydrated and committed first, its effect flipped `loading` to false, and
+ * only then did the boundary's children hydrate — rendering the loaded
+ * shell against server HTML that still said "spinner". That's a hydration
+ * mismatch by construction.
+ *
+ * With the branch out here, the whole spinner tree hydrates in one pass
+ * with `loading: true` (matching the server), and the switch to the real
+ * shell afterwards is an ordinary client state update, not hydration.
+ */
+function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
-
-  // Sidebar drawer state — only used on mobile. On lg+ the sidebar is
-  // always visible and this stays at `false` (ignored by the component).
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -39,25 +61,110 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
 
+  return <>{children}</>;
+}
+
+function DashboardShellInner({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const { railExpanded, toggleRail, panelOpen, togglePanel } = useNavPrefs();
+
+  // Rail drawer state — only used on mobile. On lg+ the rail is always
+  // visible and this stays closed (ignored by the component).
+  //
+  // Stored as "the route the drawer was opened on" rather than a plain
+  // boolean, so closing-on-navigate is a *derivation* instead of an
+  // effect that syncs state to the pathname: the moment the route
+  // changes, `drawerOpen` is false on the very same render. Users open
+  // the drawer to go somewhere, so it should never survive the trip.
+  const [openedAt, setOpenedAt] = useState<string | null>(null);
+  const drawerOpen = openedAt !== null && openedAt === pathname;
+  const openDrawer = useCallback(() => setOpenedAt(pathname), [pathname]);
+  const closeDrawer = useCallback(() => setOpenedAt(null), []);
+
+  const nav = useMemo(
+    () => resolveNavContext(pathname, searchParams.toString()),
+    [pathname, searchParams],
+  );
+
+  // Lock body scroll and allow Escape to close while the drawer is open on
+  // mobile. No-ops on desktop because the rail isn't positioned there.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenedAt(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [drawerOpen]);
+
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      {/* Reports this tab's online/away presence once we know a user is
-          signed in. Headless — renders nothing. */}
-      <PresenceHeartbeat />
-      <Sidebar open={sidebarOpen} onClose={closeSidebar} />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <Header onOpenSidebar={() => setSidebarOpen(true)} />
-        {/* Thinner horizontal padding on mobile so cards have room to breathe. */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
-      </div>
-    </div>
+    <TooltipProvider>
+      <ChannelStatusProvider>
+        <div className="flex h-screen overflow-hidden bg-background">
+          {/* Reports this tab's online/away presence once we know a user is
+              signed in. Headless — renders nothing. */}
+          <PresenceHeartbeat />
+
+          <PrimaryRail
+            expanded={railExpanded}
+            onToggleExpanded={toggleRail}
+            activeRailId={nav.activeRailId}
+            drawerOpen={drawerOpen}
+            onCloseDrawer={closeDrawer}
+            // On mobile the panel renders inline inside the rail's drawer
+            // rather than as a second column, so pass it through.
+            mobilePanel={
+              nav.panel && nav.panelTitle
+                ? { title: nav.panelTitle, groups: nav.panel }
+                : null
+            }
+          />
+
+          {nav.panel && nav.panelTitle ? (
+            <SecondaryPanel
+              title={nav.panelTitle}
+              groups={nav.panel}
+              channel={nav.activeChannel}
+              icon={nav.activeChannel ? undefined : SettingsIcon}
+              activeItemId={nav.activePanelItemId}
+              open={panelOpen}
+              onToggle={togglePanel}
+            />
+          ) : null}
+
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Header
+              onOpenSidebar={openDrawer}
+              title={nav.title}
+              breadcrumb={nav.breadcrumb}
+            />
+            {/* Thinner horizontal padding on mobile so cards have room to breathe. */}
+            <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
+          </div>
+        </div>
+      </ChannelStatusProvider>
+    </TooltipProvider>
   );
 }
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   return (
     <AuthProvider>
-      <DashboardShellInner>{children}</DashboardShellInner>
+      <AuthGate>
+        {/* `useSearchParams` in the shell needs a Suspense boundary — the
+            panel disambiguates `?tab=` siblings from the query string.
+            It sits INSIDE AuthGate on purpose; see the note there. */}
+        <Suspense fallback={null}>
+          <DashboardShellInner>{children}</DashboardShellInner>
+        </Suspense>
+      </AuthGate>
     </AuthProvider>
   );
 }

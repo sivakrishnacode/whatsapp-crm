@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
-import { LogOut, Menu, Settings as SettingsIcon, User } from "lucide-react";
+import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
+import { Bell, LogOut, Menu, Settings as SettingsIcon, User } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   Avatar,
   AvatarFallback,
@@ -18,35 +20,26 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
 
-const pageTitles: Record<string, string> = {
-  "/dashboard": "Dashboard",
-  "/inbox": "Inbox",
-  "/notifications": "Notifications",
-  "/contacts": "Contacts",
-  "/pipelines": "Pipelines",
-  "/broadcasts": "Broadcasts",
-  "/automations": "Automations",
-  "/settings": "Settings",
-};
-
-function getPageTitle(pathname: string): string {
-  if (pageTitles[pathname]) return pageTitles[pathname];
-  const match = Object.entries(pageTitles).find(([path]) =>
-    pathname.startsWith(path),
-  );
-  return match ? match[1] : "Dashboard";
-}
-
 interface HeaderProps {
   /** Wired to the shell's drawer state. Used only on mobile — the
    *  hamburger button is hidden on lg+. */
   onOpenSidebar?: () => void;
+  /**
+   * Page title, resolved by `resolveNavContext` in the shell. Replaces
+   * the hardcoded path→title map this component used to carry, which
+   * silently fell back to "Dashboard" for anything not listed.
+   */
+  title: string;
+  /** Section prefix, e.g. "WhatsApp" on "WhatsApp / Templates". */
+  breadcrumb?: string | null;
 }
 
-export function Header({ onOpenSidebar }: HeaderProps) {
+export function Header({ onOpenSidebar, title, breadcrumb }: HeaderProps) {
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
-  const title = getPageTitle(pathname);
+  const unreadNotifications = useUnreadNotifications();
+
+  const onNotifications = pathname.startsWith("/notifications");
 
   const initial =
     profile?.full_name?.charAt(0)?.toUpperCase() ??
@@ -65,12 +58,47 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">
-          {title}
+        <h1 className="flex min-w-0 items-baseline gap-1.5 truncate text-base font-semibold text-foreground sm:text-lg">
+          {breadcrumb ? (
+            <>
+              {/* Hidden on mobile — at 375px the channel prefix eats the
+                  whole line and the page name is what matters. */}
+              <span className="hidden shrink-0 font-normal text-muted-foreground sm:inline">
+                {breadcrumb}
+              </span>
+              <span className="hidden shrink-0 text-muted-foreground sm:inline">/</span>
+            </>
+          ) : null}
+          <span className="truncate">{title}</span>
         </h1>
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2">
+        {/* Notifications. The reference product has no rail entry for
+            these, so the bell lives here next to the theme toggle. */}
+        <Link
+          href="/notifications"
+          aria-label={
+            unreadNotifications > 0
+              ? `Notifications (${unreadNotifications} unread)`
+              : "Notifications"
+          }
+          aria-current={onNotifications ? "page" : undefined}
+          className={cn(
+            "relative flex size-9 items-center justify-center rounded-md transition-colors",
+            onNotifications
+              ? "bg-primary-soft text-primary"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          )}
+        >
+          <Bell className="size-[18px]" />
+          {unreadNotifications > 0 ? (
+            <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+              {unreadNotifications > 9 ? "9+" : unreadNotifications}
+            </span>
+          ) : null}
+        </Link>
+
         <ModeToggle />
 
         <DropdownMenu>
@@ -121,7 +149,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
           <DropdownMenuItem
             render={
               <Link
-                href="/settings?tab=whatsapp"
+                href="/settings"
                 className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
               />
             }
