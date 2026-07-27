@@ -97,10 +97,29 @@ export function WhatsAppConfig() {
   const [registrationProbe, setRegistrationProbe] =
     useState<RegistrationProbe | null>(null);
 
-  const webhookUrl =
-    typeof window !== 'undefined'
+  // Meta only accepts public HTTPS callbacks, so this must be the
+  // deployment's canonical URL — never `window.location.origin`, which
+  // echoes back whatever host the operator happens to be browsing from
+  // (an internal IP, a `:3031` docker port, a tunnel preview domain).
+  //
+  // Priority mirrors getBaseUrl() in the API's invitations controller:
+  //   1. NEXT_PUBLIC_WHATSAPP_WEBHOOK_URL — full override, for deploys
+  //      that expose the NestJS API directly and want Meta to skip the
+  //      Next.js proxy hop (e.g. https://api.example.com/whatsapp/webhook).
+  //   2. NEXT_PUBLIC_SITE_URL — canonical origin; the request then goes
+  //      Meta → /api/whatsapp/webhook → rewrite → NestJS. Default path.
+  //   3. window.location.origin — dev-only fallback so localhost works.
+  const webhookUrl = (() => {
+    const override = process.env.NEXT_PUBLIC_WHATSAPP_WEBHOOK_URL?.trim();
+    if (override) return override.replace(/\/+$/, '');
+
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+    if (siteUrl) return `${siteUrl.replace(/\/+$/, '')}/api/whatsapp/webhook`;
+
+    return typeof window !== 'undefined'
       ? `${window.location.origin}/api/whatsapp/webhook`
       : '';
+  })();
 
   const fetchConfig = useCallback(async (acctId: string) => {
     setLoading(true);

@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { ArrowLeft, Send, Loader2, Users, Save } from 'lucide-react';
+import { MessagingTierCard } from '@/components/dashboard/messaging-tier-card';
 
 interface AudienceConfig {
   type: string;
@@ -160,6 +161,15 @@ export function Step4ScheduleSend({
           </div>
         </div>
       )}
+
+      {/*
+        Pre-flight limit check. Warns when the audience looks bigger than
+        the remaining daily allowance, but never disables Send — the usage
+        figure behind it counts broadcasts only, so blocking on it would
+        sometimes stop a perfectly valid send with no way through.
+        estimatedReach is already computed above; no extra counting here.
+      */}
+      <MessagingTierCard recipientCount={loadingReach ? undefined : estimatedReach} />
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
         <Button

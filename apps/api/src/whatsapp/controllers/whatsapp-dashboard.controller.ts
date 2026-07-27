@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Body,
   Res,
@@ -13,10 +14,8 @@ import { CurrentAccount } from '../../auth/decorators/current-account.decorator'
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessageSendService } from '../../v1/services/message-send.service';
-import {
-  sendReactionMessage,
-  sendTemplateMessage,
-} from '../meta-api.util';
+import { MessagingLimitsService } from '../services/messaging-limits.service';
+import { sendReactionMessage, sendTemplateMessage } from '../meta-api.util';
 import { decrypt } from '../../common/security/encryption.util';
 import {
   sanitizePhoneForMeta,
@@ -41,9 +40,11 @@ interface NewRecipient {
 
 /**
  * Dashboard-facing WhatsApp action endpoints:
- * - POST /whatsapp/send       → send message from inbox / contact detail
- * - POST /whatsapp/broadcast  → fan-out template to a phone list
- * - POST /whatsapp/react      → send emoji reaction to a message
+ * - POST /whatsapp/send                  → send message from inbox / contact detail
+ * - POST /whatsapp/broadcast             → fan-out template to a phone list
+ * - POST /whatsapp/react                 → send emoji reaction to a message
+ * - GET  /whatsapp/tier-status           → messaging tier + quality + 24h usage
+ * - POST /whatsapp/tier-status/refresh   → queue an on-demand limits sync
  */
 @Controller('whatsapp')
 @UseGuards(SupabaseAuthGuard)
@@ -53,7 +54,41 @@ export class WhatsappDashboardController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly messageSend: MessageSendService,
+    private readonly limits: MessagingLimitsService,
   ) {}
+
+  /**
+   * GET /api/whatsapp/tier-status
+   *
+   * Current Meta messaging tier, quality rating, and approximate usage
+   * for the rolling 24h window. Usage is broadcast-only — the DTO's
+   * usageIsPartial flag carries that caveat to the UI.
+   */
+  @Get('tier-status')
+  async getTierStatus(
+    @CurrentAccount() account: SupabaseAccountContext,
+    @Res() res: Response,
+  ) {
+    const status = await this.limits.getTierStatus(account.accountId);
+    return res.status(HttpStatus.OK).json(status);
+  }
+
+  /**
+   * POST /api/whatsapp/tier-status/refresh
+   *
+   * Queues a live re-fetch and returns immediately. The job id is keyed
+   * by account, so hammering the Refresh button coalesces into one
+   * Graph API call rather than one per click. Clients poll GET
+   * tier-status until lastSyncedAt advances.
+   */
+  @Post('tier-status/refresh')
+  async refreshTierStatus(
+    @CurrentAccount() account: SupabaseAccountContext,
+    @Res() res: Response,
+  ) {
+    await this.limits.enqueueAccountSync(account.accountId);
+    return res.status(HttpStatus.ACCEPTED).json({ queued: true });
+  }
 
   /**
    * POST /api/whatsapp/send
@@ -191,9 +226,7 @@ export class WhatsappDashboardController {
       if (err instanceof ApiError) {
         const responseBody = err.getResponse() as any;
         const errorMessage = responseBody?.error?.message || err.message;
-        this.logger.error(
-          `Dashboard send failed (ApiError): ${errorMessage}`,
-        );
+        this.logger.error(`Dashboard send failed (ApiError): ${errorMessage}`);
         return res.status(err.getStatus()).json({ error: errorMessage });
       }
       this.logger.error(
@@ -234,7 +267,10 @@ export class WhatsappDashboardController {
       const shared: string[] = Array.isArray(template_params)
         ? template_params
         : [];
-      recipients = phone_numbers.map((phone: string) => ({ phone, params: shared }));
+      recipients = phone_numbers.map((phone: string) => ({
+        phone,
+        params: shared,
+      }));
     } else {
       return res.status(HttpStatus.BAD_REQUEST).json({
         error:
@@ -259,7 +295,7 @@ export class WhatsappDashboardController {
       });
     }
 
-    const accessToken = decrypt(config.access_token!);
+    const accessToken = decrypt(config.access_token);
 
     const templateRow = await this.prisma.message_templates.findFirst({
       where: {
@@ -382,8 +418,7 @@ export class WhatsappDashboardController {
 
     if (!targetMessage.message_id) {
       return res.status(HttpStatus.BAD_REQUEST).json({
-        error:
-          'Cannot react to a message that has not been sent to WhatsApp',
+        error: 'Cannot react to a message that has not been sent to WhatsApp',
       });
     }
 
@@ -420,7 +455,7 @@ export class WhatsappDashboardController {
         .json({ error: 'WhatsApp not configured.' });
     }
 
-    const accessToken = decrypt(config.access_token!);
+    const accessToken = decrypt(config.access_token);
     const sanitizedPhone = sanitizePhoneForMeta(contactPhone);
 
     try {
@@ -435,9 +470,7 @@ export class WhatsappDashboardController {
       const message =
         err instanceof Error ? err.message : 'Unknown Meta API error';
       this.logger.error(`[whatsapp/react] Meta send failed: ${message}`);
-      return res
-        .status(502)
-        .json({ error: `Meta API error: ${message}` });
+      return res.status(502).json({ error: `Meta API error: ${message}` });
     }
 
     // Mirror into DB: empty emoji = removal

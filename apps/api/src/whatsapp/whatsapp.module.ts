@@ -16,6 +16,11 @@ import {
   BROADCASTS_QUEUE,
 } from './services/dashboard-broadcast.service';
 import { BroadcastsProcessor } from './broadcasts.processor';
+import {
+  MessagingLimitsService,
+  LIMITS_QUEUE,
+} from './services/messaging-limits.service';
+import { MessagingLimitsProcessor } from './messaging-limits.processor';
 import { V1Module } from '../v1/v1.module';
 import { AutomationsModule } from '../automations/automations.module';
 import { FlowsModule } from '../flows/flows.module';
@@ -25,6 +30,7 @@ import { AiModule } from '../ai/ai.module';
   imports: [
     V1Module,
     BullModule.registerQueue({ name: BROADCASTS_QUEUE }),
+    BullModule.registerQueue({ name: LIMITS_QUEUE }),
     forwardRef(() => AutomationsModule),
     forwardRef(() => FlowsModule),
     forwardRef(() => AiModule),
@@ -45,13 +51,15 @@ import { AiModule } from '../ai/ai.module';
     WhatsappWebhookService,
     DashboardBroadcastService,
     BroadcastsProcessor,
+    MessagingLimitsService,
+    MessagingLimitsProcessor,
   ],
   exports: [
     AutomationMetaSendService,
     FlowMetaSendService,
     ConnectAccountService,
     WhatsappWebhookService,
+    MessagingLimitsService,
   ],
 })
 export class WhatsappModule {}
-

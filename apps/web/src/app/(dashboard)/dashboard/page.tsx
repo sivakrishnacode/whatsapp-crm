@@ -35,6 +35,7 @@ import type {
 import { MetricCard } from '@/components/dashboard/metric-card'
 import { SkeletonCard } from '@/components/dashboard/skeleton'
 import { QuickActions } from '@/components/dashboard/quick-actions'
+import { MessagingTierCard } from '@/components/dashboard/messaging-tier-card'
 import { ConversationsChart } from '@/components/dashboard/conversations-chart'
 import { PipelineDonut } from '@/components/dashboard/pipeline-donut'
 import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
@@ -261,6 +262,9 @@ export default function DashboardPage() {
 
       {/* Quick actions */}
       <QuickActions />
+
+      {/* WhatsApp messaging limit — no recipientCount, so no pre-flight section */}
+      <MessagingTierCard compact />
 
       {/* Charts row */}
       {/* items-stretch (the grid default) stretches the two columns to

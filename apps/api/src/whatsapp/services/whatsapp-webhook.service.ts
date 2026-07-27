@@ -1,12 +1,32 @@
-import { Injectable, Logger, HttpStatus, HttpException, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  HttpStatus,
+  HttpException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { AiReplyService } from '../../ai/services/ai-reply.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
 import { FlowDispatchService } from '../../flows/services/flow-dispatch.service';
 import { AutomationDispatchService } from '../../automations/services/automation-dispatch.service';
-import { decrypt, isLegacyFormat, encrypt } from '../../common/security/encryption.util';
+import {
+  decrypt,
+  isLegacyFormat,
+  encrypt,
+} from '../../common/security/encryption.util';
 import { normalizePhone, phonesMatch } from '../phone-utils.util';
-import { isTemplateWebhookField, handleTemplateWebhookChange } from '../utils/template-webhook.util';
+import {
+  isTemplateWebhookField,
+  handleTemplateWebhookChange,
+} from '../utils/template-webhook.util';
+import {
+  isLimitWebhookField,
+  parseLimitWebhookValue,
+  type LimitWebhookValue,
+} from '../utils/limit-webhook.util';
+import { resolveTierLimit, isKnownTier } from './messaging-limits.service';
 import { getMediaUrl } from '../meta-api.util';
 
 interface WhatsAppMessage {
@@ -17,10 +37,20 @@ interface WhatsAppMessage {
   text?: { body: string };
   image?: { id: string; mime_type: string; caption?: string };
   video?: { id: string; mime_type: string; caption?: string };
-  document?: { id: string; mime_type: string; filename?: string; caption?: string };
+  document?: {
+    id: string;
+    mime_type: string;
+    filename?: string;
+    caption?: string;
+  };
   audio?: { id: string; mime_type: string };
   sticker?: { id: string; mime_type: string };
-  location?: { latitude: number; longitude: number; name?: string; address?: string };
+  location?: {
+    latitude: number;
+    longitude: number;
+    name?: string;
+    address?: string;
+  };
   reaction?: { message_id: string; emoji: string };
   interactive?: {
     type: 'button_reply' | 'list_reply';
@@ -60,6 +90,13 @@ interface WhatsAppWebhookEntry {
         timestamp: string;
         recipient_id: string;
       }>;
+      // Messaging tier / quality pushes (business_capability_update,
+      // phone_number_quality_update). Shapes vary — see limit-webhook.util.
+      current_limit?: string;
+      max_daily_conversation_per_phone?: number | string;
+      event?: string;
+      current_quality_rating?: string;
+      quality_rating?: string;
     };
     field: string;
   }>;
@@ -114,7 +151,10 @@ export class WhatsappWebhookService {
     verifyToken: string,
   ): Promise<string> {
     if (mode !== 'subscribe' || !challenge || !verifyToken) {
-      throw new HttpException('Missing verification parameters', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'Missing verification parameters',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const configs = await this.prisma.whatsapp_config.findMany({
@@ -124,7 +164,8 @@ export class WhatsappWebhookService {
       },
     });
 
-    let matchedConfig: { id: string; verify_token: string | null } | null = null;
+    let matchedConfig: { id: string; verify_token: string | null } | null =
+      null;
     for (const config of configs) {
       if (!config.verify_token) continue;
       try {
@@ -159,7 +200,10 @@ export class WhatsappWebhookService {
       return challenge;
     }
 
-    throw new HttpException('Verification token mismatch', HttpStatus.FORBIDDEN);
+    throw new HttpException(
+      'Verification token mismatch',
+      HttpStatus.FORBIDDEN,
+    );
   }
 
   /**
@@ -172,7 +216,9 @@ export class WhatsappWebhookService {
     });
   }
 
-  private async processWebhook(body: { entry?: WhatsAppWebhookEntry[] }): Promise<void> {
+  private async processWebhook(body: {
+    entry?: WhatsAppWebhookEntry[];
+  }): Promise<void> {
     if (!body.entry) return;
 
     for (const entry of body.entry) {
@@ -181,6 +227,15 @@ export class WhatsappWebhookService {
           await handleTemplateWebhookChange(
             { field: change.field, value: change.value },
             this.prisma,
+          );
+          continue;
+        }
+
+        if (isLimitWebhookField(change.field)) {
+          await this.handleLimitUpdate(
+            change.field,
+            change.value as LimitWebhookValue,
+            entry.id,
           );
           continue;
         }
@@ -202,7 +257,9 @@ export class WhatsappWebhookService {
         });
 
         if (configRows.length === 0) {
-          this.logger.error(`No config found for phone_number_id: ${phoneNumberId}`);
+          this.logger.error(
+            `No config found for phone_number_id: ${phoneNumberId}`,
+          );
           continue;
         }
 
@@ -232,6 +289,97 @@ export class WhatsappWebhookService {
     }
   }
 
+  /**
+   * Apply a messaging-tier / quality-rating push from Meta.
+   *
+   * Complements the 6-hourly poll — the poll is the safety net for when
+   * these webhook fields aren't subscribed in the Developer Console.
+   *
+   * Resolution prefers phone_number_id (unique in whatsapp_config) and
+   * falls back to waba_id, which is NOT unique in the schema — an
+   * ambiguous match is logged and skipped rather than guessed at,
+   * mirroring how the inbound-message path handles duplicate configs.
+   *
+   * Never throws: handleWebhookReceived is fire-and-forget and Meta has
+   * already had its 200.
+   */
+  private async handleLimitUpdate(
+    field: string,
+    value: LimitWebhookValue | undefined,
+    wabaId: string,
+  ): Promise<void> {
+    try {
+      const parsed = parseLimitWebhookValue(value);
+
+      if (!parsed.tier && !parsed.qualityRating) {
+        this.logger.warn(
+          `${field} webhook carried no recognisable tier or quality data (waba_id=${wabaId})`,
+        );
+        return;
+      }
+
+      const configs = parsed.phoneNumberId
+        ? await this.prisma.whatsapp_config.findMany({
+            where: { phone_number_id: parsed.phoneNumberId },
+            select: { id: true, account_id: true },
+          })
+        : await this.prisma.whatsapp_config.findMany({
+            where: { waba_id: wabaId },
+            select: { id: true, account_id: true },
+          });
+
+      if (configs.length === 0) {
+        this.logger.warn(
+          `${field} webhook: no whatsapp_config for phone_number_id=${parsed.phoneNumberId ?? 'n/a'} / waba_id=${wabaId}`,
+        );
+        return;
+      }
+      if (configs.length > 1) {
+        this.logger.error(
+          `${field} webhook: ${configs.length} configs match waba_id=${wabaId} — ambiguous, update skipped`,
+        );
+        return;
+      }
+
+      const config = configs[0];
+      const data: {
+        messaging_limit_tier?: string;
+        tier_daily_limit?: number | null;
+        quality_rating?: string;
+        limits_synced_at: Date;
+      } = { limits_synced_at: new Date() };
+
+      if (parsed.tier) {
+        if (!isKnownTier(parsed.tier)) {
+          this.logger.warn(
+            `${field} webhook: unrecognised tier "${parsed.tier}" for account ${config.account_id} — stored raw with a null daily limit`,
+          );
+        }
+        data.messaging_limit_tier = parsed.tier;
+        data.tier_daily_limit = resolveTierLimit(parsed.tier);
+      }
+      if (parsed.qualityRating) {
+        data.quality_rating = parsed.qualityRating;
+      }
+
+      await this.prisma.whatsapp_config.update({
+        where: { id: config.id },
+        data,
+      });
+
+      this.logger.log(
+        `${field}: account ${config.account_id} updated` +
+          (parsed.tier ? ` tier=${parsed.tier}` : '') +
+          (parsed.qualityRating ? ` quality=${parsed.qualityRating}` : ''),
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to apply ${field} webhook (waba_id=${wabaId})`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+  }
+
   private async handleStatusUpdate(status: {
     id: string;
     status: string;
@@ -256,7 +404,10 @@ export class WhatsappWebhookService {
         select: { id: true, status: true },
       });
 
-      if (recipient && isValidStatusTransition(recipient.status, status.status)) {
+      if (
+        recipient &&
+        isValidStatusTransition(recipient.status, status.status)
+      ) {
         const update: Record<string, any> = { status: status.status };
         if (status.status === 'sent') update.sent_at = tsIso;
         if (status.status === 'delivered') update.delivered_at = tsIso;
@@ -295,11 +446,16 @@ export class WhatsappWebhookService {
         );
       }
     } catch (err) {
-      this.logger.error(`Error dispatching message.status_updated event: ${err}`);
+      this.logger.error(
+        `Error dispatching message.status_updated event: ${err}`,
+      );
     }
   }
 
-  private async flagBroadcastReplyIfAny(accountId: string, contactId: string): Promise<void> {
+  private async flagBroadcastReplyIfAny(
+    accountId: string,
+    contactId: string,
+  ): Promise<void> {
     try {
       const recs = await this.prisma.broadcast_recipients.findMany({
         where: {
@@ -360,7 +516,9 @@ export class WhatsappWebhookService {
       conversationId,
     );
     if (!targetInternalId) {
-      this.logger.warn(`reaction target message not found; skipping: ${reaction.message_id}`);
+      this.logger.warn(
+        `reaction target message not found; skipping: ${reaction.message_id}`,
+      );
       return;
     }
 
@@ -424,7 +582,11 @@ export class WhatsappWebhookService {
     const contactRecord = contactOutcome.contact;
 
     const [convResult, parsedContent] = await Promise.all([
-      this.findOrCreateConversation(accountId, configOwnerUserId, contactRecord.id),
+      this.findOrCreateConversation(
+        accountId,
+        configOwnerUserId,
+        contactRecord.id,
+      ),
       this.parseMessageContent(message, accessToken),
     ]);
 
@@ -432,18 +594,26 @@ export class WhatsappWebhookService {
     const conversation = convResult.conversation;
 
     if (convResult.created) {
-      void this.webhookDeliver.dispatchWebhookEvent(accountId, 'conversation.created', {
-        conversation_id: conversation.id,
-        contact_id: contactRecord.id,
-      });
+      void this.webhookDeliver.dispatchWebhookEvent(
+        accountId,
+        'conversation.created',
+        {
+          conversation_id: conversation.id,
+          contact_id: contactRecord.id,
+        },
+      );
     }
 
     if (contactOutcome.wasCreated) {
-      void this.webhookDeliver.dispatchWebhookEvent(accountId, 'contact.created', {
-        contact_id: contactRecord.id,
-        phone: contactRecord.phone,
-        name: contactRecord.name,
-      });
+      void this.webhookDeliver.dispatchWebhookEvent(
+        accountId,
+        'contact.created',
+        {
+          contact_id: contactRecord.id,
+          phone: contactRecord.phone,
+          name: contactRecord.name,
+        },
+      );
     }
 
     if (message.type === 'reaction') {
@@ -610,8 +780,10 @@ export class WhatsappWebhookService {
     if (!flowConsumed) {
       automationTriggers.push('new_message_received', 'keyword_match');
     }
-    if (contactOutcome.wasCreated) automationTriggers.unshift('new_contact_created');
-    if (isFirstInboundMessage) automationTriggers.unshift('first_inbound_message');
+    if (contactOutcome.wasCreated)
+      automationTriggers.unshift('new_contact_created');
+    if (isFirstInboundMessage)
+      automationTriggers.unshift('first_inbound_message');
 
     for (const triggerType of automationTriggers) {
       this.automationDispatch
@@ -624,11 +796,20 @@ export class WhatsappWebhookService {
             conversation_id: conversation.id,
           },
         })
-        .catch((err) => this.logger.error(`[automations] dispatch failed for ${triggerType}:`, err));
+        .catch((err) =>
+          this.logger.error(
+            `[automations] dispatch failed for ${triggerType}:`,
+            err,
+          ),
+        );
     }
 
     // Trigger AI Auto-reply directly in the background
-    if (!flowConsumed && !parsedContent.interactiveReplyId && inboundText.trim()) {
+    if (
+      !flowConsumed &&
+      !parsedContent.interactiveReplyId &&
+      inboundText.trim()
+    ) {
       void this.aiReplyService.dispatchInboundToAiReply({
         accountId,
         conversationId: conversation.id,
@@ -638,13 +819,17 @@ export class WhatsappWebhookService {
     }
 
     // Trigger message.received event (public API)
-    void this.webhookDeliver.dispatchWebhookEvent(accountId, 'message.received', {
-      conversation_id: conversation.id,
-      contact_id: contactRecord.id,
-      whatsapp_message_id: message.id,
-      content_type: contentType,
-      text: parsedContent.contentText,
-    });
+    void this.webhookDeliver.dispatchWebhookEvent(
+      accountId,
+      'message.received',
+      {
+        conversation_id: conversation.id,
+        contact_id: contactRecord.id,
+        whatsapp_message_id: message.id,
+        content_type: contentType,
+        text: parsedContent.contentText,
+      },
+    );
   }
 
   private async parseMessageContent(
@@ -656,7 +841,9 @@ export class WhatsappWebhookService {
     mediaType: string | null;
     interactiveReplyId: string | null;
   }> {
-    const verifyAndBuildUrl = async (mediaId: string): Promise<string | null> => {
+    const verifyAndBuildUrl = async (
+      mediaId: string,
+    ): Promise<string | null> => {
       try {
         await getMediaUrl({ mediaId, accessToken });
         return `/api/whatsapp/media/${mediaId}`;
@@ -707,7 +894,8 @@ export class WhatsappWebhookService {
         if (message.document?.id) {
           return {
             ...empty,
-            contentText: message.document.caption || message.document.filename || null,
+            contentText:
+              message.document.caption || message.document.filename || null,
             mediaUrl: await verifyAndBuildUrl(message.document.id),
             mediaType: message.document.mime_type,
           };
@@ -737,7 +925,11 @@ export class WhatsappWebhookService {
       case 'location':
         if (message.location) {
           const loc = message.location;
-          const locationText = [loc.name, loc.address, `${loc.latitude},${loc.longitude}`]
+          const locationText = [
+            loc.name,
+            loc.address,
+            `${loc.latitude},${loc.longitude}`,
+          ]
             .filter(Boolean)
             .join(' - ');
           return { ...empty, contentText: locationText };
@@ -768,7 +960,8 @@ export class WhatsappWebhookService {
         return empty;
 
       case 'interactive': {
-        const reply = message.interactive?.button_reply ?? message.interactive?.list_reply;
+        const reply =
+          message.interactive?.button_reply ?? message.interactive?.list_reply;
         if (reply?.id) {
           return {
             ...empty,
@@ -808,7 +1001,8 @@ export class WhatsappWebhookService {
       },
     });
 
-    const existingContact = candidates.find((c) => phonesMatch(c.phone, phone)) ?? null;
+    const existingContact =
+      candidates.find((c) => phonesMatch(c.phone, phone)) ?? null;
 
     if (existingContact) {
       if (name && name !== existingContact.name) {
@@ -838,7 +1032,8 @@ export class WhatsappWebhookService {
     } catch (createError) {
       // Handle concurrent inserts / races
       const isUniqueError =
-        createError instanceof Error && createError.message.includes('Unique constraint');
+        createError instanceof Error &&
+        createError.message.includes('Unique constraint');
       if (isUniqueError || (createError as any)?.code === 'P2002') {
         const candidatesRetry = await this.prisma.contacts.findMany({
           where: {
@@ -846,7 +1041,8 @@ export class WhatsappWebhookService {
             phone: { endsWith: suffix },
           },
         });
-        const raced = candidatesRetry.find((c) => phonesMatch(c.phone, phone)) ?? null;
+        const raced =
+          candidatesRetry.find((c) => phonesMatch(c.phone, phone)) ?? null;
         if (raced) return { contact: raced, wasCreated: false };
       }
       this.logger.error('Error creating contact:', createError);

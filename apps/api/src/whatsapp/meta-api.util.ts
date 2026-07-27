@@ -15,7 +15,10 @@
  * rather than positional arguments — deliberate, matches the source.
  */
 
-import { buildSendComponents, type SendTimeParams } from '../v1/utils/template-send-builder.util';
+import {
+  buildSendComponents,
+  type SendTimeParams,
+} from '../v1/utils/template-send-builder.util';
 import type { MessageTemplate } from '../v1/types/index';
 
 const META_API_VERSION = 'v21.0';
@@ -45,6 +48,78 @@ async function throwMetaError(
     // response body wasn't JSON — keep the fallback
   }
   throw new Error(message);
+}
+
+// ============================================================
+// Typed errors
+//
+// throwMetaError above throws a bare Error, which is fine for the
+// request/response call sites that just bubble a message to the user.
+// Background jobs need to *branch* on the failure: an expired token
+// means skip this account and warn, a rate limit means back off, and
+// anything else is a genuine error worth logging loudly. These classes
+// are additive — throwMetaError keeps its existing behaviour and no
+// existing caller changes.
+// ============================================================
+
+export class MetaApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: number,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'MetaApiError';
+  }
+}
+
+/** HTTP 401, or Meta error code 190 — access token expired/invalidated. */
+export class MetaTokenExpiredError extends MetaApiError {
+  constructor(message: string, code?: number, status?: number) {
+    super(message, code, status);
+    this.name = 'MetaTokenExpiredError';
+  }
+}
+
+/** HTTP 429, or Meta throttling codes 4 / 80007 / 130429. */
+export class MetaRateLimitError extends MetaApiError {
+  constructor(message: string, code?: number, status?: number) {
+    super(message, code, status);
+    this.name = 'MetaRateLimitError';
+  }
+}
+
+const RATE_LIMIT_CODES = new Set([4, 80007, 130429]);
+
+/**
+ * Classifying counterpart to throwMetaError — same body parsing, but
+ * picks a typed error subclass so callers can branch without matching
+ * on message strings.
+ */
+async function throwClassifiedMetaError(
+  response: Response,
+  fallback: string,
+): Promise<never> {
+  let message = fallback;
+  let code: number | undefined;
+  try {
+    const data = (await response.json()) as MetaErrorResponse;
+    if (data.error?.message) message = data.error.message;
+    code = data.error?.code;
+  } catch {
+    // response body wasn't JSON — keep the fallback
+  }
+
+  if (response.status === 401 || code === 190) {
+    throw new MetaTokenExpiredError(message, code, response.status);
+  }
+  if (
+    response.status === 429 ||
+    (code !== undefined && RATE_LIMIT_CODES.has(code))
+  ) {
+    throw new MetaRateLimitError(message, code, response.status);
+  }
+  throw new MetaApiError(message, code, response.status);
 }
 
 export interface SendTextMessageArgs {
@@ -452,7 +527,10 @@ export async function sendInteractiveList(
   }
   const seenIds = new Set<string>();
   for (const section of sections) {
-    if (section.title && section.title.length > INTERACTIVE_LIMITS.listSectionTitleMaxLength) {
+    if (
+      section.title &&
+      section.title.length > INTERACTIVE_LIMITS.listSectionTitleMaxLength
+    ) {
       throw new Error(
         `Interactive list section title "${section.title}" exceeds ${INTERACTIVE_LIMITS.listSectionTitleMaxLength} chars.`,
       );
@@ -576,7 +654,7 @@ export async function sendProductMessage(
     footerText,
     contextMessageId,
   } = args;
-  
+
   const url = `${META_API_BASE}/${phoneNumberId}/messages`;
   const body: any = {
     messaging_product: 'whatsapp',
@@ -728,6 +806,66 @@ export async function verifyPhoneNumber(
   return response.json();
 }
 
+export interface FetchPhoneNumberLimitsArgs {
+  phoneNumberId: string;
+  accessToken: string;
+}
+
+export interface PhoneNumberLimits {
+  /** Raw Meta string (TIER_1K, …). Deliberately unmapped — see messaging-limits.service.ts. */
+  messagingLimitTier: string | null;
+  /** GREEN | YELLOW | RED | NA. */
+  qualityRating: string | null;
+  displayPhoneNumber: string | null;
+  verifiedName: string | null;
+}
+
+interface MetaPhoneLimitsResponse {
+  messaging_limit_tier?: string;
+  quality_rating?: string;
+  display_phone_number?: string;
+  verified_name?: string;
+}
+
+/**
+ * Fetch the messaging limit tier + quality rating for a phone number.
+ *
+ * Unlike verifyPhoneNumber (which shares most of these fields but is a
+ * connect-time liveness check), this throws *typed* errors so the
+ * 6-hourly sync job can tell an expired token from a rate limit from a
+ * real fault, and skip rather than abort the sweep.
+ *
+ * Values come back raw. Meta owns this enum and can extend it, so
+ * mapping tier -> daily limit happens in the service where an unknown
+ * value degrades gracefully instead of failing a DB write.
+ */
+export async function fetchPhoneNumberLimits(
+  args: FetchPhoneNumberLimitsArgs,
+): Promise<PhoneNumberLimits> {
+  const { phoneNumberId, accessToken } = args;
+  const url =
+    `${META_API_BASE}/${phoneNumberId}` +
+    `?fields=messaging_limit_tier,quality_rating,display_phone_number,verified_name`;
+
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    await throwClassifiedMetaError(
+      response,
+      `Meta API error: ${response.status}`,
+    );
+  }
+
+  const data = (await response.json()) as MetaPhoneLimitsResponse;
+  return {
+    messagingLimitTier: data.messaging_limit_tier ?? null,
+    qualityRating: data.quality_rating ?? null,
+    displayPhoneNumber: data.display_phone_number ?? null,
+    verifiedName: data.verified_name ?? null,
+  };
+}
+
 export interface ExchangeEmbeddedSignupCodeArgs {
   code: string;
   appId: string;
@@ -750,11 +888,18 @@ export async function exchangeEmbeddedSignupCode(
     `&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;
   const shortLivedRes = await fetch(shortLivedUrl);
   if (!shortLivedRes.ok) {
-    await throwMetaError(shortLivedRes, 'Failed to exchange authorization code');
+    await throwMetaError(
+      shortLivedRes,
+      'Failed to exchange authorization code',
+    );
   }
-  const shortLivedData = (await shortLivedRes.json()) as { access_token?: string };
+  const shortLivedData = (await shortLivedRes.json()) as {
+    access_token?: string;
+  };
   if (!shortLivedData.access_token) {
-    throw new Error('Meta did not return an access token for this authorization code');
+    throw new Error(
+      'Meta did not return an access token for this authorization code',
+    );
   }
 
   // Step 2: short-lived -> long-lived user access token.
@@ -764,7 +909,10 @@ export async function exchangeEmbeddedSignupCode(
     `&fb_exchange_token=${encodeURIComponent(shortLivedData.access_token)}`;
   const longLivedRes = await fetch(longLivedUrl);
   if (!longLivedRes.ok) {
-    await throwMetaError(longLivedRes, 'Failed to exchange long-lived access token');
+    await throwMetaError(
+      longLivedRes,
+      'Failed to exchange long-lived access token',
+    );
   }
   const longLivedData = (await longLivedRes.json()) as {
     access_token?: string;
@@ -774,7 +922,10 @@ export async function exchangeEmbeddedSignupCode(
     throw new Error('Meta did not return a long-lived access token');
   }
 
-  return { accessToken: longLivedData.access_token, expiresIn: longLivedData.expires_in };
+  return {
+    accessToken: longLivedData.access_token,
+    expiresIn: longLivedData.expires_in,
+  };
 }
 
 export interface RegisterPhoneNumberArgs {
@@ -809,7 +960,9 @@ export async function registerPhoneNumber(
     return { success: true, alreadyRegistered: false };
   }
 
-  let data: { error?: { message?: string; code?: number; error_subcode?: number } } = {};
+  let data: {
+    error?: { message?: string; code?: number; error_subcode?: number };
+  } = {};
   try {
     data = await response.json();
   } catch {
@@ -903,7 +1056,10 @@ export async function uploadResumableMedia(
     { method: 'POST' },
   );
   if (!startRes.ok) {
-    await throwMetaError(startRes, `Resumable upload start failed: ${startRes.status}`);
+    await throwMetaError(
+      startRes,
+      `Resumable upload start failed: ${startRes.status}`,
+    );
   }
   const startData = (await startRes.json()) as { id?: string };
   if (!startData.id) {
@@ -919,7 +1075,10 @@ export async function uploadResumableMedia(
     body: bytes as unknown as BodyInit,
   });
   if (!uploadRes.ok) {
-    await throwMetaError(uploadRes, `Resumable upload failed: ${uploadRes.status}`);
+    await throwMetaError(
+      uploadRes,
+      `Resumable upload failed: ${uploadRes.status}`,
+    );
   }
   const uploadData = (await uploadRes.json()) as { h?: string };
   if (!uploadData.h) {
@@ -1088,7 +1247,10 @@ export async function getMediaUrl(
   }
   const data = await response.json();
   if (!data.url) throw new Error('Media URL not found in Meta response');
-  return { url: data.url, mimeType: data.mime_type || 'application/octet-stream' };
+  return {
+    url: data.url,
+    mimeType: data.mime_type || 'application/octet-stream',
+  };
 }
 
 export interface DownloadMediaArgs {
@@ -1281,7 +1443,10 @@ export async function getCatalogBatchStatus(
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!response.ok) {
-    await throwMetaError(response, `Catalog status check failed: ${response.status}`);
+    await throwMetaError(
+      response,
+      `Catalog status check failed: ${response.status}`,
+    );
   }
   const json = (await response.json()) as {
     data?: Array<{
@@ -1363,9 +1528,8 @@ export async function fetchCatalogProducts(
 
   const fields =
     'retailer_id,name,description,price,currency,availability,image_url';
-  let url:
-    | string
-    | null = `${META_API_BASE}/${catalogId}/products?fields=${fields}&limit=100`;
+  let url: string | null =
+    `${META_API_BASE}/${catalogId}/products?fields=${fields}&limit=100`;
 
   const out: CatalogProductRecord[] = [];
   // Bounded page walk — 100/page against a 2000 default cap is 20 pages max.
@@ -1374,7 +1538,10 @@ export async function fetchCatalogProducts(
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!response.ok) {
-      await throwMetaError(response, `Catalog products fetch failed: ${response.status}`);
+      await throwMetaError(
+        response,
+        `Catalog products fetch failed: ${response.status}`,
+      );
     }
     const json = (await response.json()) as {
       data?: Array<{
@@ -1396,7 +1563,8 @@ export async function fetchCatalogProducts(
         priceAmount: parseMetaCatalogPrice(item.price),
         currency: (item.currency || 'INR').toUpperCase(),
         imageUrl: item.image_url ?? null,
-        available: (item.availability ?? 'in stock').toLowerCase() === 'in stock',
+        available:
+          (item.availability ?? 'in stock').toLowerCase() === 'in stock',
       });
     }
     url = json.paging?.next ?? null;
@@ -1444,4 +1612,3 @@ export async function getCatalogInfo(
     productCount: data.product_count,
   };
 }
-

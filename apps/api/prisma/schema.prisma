@@ -1591,6 +1591,10 @@ model whatsapp_config {
   business_id             String?
   coexistence             Boolean   @default(false)
   token_expires_at        DateTime? @db.Timestamptz(6)
+  messaging_limit_tier    String?
+  quality_rating          String?
+  tier_daily_limit        Int?
+  limits_synced_at        DateTime? @db.Timestamptz(6)
   accounts                Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                   users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
