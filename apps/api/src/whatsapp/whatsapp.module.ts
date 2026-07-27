@@ -7,6 +7,7 @@ import { WhatsappWebhookService } from './services/whatsapp-webhook.service';
 import { WhatsappWebhookController } from './controllers/whatsapp-webhook.controller';
 import { WhatsappConnectController } from './controllers/whatsapp-connect.controller';
 import { WhatsappTemplatesController } from './controllers/whatsapp-templates.controller';
+import { WhatsappFlowsController } from './controllers/whatsapp-flows.controller';
 import { WhatsappMediaController } from './controllers/whatsapp-media.controller';
 import { WhatsappDashboardController } from './controllers/whatsapp-dashboard.controller';
 import { WhatsappShopController } from './controllers/whatsapp-shop.controller';
@@ -39,6 +40,7 @@ import { AiModule } from '../ai/ai.module';
     WhatsappWebhookController,
     WhatsappConnectController,
     WhatsappTemplatesController,
+    WhatsappFlowsController,
     WhatsappMediaController,
     WhatsappDashboardController,
     WhatsappShopController,

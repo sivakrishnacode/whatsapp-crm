@@ -16,6 +16,7 @@ import {
   FileText,
   GitBranch,
   LayoutDashboard,
+  LayoutTemplate,
   LogOut,
   Megaphone,
   MessageSquare,
@@ -160,6 +161,11 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/automations", label: "Automations", icon: Zap },
       { href: "/flows", label: "Flows", icon: Workflow, beta: false },
+      {
+        href: "/whatsapp-flows",
+        label: "WhatsApp Flows",
+        icon: LayoutTemplate,
+      },
       { href: "/agents", label: "AI Agents", icon: Bot },
     ],
   },
