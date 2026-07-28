@@ -72,6 +72,11 @@ export interface BuilderInitial {
   description: string
   trigger_type: AutomationTriggerType
   trigger_config: Record<string, unknown>
+  /**
+   * Channel restriction. Empty = run on all channels. Non-empty = only
+   * these channels (e.g. ['instagram']). Mirrors automations.channels[] in DB.
+   */
+  channels: string[]
   is_active: boolean
   steps: BuilderStep[]
 }
@@ -642,6 +647,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         description: state.description || null,
         trigger_type: state.trigger_type,
         trigger_config: state.trigger_config,
+        channels: state.channels,
         is_active: state.is_active,
         steps: toApiSteps(state.steps),
       }
@@ -729,8 +735,16 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
             <TriggerCard
               type={state.trigger_type}
               config={state.trigger_config}
-              onTypeChange={(t) => patchTop("trigger_type", t)}
+              channels={state.channels}
+              onTypeChange={(t) => {
+                // IG-only triggers auto-lock the automation to Instagram so
+                // the user doesn't have to set it manually.
+                const lock = TRIGGER_OPTIONS.find((o) => o.value === t)?.channelLock
+                patchTop("trigger_type", t)
+                if (lock) patchTop("channels", [lock])
+              }}
               onConfigChange={(c) => patchTop("trigger_config", c)}
+              onChannelsChange={(ch) => patchTop("channels", ch)}
             />
             <StepList
               steps={state.steps}
@@ -756,14 +770,26 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
 function TriggerCard({
   type,
   config,
+  channels,
   onTypeChange,
   onConfigChange,
+  onChannelsChange,
 }: {
   type: AutomationTriggerType
   config: Record<string, unknown>
+  channels: string[]
   onTypeChange: (t: AutomationTriggerType) => void
   onConfigChange: (c: Record<string, unknown>) => void
+  onChannelsChange: (ch: string[]) => void
 }) {
+  /** Channels available in this picker. Must match CHANNEL_IDS in channels.ts. */
+  const CHANNEL_OPTS = [
+    { value: 'whatsapp', label: 'WhatsApp' },
+    { value: 'instagram', label: 'Instagram' },
+    { value: 'web', label: 'Web' },
+  ] as const
+
+  const channelLock = TRIGGER_OPTIONS.find((o) => o.value === type)?.channelLock
   const [open, setOpen] = useState(false)
   return (
     // Card width: full on mobile, fixed 320px on sm+. The canvas wrapper
@@ -809,6 +835,50 @@ function TriggerCard({
                 {TRIGGER_OPTIONS.find((o) => o.value === type)?.hint}
               </p>
             </div>
+
+            {/* "From" channel picker */}
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                From
+              </label>
+              {channelLock ? (
+                <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1.5">
+                  <span className="text-xs capitalize text-foreground">{channelLock}</span>
+                  <span className="ml-auto text-[10px] text-muted-foreground">locked by trigger</span>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {CHANNEL_OPTS.map((ch) => {
+                    const active = channels.includes(ch.value)
+                    return (
+                      <button
+                        key={ch.value}
+                        type="button"
+                        onClick={() => {
+                          const next = active
+                            ? channels.filter((c) => c !== ch.value)
+                            : [...channels, ch.value]
+                          onChannelsChange(next)
+                        }}
+                        className={cn(
+                          "rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+                          active
+                            ? "border-primary/50 bg-primary/15 text-primary"
+                            : "border-border bg-muted text-muted-foreground hover:border-border hover:text-foreground",
+                        )}
+                        aria-pressed={active}
+                      >
+                        {ch.label}
+                      </button>
+                    )
+                  })}
+                  {channels.length === 0 && (
+                    <span className="text-[11px] text-muted-foreground">All channels (default)</span>
+                  )}
+                </div>
+              )}
+            </div>
+
             {(type === "keyword_match" || type === "instagram_comment" || type === "instagram_story_reply") && (
               <KeywordMatchConfig
                 config={config as unknown as KeywordMatchTriggerConfig}

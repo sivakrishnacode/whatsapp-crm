@@ -416,6 +416,9 @@ export class InstagramWebhookService {
       interactiveReplyId: parsed.interactiveReplyId,
       metaMessageId: message.mid,
       contentType: parsed.contentType,
+      // Story replies get their own trigger type so automations can
+      // distinguish a story reply from an ordinary DM.
+      isStoryReply: !!(parsed.metadata as Record<string, unknown> | null)?.ig_reply_to_story,
     });
   }
 
@@ -866,6 +869,8 @@ export class InstagramWebhookService {
     interactiveReplyId: string | null;
     metaMessageId: string;
     contentType: string;
+    /** True when the inbound is a reply to one of our Instagram stories. */
+    isStoryReply?: boolean;
   }): Promise<void> {
     const { ctx, conversation, contactId } = args;
 
@@ -900,8 +905,12 @@ export class InstagramWebhookService {
       | 'first_inbound_message'
       | 'new_message_received'
       | 'keyword_match'
+      | 'instagram_story_reply'
     > = [];
     if (!flowConsumed) triggers.push('new_message_received', 'keyword_match');
+    // Story replies also fire the dedicated trigger so automations can
+    // react specifically to them (e.g. "reply to my story → send DM").
+    if (args.isStoryReply) triggers.push('instagram_story_reply');
     if (args.contactCreated) triggers.unshift('new_contact_created');
     if (args.isFirstInbound) triggers.unshift('first_inbound_message');
 

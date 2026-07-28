@@ -88,4 +88,24 @@ describe('triggerMatches', () => {
       ),
     ).toBe(true);
   });
+
+  it('allows instagram_comment without keywords (optional filter)', () => {
+    expect(
+      triggerMatches('instagram_comment', {}, { message_text: 'nice post!' }),
+    ).toBe(true);
+    expect(
+      triggerMatches(
+        'instagram_comment',
+        { keywords: ['price'] },
+        { message_text: 'nice post!' },
+      ),
+    ).toBe(false);
+    expect(
+      triggerMatches(
+        'instagram_comment',
+        { keywords: ['price'] },
+        { message_text: 'what is the price?' },
+      ),
+    ).toBe(true);
+  });
 });

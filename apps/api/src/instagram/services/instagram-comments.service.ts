@@ -148,7 +148,10 @@ export class InstagramCommentsService {
       this.automationDispatch
         .dispatch({
           accountId: args.accountId,
-          triggerType: 'keyword_match',
+          // 'instagram_comment' — NOT 'keyword_match'. The builder creates
+          // automations with trigger_type='instagram_comment'; dispatching
+          // 'keyword_match' here means those automations never fire.
+          triggerType: 'instagram_comment',
           contactId,
           context: {
             message_text: value.text ?? '',

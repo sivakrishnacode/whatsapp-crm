@@ -32,6 +32,7 @@ export default function NewAutomationPage() {
         description: t.description,
         trigger_type: t.trigger_type,
         trigger_config: t.trigger_config as Record<string, unknown>,
+        channels: [],
         is_active: false,
         steps,
       }
@@ -41,6 +42,7 @@ export default function NewAutomationPage() {
       description: "",
       trigger_type: "new_message_received" as AutomationTriggerType,
       trigger_config: {},
+      channels: [],
       is_active: false,
       steps: [],
     }
