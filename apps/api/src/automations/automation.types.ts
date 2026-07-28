@@ -11,7 +11,39 @@ export type AutomationTriggerType =
   | 'new_contact_created'
   | 'conversation_assigned'
   | 'tag_added'
-  | 'time_based';
+  | 'time_based'
+  // Instagram-only events with no WhatsApp equivalent. They exist as
+  // their own triggers rather than folding into `keyword_match`
+  // because a public comment and a private DM are different things:
+  // conflating them means a rule written to answer a DM also fires on
+  // every matching comment, with no way to tell them apart.
+  | 'instagram_comment'
+  | 'instagram_story_reply';
+
+/**
+ * Triggers that accept a keyword filter in their `trigger_config`.
+ *
+ * `keyword_match` is the WhatsApp-and-Instagram DM one; the two
+ * Instagram triggers reuse the same config shape so an author learns
+ * one editor, not three.
+ */
+export const KEYWORD_FILTERED_TRIGGERS = [
+  'keyword_match',
+  'instagram_comment',
+  'instagram_story_reply',
+] as const;
+
+/**
+ * Triggers that only make sense on one channel. Used to keep the
+ * builder's channel picker and trigger picker consistent — selecting
+ * `instagram_comment` implies the automation is Instagram-scoped.
+ */
+export const TRIGGER_CHANNEL_LOCK: Partial<
+  Record<AutomationTriggerType, Channel>
+> = {
+  instagram_comment: 'instagram',
+  instagram_story_reply: 'instagram',
+};
 
 export type AutomationStepType =
   | 'send_message'
@@ -96,7 +128,16 @@ export interface WaitStepConfig {
 }
 
 export type ConditionSubject =
-  'contact_field' | 'tag_presence' | 'message_content' | 'time_of_day';
+  | 'contact_field'
+  | 'tag_presence'
+  | 'message_content'
+  | 'time_of_day'
+  /**
+   * Branch on the triggering conversation's channel. Lets one
+   * automation send a template on WhatsApp and plain text on
+   * Instagram, instead of maintaining two near-identical rules.
+   */
+  | 'channel';
 
 export interface ConditionStepConfig {
   subject: ConditionSubject;
@@ -134,6 +175,12 @@ export interface AutomationJson {
   description?: string | null;
   trigger_type: AutomationTriggerType;
   trigger_config: AutomationTriggerConfig;
+  /**
+   * Channels this automation runs on. EMPTY = all channels, which is
+   * both the default and what every automation predating the column
+   * does. Never null — see migration 052 for why one representation.
+   */
+  channels: Channel[];
   is_active: boolean;
   execution_count: number;
   last_executed_at?: string | null;
@@ -167,9 +214,21 @@ export interface AutomationLogJson {
   trigger_event: string;
   steps_executed: AutomationLogStepResult[];
   status: AutomationLogStatus;
+  /**
+   * Channel of the conversation that fired this run. NULL for runs
+   * with no channel context (time-based, manual entrypoint) and for
+   * rows predating the column — NULL means unknown, not WhatsApp.
+   */
+  channel: string | null;
   error_message?: string | null;
   created_at: string;
-  contact?: { id: string; name: string; phone: string | null } | null;
+  contact?: {
+    id: string;
+    name: string;
+    phone: string | null;
+    /** Instagram contacts have no phone — the logs UI falls back to this. */
+    ig_username?: string | null;
+  } | null;
 }
 
 /** Mirrors apps/web/src/lib/automations/engine.ts's `AutomationContext`. */
@@ -185,14 +244,19 @@ export interface AutomationContext {
   /** Agent the conversation was assigned to, for conversation_assigned. */
   agent_id?: string;
   /**
-   * Which platform the triggering event came from. Absent means
-   * WhatsApp — every dispatch predates the Instagram channel.
+   * Which platform the triggering event came from.
    *
-   * Steps do not branch on this to pick a transport: ChannelSenderService
-   * routes by `conversations.channel`, so a send step works on either
-   * platform untouched. It is here so *conditions* can target one
-   * channel, and so channel-specific steps (a WhatsApp template) can
-   * refuse cleanly rather than failing at the API.
+   * Absent is treated as WhatsApp by `toChannel()` — the WhatsApp
+   * webhook predates this field. Prefer setting it explicitly.
+   *
+   * Read by three things: dispatch (to skip automations scoped to
+   * another channel), the `channel` condition subject, and
+   * `resolveConversationId` (so a send lands on the thread the event
+   * came from, not an arbitrary one the contact happens to own).
+   *
+   * Send steps do NOT branch on it to pick a transport —
+   * ChannelSenderService routes by `conversations.channel`, so a send
+   * step works on either platform untouched.
    */
   channel?: Channel;
   /** Instagram comment that triggered this, for the comment → DM funnel. */

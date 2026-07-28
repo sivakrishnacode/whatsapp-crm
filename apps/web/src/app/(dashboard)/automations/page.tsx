@@ -158,7 +158,7 @@ export default function AutomationsPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Automations</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Build workflows that react to WhatsApp® events automatically.
+            Build workflows that react to customer events across all your channels automatically.
           </p>
         </div>
         <GatedButton
@@ -310,6 +310,13 @@ function AutomationCard({
             >
               {meta.label}
             </span>
+            {automation.channels.length > 0 && (
+              <span className="inline-flex items-center rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-0.5 text-[11px] font-medium text-slate-400 capitalize">
+                {automation.channels.length === 1
+                  ? `${automation.channels[0]} only`
+                  : automation.channels.join(' + ')}
+              </span>
+            )}
             <span className="tabular-nums">
               {automation.execution_count} run{automation.execution_count === 1 ? "" : "s"}
             </span>

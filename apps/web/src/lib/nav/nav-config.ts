@@ -9,6 +9,7 @@ import {
   Settings,
   Users,
   UsersRound,
+  Zap,
 } from 'lucide-react';
 
 import {
@@ -63,12 +64,22 @@ export interface RailItem {
   unreadDot?: boolean;
 }
 
-/** The workspace block — between Onboarding and the channels. */
+/**
+ * The workspace block — between Onboarding and the channels.
+ *
+ * These are the surfaces that span every channel. Automations lives
+ * here rather than in the WhatsApp panel because the engine is
+ * channel-agnostic: a send step is routed by the conversation's own
+ * channel, so one automation answers a WhatsApp message and an
+ * Instagram DM without being authored twice. Filing it under a channel
+ * implied a scope it does not have.
+ */
 export const RAIL_WORKSPACE: RailItem[] = [
   { id: 'home', label: 'Home', icon: Home, href: '/dashboard', exact: true },
   { id: 'inbox', label: 'Inbox', icon: Inbox, href: '/inbox', unreadDot: true },
   { id: 'contacts', label: 'Contacts', icon: Users, href: '/contacts' },
   { id: 'pipelines', label: 'Pipelines', icon: GitBranch, href: '/pipelines' },
+  { id: 'automations', label: 'Automations', icon: Zap, href: '/automations' },
   { id: 'agents', label: 'AI Agents & Bots', icon: Bot, href: '/agents' },
 ];
 

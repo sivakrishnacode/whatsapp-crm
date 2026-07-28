@@ -4,7 +4,10 @@ import type { Queue } from 'bullmq';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AutomationMetaSendService } from '../../whatsapp/automation-meta-send.service';
-import { ChannelSenderService } from '../../common/messaging/channel-sender.service';
+import {
+  ChannelSenderService,
+  UnsupportedOnChannelError,
+} from '../../common/messaging/channel-sender.service';
 import { isDeliverableUrl } from '../../common/security/ssrf.util';
 import { AutomationConditionService } from './automation-condition.service';
 import { interpolate } from './automation-interpolation.util';
@@ -138,6 +141,29 @@ export class AutomationStepExecutorService {
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+
+        // A step the channel simply cannot do is SKIPPED, not failed.
+        //
+        // A shared automation may legitimately contain a WhatsApp
+        // template step and still be useful on Instagram — tag the
+        // contact, create the deal, notify the team. Treating the
+        // template as a fatal error aborted the loop and silently
+        // dropped every step after it, which is how a rule that
+        // "works on WhatsApp" quietly does half its job on Instagram.
+        //
+        // The run continues and ends 'partial', so the log shows both
+        // what was skipped and why.
+        if (err instanceof UnsupportedOnChannelError) {
+          results.push({
+            step_id: step.id,
+            step_type: step.stepType as AutomationStepType,
+            status: 'skipped',
+            detail: msg,
+          });
+          if (status === 'success') status = 'partial';
+          continue;
+        }
+
         results.push({
           step_id: step.id,
           step_type: step.stepType as AutomationStepType,
@@ -182,7 +208,7 @@ export class AutomationStepExecutorService {
           contactId: args.contactId,
           text,
         });
-        return `sent via Meta (${messageId})`;
+        return `sent on ${args.context?.channel ?? 'whatsapp'} (${messageId})`;
       }
 
       case 'send_template': {
@@ -278,10 +304,9 @@ export class AutomationStepExecutorService {
         }
         if (!agentId) return 'no agent resolved';
         await this.prisma.conversations.updateMany({
-          where: {
-            account_id: args.automation.accountId,
-            contact_id: args.contactId,
-          },
+          // Channel-scoped — assigning an Instagram thread must not
+          // also reassign the contact's WhatsApp one.
+          where: this.conversationScope(args),
           data: { assigned_agent_id: agentId },
         });
         return `assigned to ${agentId}`;
@@ -410,10 +435,9 @@ export class AutomationStepExecutorService {
         if (!args.contactId)
           throw new Error('close_conversation needs a contact');
         await this.prisma.conversations.updateMany({
-          where: {
-            account_id: args.automation.accountId,
-            contact_id: args.contactId,
-          },
+          // Channel-scoped — see conversationScope. Closing one
+          // platform's thread should not close the other's.
+          where: this.conversationScope(args),
           data: { status: 'closed', updated_at: new Date() },
         });
         return 'conversation closed';
@@ -431,6 +455,24 @@ export class AutomationStepExecutorService {
    * manual engine calls. Throws if none exists — send steps have no
    * meaningful target without a conversation.
    */
+  /**
+   * Narrow a bulk conversation update to the triggering channel.
+   *
+   * `assign_conversation` and `close_conversation` both operate on
+   * "this contact's conversations". Left unscoped they act on every
+   * thread the contact owns — so closing an Instagram thread would
+   * also close their WhatsApp one. When the event names a channel,
+   * confine the write to it.
+   */
+  private conversationScope(args: StepExecutionArgs) {
+    const channel = args.context?.channel;
+    return {
+      account_id: args.automation.accountId,
+      contact_id: args.contactId!,
+      ...(channel ? { channel } : {}),
+    };
+  }
+
   private async resolveConversationId(
     args: StepExecutionArgs,
   ): Promise<string> {
@@ -438,25 +480,38 @@ export class AutomationStepExecutorService {
     if (fromCtx) return fromCtx;
     if (!args.contactId)
       throw new Error('cannot resolve conversation: no contact');
-    // Deliberately NOT filtered by channel. A contact reachable on
-    // Instagram has no phone and vice versa (identities are not merged
-    // across channels), so a contact owns at most one thread and this
-    // finds it whichever platform it is on. The send itself is routed
-    // by `conversations.channel` in ChannelSenderService, so an
-    // automation fired by an Instagram DM replies on Instagram without
-    // this resolver needing to know.
+    // Pin the channel when the triggering event told us one.
     //
-    // Ordered so that if identity merging ever does produce two
-    // threads, this picks the more recently active one rather than an
-    // arbitrary row.
+    // An earlier version left this unfiltered, reasoning that a contact
+    // owns at most one thread because identities are not merged across
+    // channels. That holds for contacts created BY a channel, but not
+    // for the Instagram comment funnel: a commenter who is already a
+    // WhatsApp contact has a WhatsApp thread, and an unfiltered lookup
+    // would send the comment's reply there — to the wrong person's
+    // phone, on the wrong platform.
+    //
+    // Falls back to unfiltered when the context carries no channel
+    // (time-based runs, the manual entrypoint), which preserves the
+    // original behaviour for every path that has no better answer.
+    const channel = args.context?.channel;
+
     const convo = await this.prisma.conversations.findFirst({
       where: {
         account_id: args.automation.accountId,
         contact_id: args.contactId,
+        ...(channel ? { channel } : {}),
       },
+      // If two threads ever do exist, prefer the more recently active
+      // one over an arbitrary row.
       orderBy: { last_message_at: 'desc' },
     });
-    if (!convo) throw new Error('no conversation for contact');
+    if (!convo) {
+      throw new Error(
+        channel
+          ? `no ${channel} conversation for contact`
+          : 'no conversation for contact',
+      );
+    }
     return convo.id;
   }
 

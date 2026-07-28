@@ -115,7 +115,7 @@ const ADDABLE_STEPS: AutomationStepType[] = [
   "close_conversation",
 ]
 
-const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: string }[] = [
+const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: string; channelLock?: string }[] = [
   { value: "new_message_received", label: "New Message Received", hint: "Any incoming message" },
   {
     value: "first_inbound_message",
@@ -127,6 +127,18 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
   { value: "conversation_assigned", label: "Conversation Assigned", hint: "When assigned to an agent" },
   { value: "tag_added", label: "Tag Added", hint: "When a tag is added to a contact" },
   { value: "time_based", label: "Time-Based", hint: "On a recurring schedule" },
+  {
+    value: "instagram_comment",
+    label: "Instagram Comment",
+    hint: "When someone comments on one of your Instagram posts. Optionally filter by keyword. Instagram only.",
+    channelLock: "instagram",
+  },
+  {
+    value: "instagram_story_reply",
+    label: "Instagram Story Reply",
+    hint: "When someone replies to one of your Instagram stories. Optionally filter by keyword. Instagram only.",
+    channelLock: "instagram",
+  },
 ]
 
 function cid(): string {
@@ -797,7 +809,7 @@ function TriggerCard({
                 {TRIGGER_OPTIONS.find((o) => o.value === type)?.hint}
               </p>
             </div>
-            {type === "keyword_match" && (
+            {(type === "keyword_match" || type === "instagram_comment" || type === "instagram_story_reply") && (
               <KeywordMatchConfig
                 config={config as unknown as KeywordMatchTriggerConfig}
                 onChange={onConfigChange}
@@ -1149,6 +1161,11 @@ function AddButton({ onPick }: { onPick: (t: AutomationStepType) => void }) {
               <DropdownMenuItem key={t} onClick={() => onPick(t)}>
                 <Icon className="h-4 w-4" />
                 {STEP_META[t].label}
+                {t === "send_template" && (
+                  <span className="ml-auto text-[10px] font-medium text-muted-foreground opacity-60">
+                    WA only
+                  </span>
+                )}
               </DropdownMenuItem>
             )
           })}

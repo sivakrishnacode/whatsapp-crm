@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { ConditionStepConfig } from '../automation.types';
 import type { StepExecutionArgs } from '../automation.types';
+import { toChannel } from '../../common/messaging/channel';
 
 /** Ported from apps/web/src/lib/automations/engine.ts's `evaluateCondition()`. */
 @Injectable()
@@ -52,6 +53,18 @@ export class AutomationConditionService {
       case 'message_content': {
         const text = (args.context.message_text ?? '').toString();
         return text.toLowerCase().includes((cfg.value ?? '').toLowerCase());
+      }
+      case 'channel': {
+        // Lets one automation branch instead of being duplicated per
+        // channel: send a template on WhatsApp, plain text on Instagram.
+        //
+        // An absent context channel is WhatsApp — the WhatsApp webhook
+        // predates the field, so `undefined` and `'whatsapp'` are the
+        // same event and must compare equal.
+        const actual = toChannel(args.context.channel);
+        const expected = (cfg.value ?? cfg.operand ?? '').trim().toLowerCase();
+        if (!expected) return false;
+        return actual === expected;
       }
       case 'time_of_day': {
         // operand form "HH:mm-HH:mm" — true if now is within that window

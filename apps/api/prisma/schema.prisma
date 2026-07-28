@@ -702,6 +702,9 @@ model AutomationLog {
   triggerEvent      String                       @map("trigger_event")
   stepsExecuted     Json                         @default("[]") @map("steps_executed")
   status            String
+  /// Channel of the triggering conversation. NULL means unknown — for
+  /// time-based runs, the manual entrypoint, and rows predating this.
+  channel           String?
   errorMessage      String?                      @map("error_message")
   createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
   accountId         String                       @map("account_id") @db.Uuid
@@ -714,6 +717,7 @@ model AutomationLog {
   @@index([accountId], map: "idx_automation_logs_account")
   @@index([accountId, createdAt(sort: Desc)], map: "idx_automation_logs_account_time")
   @@index([automationId, createdAt(sort: Desc)], map: "idx_automation_logs_automation")
+  @@index([automationId, channel, createdAt(sort: Desc)], map: "idx_automation_logs_automation_channel", where: raw("(channel IS NOT NULL)"))
   @@index([userId], map: "idx_automation_logs_user")
   @@map("automation_logs")
   @@schema("public")
@@ -778,6 +782,9 @@ model Automation {
   description       String?
   triggerType       String                       @map("trigger_type")
   triggerConfig     Json                         @default("{}") @map("trigger_config")
+  /// Channels this automation runs on. EMPTY = all channels (the
+  /// default). Non-empty restricts it — see automations_channels_chk.
+  channels          String[]                     @default([])
   isActive          Boolean                      @default(false) @map("is_active")
   executionCount    Int                          @default(0) @map("execution_count")
   lastExecutedAt    DateTime?                    @map("last_executed_at") @db.Timestamptz(6)

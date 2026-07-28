@@ -435,7 +435,11 @@ export type AutomationTriggerType =
   | 'new_contact_created'
   | 'conversation_assigned'
   | 'tag_added'
-  | 'time_based';
+  | 'time_based'
+  // Instagram-specific triggers — these have no WhatsApp equivalent and
+  // lock the automation to the Instagram channel when selected.
+  | 'instagram_comment'
+  | 'instagram_story_reply';
 
 export type AutomationStepType =
   | 'send_message'
@@ -565,6 +569,11 @@ export interface Automation {
   description?: string;
   trigger_type: AutomationTriggerType;
   trigger_config: AutomationTriggerConfig;
+  /**
+   * Channels this automation runs on. Empty array = all channels (the
+   * default for every automation created before migration 052).
+   */
+  channels: string[];
   is_active: boolean;
   execution_count: number;
   last_executed_at?: string | null;
@@ -598,9 +607,11 @@ export interface AutomationLog {
   trigger_event: string;
   steps_executed: AutomationLogStepResult[];
   status: AutomationLogStatus;
+  /** Channel of the conversation that triggered this run. NULL = unknown or time-based. */
+  channel: string | null;
   error_message?: string | null;
   created_at: string;
-  contact?: Contact;
+  contact?: Contact & { ig_username?: string | null };
 }
 
 // ============================================================

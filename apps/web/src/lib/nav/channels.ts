@@ -18,7 +18,6 @@ import {
   ShoppingCart,
   Sparkles,
   Workflow,
-  Zap,
 } from 'lucide-react';
 
 import { InstagramIcon, WhatsAppIcon } from '@/components/channels/channel-icons';
@@ -158,18 +157,17 @@ const WHATSAPP_PANEL: PanelGroup[] = [
         icon: Settings,
         href: '/channels/whatsapp/settings',
       },
-      {
-        id: 'wa-automations',
-        label: 'Automations',
-        icon: Zap,
-        // Shared engine on a flat route — see `matchPaths` docs above.
-        href: '/automations',
-        matchPaths: ['/automations'],
-      },
+      // Automations used to sit here as a flat route surfaced inside
+      // the WhatsApp panel. It moved to the primary rail
+      // (RAIL_WORKSPACE) once the engine became channel-agnostic:
+      // ChannelSenderService routes a send step by the conversation's
+      // channel, so one automation runs on WhatsApp and Instagram
+      // alike. Filing it under WhatsApp implied it was WhatsApp-only.
       {
         id: 'wa-flows',
         label: 'Flows',
         icon: Workflow,
+        // Shared engine on a flat route — see `matchPaths` docs above.
         href: '/flows',
         matchPaths: ['/flows'],
       },

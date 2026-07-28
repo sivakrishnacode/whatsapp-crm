@@ -117,8 +117,13 @@ export default function AutomationLogsPage({
                   )}
                   <StatusBadge status={log.status} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-foreground">
-                      {log.contact?.name ?? log.contact?.phone ?? "Unknown contact"}
+                    <div className="flex items-center gap-2 truncate text-sm font-medium text-foreground">
+                      {log.contact?.name ?? log.contact?.ig_username ?? log.contact?.phone ?? "Unknown contact"}
+                      {log.channel && (
+                        <span className="inline-flex items-center rounded-full border border-slate-500/20 bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium capitalize text-slate-400">
+                          {log.channel}
+                        </span>
+                      )}
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
                       {log.trigger_event} · {log.steps_executed?.length ?? 0} step

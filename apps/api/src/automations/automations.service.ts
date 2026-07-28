@@ -18,6 +18,7 @@ import {
 } from './services/automation-validate';
 import type { CreateAutomationDto } from './dto/create-automation.dto';
 import type { UpdateAutomationDto } from './dto/update-automation.dto';
+import type { Channel } from '../common/messaging/channel';
 import type {
   AutomationJson,
   AutomationLogJson,
@@ -107,6 +108,9 @@ export class AutomationsService {
         description: description ?? null,
         triggerType,
         triggerConfig: (triggerConfig ?? {}) as Prisma.InputJsonValue,
+        // Empty = every channel, which is what an author who never
+        // touched the picker means.
+        channels: body.channels ?? [],
         isActive: !!body.is_active,
       },
     });
@@ -158,6 +162,7 @@ export class AutomationsService {
     if (presentKeys.has('trigger_type')) update.triggerType = body.trigger_type;
     if (presentKeys.has('trigger_config'))
       update.triggerConfig = body.trigger_config as Prisma.InputJsonValue;
+    if (presentKeys.has('channels')) update.channels = body.channels;
     if (presentKeys.has('is_active')) update.isActive = body.is_active;
 
     // If this PATCH leaves the automation active (either explicitly
@@ -228,6 +233,9 @@ export class AutomationsService {
         description: original.description,
         triggerType: original.triggerType,
         triggerConfig: original.triggerConfig as Prisma.InputJsonValue,
+        // A copy that quietly ran on more channels than its original
+        // would be a surprising way to start editing one.
+        channels: original.channels,
         isActive: false,
       },
     });
@@ -268,7 +276,13 @@ export class AutomationsService {
   async listLogs(id: string, accountId: string): Promise<AutomationLogJson[]> {
     const rows = await this.prisma.automationLog.findMany({
       where: { automationId: id, accountId },
-      include: { contact: { select: { id: true, name: true, phone: true } } },
+      include: {
+        contact: {
+          // ig_username so the logs UI can name an Instagram contact,
+          // who has no phone to fall back to.
+          select: { id: true, name: true, phone: true, ig_username: true },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
@@ -281,6 +295,7 @@ export class AutomationsService {
       steps_executed: (r.stepsExecuted ??
         []) as unknown as AutomationLogStepResult[],
       status: r.status as AutomationLogStatus,
+      channel: r.channel,
       error_message: r.errorMessage,
       created_at: r.createdAt.toISOString(),
       contact: r.contact
@@ -288,6 +303,7 @@ export class AutomationsService {
             id: r.contact.id,
             name: r.contact.name ?? '',
             phone: r.contact.phone,
+            ig_username: r.contact.ig_username,
           }
         : null,
     }));
@@ -302,6 +318,7 @@ export class AutomationsService {
       description: row.description,
       trigger_type: row.triggerType as AutomationTriggerType,
       trigger_config: row.triggerConfig as AutomationTriggerConfig,
+      channels: row.channels as Channel[],
       is_active: row.isActive,
       execution_count: row.executionCount,
       last_executed_at: row.lastExecutedAt

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   EyeOff,
   Loader2,
@@ -53,13 +54,22 @@ export function InstagramComments() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
+  // Set when arriving from a post card on the Posts page. Narrows the
+  // queue to that post so "12 comments waiting" leads somewhere exact
+  // rather than dumping the agent into the full list.
+  const mediaId = useSearchParams().get('media_id');
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const query = status ? `?status=${status}` : '';
-      const res = await fetch(`/api/instagram/comments${query}`, {
-        cache: 'no-store',
-      });
+      const params = new URLSearchParams();
+      if (status) params.set('status', status);
+      if (mediaId) params.set('media_id', mediaId);
+      const query = params.toString();
+      const res = await fetch(
+        `/api/instagram/comments${query ? `?${query}` : ''}`,
+        { cache: 'no-store' },
+      );
       const data = await res.json();
       setComments(data.comments ?? []);
     } catch {
@@ -67,7 +77,7 @@ export function InstagramComments() {
     } finally {
       setLoading(false);
     }
-  }, [status]);
+  }, [status, mediaId]);
 
   useEffect(() => {
     void load();
@@ -102,6 +112,17 @@ export function InstagramComments() {
             Reply publicly, or send a private DM to move the conversation to
             the inbox.
           </p>
+          {mediaId && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Filtered to one post ·{' '}
+              <Link
+                href="/channels/instagram/comments"
+                className="text-primary hover:underline"
+              >
+                show all
+              </Link>
+            </p>
+          )}
         </div>
         <Button
           variant="outline"
@@ -242,7 +263,7 @@ function CommentCard({
 
           {comment.private_reply_conversation_id && (
             <Link
-              href={`/inbox?conversation=${comment.private_reply_conversation_id}`}
+              href={`/inbox?c=${comment.private_reply_conversation_id}`}
               className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
             >
               <MessageCircle className="size-3" />

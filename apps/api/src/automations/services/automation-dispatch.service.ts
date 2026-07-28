@@ -3,6 +3,7 @@ import type { Automation } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AutomationStepExecutorService } from './automation-step-executor.service';
 import { triggerMatches } from './automation-trigger-match.util';
+import { toChannel } from '../../common/messaging/channel';
 import type {
   AutomationContext,
   AutomationDispatchInput,
@@ -61,7 +62,29 @@ export class AutomationDispatchService {
       });
       if (automations.length === 0) return;
 
+      // The channel the event came from. WhatsApp's webhook predates
+      // the field and omits it, so absent means WhatsApp — `toChannel`
+      // owns that default rather than each call site guessing.
+      const eventChannel = input.context?.channel
+        ? toChannel(input.context.channel)
+        : null;
+
       for (const automation of automations) {
+        // Channel scoping. An EMPTY `channels` array means "no
+        // restriction" — the default, and what every automation
+        // predating the column carries — so this only ever narrows.
+        //
+        // When the event has no channel at all (a time-based run, the
+        // manual entrypoint) a scoped automation is skipped rather
+        // than assumed to match: firing an Instagram-only rule from a
+        // context that cannot prove it is Instagram is the wrong way
+        // to be wrong.
+        if (automation.channels.length > 0) {
+          if (!eventChannel || !automation.channels.includes(eventChannel)) {
+            continue;
+          }
+        }
+
         if (
           !triggerMatches(
             automation.triggerType,
@@ -159,6 +182,10 @@ export class AutomationDispatchService {
           userId: automation.userId,
           contactId: input.contactId ?? null,
           triggerEvent: input.triggerType,
+          // NULL when the event carried no channel. Deliberately not
+          // defaulted to 'whatsapp' — "unknown" and "WhatsApp" are
+          // different answers to "why did this fire?".
+          channel: input.context?.channel ?? null,
           stepsExecuted: [],
           status: 'success',
         },

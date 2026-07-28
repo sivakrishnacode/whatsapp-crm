@@ -36,15 +36,33 @@ describe('resolveNavContext — rail destinations without a panel', () => {
   });
 
   it('keeps a deep nested route on the same rail row as its parent', () => {
-    // /automations and /flows are panel rows, so their children stay in
-    // the WhatsApp channel context rather than falling through to nothing.
+    // Automations is a top-level rail row, so its children highlight it
+    // directly rather than opening a channel panel.
     expect(resolveNavContext('/automations/new').activeRailId).toBe(
-      'channel-whatsapp',
+      'automations',
     );
+    expect(
+      resolveNavContext('/automations/abc/edit').activeRailId,
+    ).toBe('automations');
+
+    // Flows is still a flat route surfaced inside the WhatsApp panel,
+    // so its children stay in the channel context.
     expect(resolveNavContext('/flows/abc/runs').activeRailId).toBe(
       'channel-whatsapp',
     );
     expect(resolveNavContext('/contacts/anything').activeRailId).toBe('contacts');
+  });
+
+  it('gives Automations a rail row of its own, with no channel panel', () => {
+    // Automations moved out of the WhatsApp panel when the engine became
+    // channel-agnostic — one automation serves every channel, so scoping
+    // it to WhatsApp in the nav was misleading.
+    const nav = resolveNavContext('/automations');
+    expect(nav.activeRailId).toBe('automations');
+    expect(nav.title).toBe('Automations');
+    expect(nav.activeChannel).toBeNull();
+    expect(nav.panel).toBeNull();
+    expect(nav.breadcrumb).toBeNull();
   });
 });
 
@@ -61,16 +79,21 @@ describe('resolveNavContext — channel panels', () => {
   });
 
   it('keeps the panel open for flat routes surfaced inside it', () => {
-    // Automations and Flows are shared engines on flat routes that the
-    // WhatsApp panel links to — the panel must stay open there.
-    const automations = resolveNavContext('/automations');
-    expect(automations.activeChannel?.id).toBe('whatsapp');
-    expect(automations.activePanelItemId).toBe('wa-automations');
-    expect(automations.title).toBe('Automations');
-
+    // Flows is a shared engine on a flat route that the WhatsApp panel
+    // links to — the panel must stay open there. (Automations used to
+    // work the same way; it now has its own rail row.)
     const flows = resolveNavContext('/flows');
+    expect(flows.activeChannel?.id).toBe('whatsapp');
     expect(flows.activePanelItemId).toBe('wa-flows');
     expect(flows.title).toBe('Flows');
+  });
+
+  it('no longer surfaces Automations inside the WhatsApp panel', () => {
+    const rows = CHANNELS.whatsapp.panel.flatMap((g) => g.items);
+    expect(rows.map((r) => r.href)).not.toContain('/automations');
+    expect(rows.some((r) => r.matchPaths?.includes('/automations'))).toBe(
+      false,
+    );
   });
 
   it('does not confuse /flows with /channels/whatsapp/flows', () => {
