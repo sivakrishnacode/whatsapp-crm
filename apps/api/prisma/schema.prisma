@@ -32,6 +32,9 @@ model Account {
   deals                         deals[]
   flowRuns                      FlowRun[]
   flows                         Flow[]
+  instagram_comments            instagram_comments[]
+  instagram_config              instagram_config?
+  instagram_media               instagram_media[]
   member_presence               member_presence[]
   message_templates             message_templates[]
   notifications                 notifications[]
@@ -551,6 +554,7 @@ model users {
   facebook_pages                                                     facebook_pages[]
   flowRuns                                                           FlowRun[]
   flows                                                              Flow[]
+  instagram_config                                                   instagram_config[]
   member_presence                                                    member_presence?
   message_templates                                                  message_templates[]
   notifications_notifications_actor_user_idTousers                   notifications[]                 @relation("notifications_actor_user_idTousers")
@@ -925,7 +929,9 @@ model contact_tags {
 model contacts {
   id                            String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id                       String                          @db.Uuid
-  phone                         String
+  /// NULL for Instagram-only contacts. See contacts_identity_chk: every
+  /// contact must carry a phone OR an ig_scoped_id.
+  phone                         String?
   name                          String?
   email                         String?
   company                       String?
@@ -934,6 +940,11 @@ model contacts {
   updated_at                    DateTime?                       @default(now()) @db.Timestamptz(6)
   account_id                    String                          @db.Uuid
   phone_normalized              String?                         @default(dbgenerated("regexp_replace(phone, '\\D'::text, ''::text, 'g'::text)"))
+  /// Instagram-scoped user ID. App-scoped — the same Instagram user has a
+  /// different IGSID under a different Meta app.
+  ig_scoped_id                  String?
+  /// Cached @handle. Display only; usernames are mutable, never key on them.
+  ig_username                   String?
   automationLogs                AutomationLog[]
   automationPendingExecutions   AutomationPendingExecution[]
   broadcast_recipients          broadcast_recipients[]
@@ -949,8 +960,10 @@ model contacts {
   flowRuns                      FlowRun[]
   notifications                 notifications[]
   whatsapp_orders               whatsapp_orders[]
+  instagram_comments            instagram_comments[]
 
   @@unique([account_id, phone_normalized], map: "idx_contacts_account_phone_normalized", where: raw("(phone_normalized <> ''::text)"))
+  @@unique([account_id, ig_scoped_id], map: "idx_contacts_account_igsid", where: raw("(ig_scoped_id IS NOT NULL)"))
   @@index([account_id], map: "idx_contacts_account")
   @@index([phone], map: "idx_contacts_phone")
   @@index([user_id], map: "idx_contacts_user_id")
@@ -973,6 +986,10 @@ model conversations {
   account_id            String              @db.Uuid
   ai_autoreply_disabled Boolean             @default(false)
   ai_reply_count        Int                 @default(0)
+  /// 'whatsapp' | 'instagram'. Enforced by conversations_channel_chk.
+  channel               String              @default("whatsapp")
+  /// Most recent customer-sent message. Drives Instagram's 24h window.
+  last_inbound_at       DateTime?           @db.Timestamptz(6)
   accounts              Account             @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   contacts              contacts            @relation(fields: [contact_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                 users               @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -982,9 +999,12 @@ model conversations {
   message_reactions     message_reactions[]
   messages              messages[]
   notifications         notifications[]
+  instagram_comments    instagram_comments[]
 
   @@index([account_id], map: "idx_conversations_account")
   @@index([account_id, contact_id], map: "idx_conversations_account_contact")
+  @@index([account_id, contact_id, channel], map: "idx_conversations_account_contact_channel")
+  @@index([account_id, channel, last_message_at(sort: Desc)], map: "idx_conversations_account_channel_time")
   @@index([account_id, status, last_message_at(sort: Desc)], map: "idx_conversations_account_status_time")
   @@index([contact_id], map: "idx_conversations_contact_id")
   @@index([user_id], map: "idx_conversations_user_id")
@@ -1370,12 +1390,20 @@ model messages {
   created_at           DateTime?           @default(now()) @db.Timestamptz(6)
   reply_to_message_id  String?             @db.Uuid
   interactive_reply_id String?
+  /// Tombstone for deletions pushed by the platform (Instagram
+  /// message.is_deleted). The row survives so reply chains and reactions
+  /// pointing at it stay resolvable.
+  deleted_at           DateTime?           @db.Timestamptz(6)
+  /// Channel-specific extras: Instagram story-reply context, quick-reply
+  /// payloads, attachment kinds, edit history. NULL on almost every row.
+  metadata             Json?
   flowRuns             FlowRun[]
   message_reactions    message_reactions[]
   conversations        conversations       @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   messages             messages?           @relation("messagesTomessages", fields: [reply_to_message_id], references: [id], onUpdate: NoAction)
   other_messages       messages[]          @relation("messagesTomessages")
 
+  @@index([conversation_id, created_at(sort: Desc)], map: "idx_messages_conv_live", where: raw("(deleted_at IS NULL)"))
   @@index([conversation_id, sender_type], map: "idx_messages_conv_sender")
   @@index([conversation_id, created_at(sort: Desc)], map: "idx_messages_conv_time")
   @@index([conversation_id], map: "idx_messages_conversation")
@@ -1566,6 +1594,99 @@ model webhook_endpoints {
   users            users?    @relation(fields: [created_by], references: [id], onUpdate: NoAction)
 
   @@index([account_id])
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model instagram_config {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id          String    @unique @db.Uuid
+  user_id             String    @db.Uuid
+  /// Globally unique: the inbound webhook has nothing else to route on
+  /// (`entry[].id` IS this value).
+  ig_user_id          String    @unique
+  /// The same account reports a second, app-scoped id. Which one lands
+  /// in a webhook's entry[].id varies, so routing matches either.
+  ig_app_scoped_id    String?
+  ig_username         String?
+  profile_picture_url String?
+  /// AES-256-GCM encrypted at rest.
+  access_token        String
+  /// Instagram long-lived tokens last 60 days and must be actively
+  /// refreshed. Read by the daily refresh sweep.
+  token_expires_at    DateTime? @db.Timestamptz(6)
+  token_refreshed_at  DateTime? @db.Timestamptz(6)
+  /// disconnected | connected | token_expired | error
+  status              String    @default("disconnected")
+  subscribed_fields   String[]  @default([])
+  subscribed_at       DateTime? @db.Timestamptz(6)
+  connected_at        DateTime? @db.Timestamptz(6)
+  last_error          String?
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime  @default(now()) @db.Timestamptz(6)
+  accounts            Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users               users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([account_id], map: "idx_instagram_config_account")
+  @@index([token_expires_at], map: "idx_instagram_config_token_expires", where: raw("(token_expires_at IS NOT NULL)"))
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model instagram_media {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id         String    @db.Uuid
+  ig_media_id        String
+  media_type         String?
+  media_product_type String?
+  permalink          String?
+  thumbnail_url      String?
+  caption            String?
+  posted_at          DateTime? @db.Timestamptz(6)
+  synced_at          DateTime  @default(now()) @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  accounts           Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([account_id, ig_media_id])
+  @@index([account_id, posted_at(sort: Desc)], map: "idx_instagram_media_account_posted")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model instagram_comments {
+  id                            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id                    String         @db.Uuid
+  ig_comment_id                 String
+  ig_media_id                   String
+  parent_comment_id             String?
+  from_igsid                    String?
+  from_username                 String?
+  contact_id                    String?        @db.Uuid
+  text                          String?
+  /// The account's own comments arrive on the same webhook. The
+  /// moderation queue filters these out.
+  is_from_business              Boolean        @default(false)
+  /// open | replied | hidden | deleted
+  status                        String         @default("open")
+  replied_at                    DateTime?      @db.Timestamptz(6)
+  private_reply_conversation_id String?        @db.Uuid
+  /// Meta allows exactly ONE private reply per comment, within 7 days.
+  /// This is what stops a second attempt.
+  private_replied_at            DateTime?      @db.Timestamptz(6)
+  commented_at                  DateTime?      @db.Timestamptz(6)
+  created_at                    DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at                    DateTime       @default(now()) @db.Timestamptz(6)
+  accounts                      Account        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contacts                      contacts?      @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
+  conversations                 conversations? @relation(fields: [private_reply_conversation_id], references: [id], onUpdate: NoAction)
+
+  @@unique([account_id, ig_comment_id])
+  @@index([account_id, status, commented_at(sort: Desc)], map: "idx_instagram_comments_account_status")
+  @@index([account_id, ig_media_id], map: "idx_instagram_comments_media")
   @@schema("public")
 }
 

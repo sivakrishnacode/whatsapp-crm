@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { FlowDispatchService } from './flow-dispatch.service';
 import type { PrismaService } from '../../prisma/prisma.service';
-import type { FlowMetaSendService } from '../../whatsapp/flow-meta-send.service';
+import type { ChannelSenderService } from '../../common/messaging/channel-sender.service';
 import type { DispatchInboundInput } from '../flow.types';
 
 // Fresh coverage — the web original's dispatchInboundToFlows /
@@ -117,16 +117,14 @@ function makePrismaMock() {
 
 function makeMetaSendMock() {
   return {
-    sendText: vi.fn().mockResolvedValue({ whatsapp_message_id: 'wamid.text' }),
-    sendMedia: vi
-      .fn()
-      .mockResolvedValue({ whatsapp_message_id: 'wamid.media' }),
-    sendInteractiveButtons: vi
-      .fn()
-      .mockResolvedValue({ whatsapp_message_id: 'wamid.buttons' }),
-    sendInteractiveList: vi
-      .fn()
-      .mockResolvedValue({ whatsapp_message_id: 'wamid.list' }),
+    // ChannelSenderService returns a channel-neutral `messageId`; the
+    // runner no longer knows or cares that these are WhatsApp wamids.
+    sendText: vi.fn().mockResolvedValue({ messageId: 'wamid.text' }),
+    sendMedia: vi.fn().mockResolvedValue({ messageId: 'wamid.media' }),
+    sendButtons: vi.fn().mockResolvedValue({ messageId: 'wamid.buttons' }),
+    sendList: vi.fn().mockResolvedValue({ messageId: 'wamid.list' }),
+    channelOf: vi.fn().mockResolvedValue('whatsapp'),
+    assertSupported: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -154,7 +152,7 @@ describe('FlowDispatchService.dispatchInbound', () => {
     metaSend = makeMetaSendMock();
     service = new FlowDispatchService(
       prisma as unknown as PrismaService,
-      metaSend as unknown as FlowMetaSendService,
+      metaSend as unknown as ChannelSenderService,
     );
   });
 
@@ -218,7 +216,7 @@ describe('FlowDispatchService.dispatchInbound', () => {
       contactId: 'contact-1',
       text: 'Hello!',
     });
-    expect(metaSend.sendInteractiveButtons).toHaveBeenCalledTimes(1);
+    expect(metaSend.sendButtons).toHaveBeenCalledTimes(1);
     // Execution counter incremented atomically.
     expect(prisma.flow.update).toHaveBeenCalledWith({
       where: { id: 'flow-1' },
@@ -391,7 +389,7 @@ describe('FlowDispatchService.dispatchInbound', () => {
       where: { id: 'run-1' },
       data: { repromptCount: 1 },
     });
-    expect(metaSend.sendInteractiveButtons).toHaveBeenCalledTimes(1);
+    expect(metaSend.sendButtons).toHaveBeenCalledTimes(1);
   });
 
   it('escalates to handoff once reprompts are exhausted', async () => {
@@ -431,7 +429,7 @@ describe('FlowDispatchService.dispatchInbound', () => {
       },
     });
     // No re-prompt sent on the exhaust path.
-    expect(metaSend.sendInteractiveButtons).not.toHaveBeenCalled();
+    expect(metaSend.sendButtons).not.toHaveBeenCalled();
   });
 
   it("does not consume when the policy says 'ignore' — automations get their shot", async () => {

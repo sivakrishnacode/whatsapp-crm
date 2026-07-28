@@ -11,6 +11,12 @@ import { useAuth } from "@/hooks/use-auth";
 import { usePresence } from "@/hooks/use-presence";
 import { PresenceDot } from "@/components/presence/presence-dot";
 import { presenceLabel } from "@/lib/presence";
+import { conversationChannel } from "@/lib/inbox/channel";
+import {
+  contactDisplayName as displayNameFor,
+  contactHandle,
+  contactInitial,
+} from "@/lib/contacts/display";
 import { cn } from "@/lib/utils";
 import type {
   Conversation,
@@ -232,6 +238,14 @@ export function MessageThread({
       cancelled = true;
     };
   }, []);
+
+  // Which platform this thread replies on. Drives the send endpoint,
+  // the composer's affordances, and how delivery status is rendered.
+  const channel = conversation
+    ? conversationChannel(conversation)
+    : "whatsapp";
+  const sendPath =
+    channel === "instagram" ? "/api/instagram/send" : "/api/whatsapp/send";
 
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
@@ -548,7 +562,7 @@ export function MessageThread({
       setReplyTo(null);
 
       try {
-        const res = await fetch("/api/whatsapp/send", {
+        const res = await fetch(sendPath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -612,7 +626,7 @@ export function MessageThread({
       setReplyTo(null);
 
       try {
-        const res = await fetch("/api/whatsapp/send", {
+        const res = await fetch(sendPath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -676,7 +690,7 @@ export function MessageThread({
       onNewMessage(optimisticMsg);
 
       try {
-        const res = await fetch("/api/whatsapp/send", {
+        const res = await fetch(sendPath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -740,7 +754,7 @@ export function MessageThread({
       onNewMessage(optimisticMsg);
 
       try {
-        const res = await fetch("/api/whatsapp/send", {
+        const res = await fetch(sendPath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -822,7 +836,7 @@ export function MessageThread({
       onNewMessage(optimisticMsg);
 
       try {
-        const res = await fetch("/api/whatsapp/send", {
+        const res = await fetch(sendPath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -884,7 +898,11 @@ export function MessageThread({
     return map;
   }, [reactions]);
 
-  const contactDisplayName = contact?.name || contact?.phone || "Customer";
+  // "Customer" rather than "Unknown" here: this labels who *said* a
+  // message, where a generic noun reads better than a placeholder.
+  const contactDisplayName = contact
+    ? displayNameFor(contact)
+    : "Customer";
 
   // Author label for a quoted message: "You" when we sent the parent,
   // contact name when the customer sent it.
@@ -1012,7 +1030,9 @@ export function MessageThread({
     );
   }
 
-  const displayName = contact.name || contact.phone;
+  // Instagram contacts have no phone — see lib/contacts/display.
+  const displayName = displayNameFor(contact);
+  const contactSubtitle = contactHandle(contact);
   const messageGroups = groupMessagesByDate(messages);
   const currentStatus = STATUS_OPTIONS.find(
     (s) => s.value === conversation.status
@@ -1050,11 +1070,11 @@ export function MessageThread({
             </button>
           )}
           <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
-            {displayName.charAt(0).toUpperCase()}
+            {contactInitial(contact)}
           </div>
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
-            <p className="truncate text-xs text-muted-foreground">{contact.phone}</p>
+            <p className="truncate text-xs text-muted-foreground">{contactSubtitle}</p>
           </div>
           {/* Session timer badge — hidden on the narrowest phones so
               the name + back arrow keep their room. */}
@@ -1309,6 +1329,7 @@ export function MessageThread({
       {/* Composer */}
       <MessageComposer
         conversationId={conversation.id}
+        channel={channel}
         sessionExpired={sessionInfo.expired}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
@@ -1319,11 +1340,13 @@ export function MessageThread({
         onSendProductList={handleSendProductList}
       />
 
-      <TemplatePicker
-        open={templateModalOpen}
-        onOpenChange={setTemplateModalOpen}
-        onSelect={handleSendTemplate}
-      />
+      {channel !== "instagram" && (
+        <TemplatePicker
+          open={templateModalOpen}
+          onOpenChange={setTemplateModalOpen}
+          onSelect={handleSendTemplate}
+        />
+      )}
     </div>
   );
 }

@@ -2,6 +2,8 @@
 // types package exists yet between apps/web and apps/api — hoisting these
 // into e.g. packages/shared-types is a follow-up opportunity, not done here.
 
+import type { Channel } from '../common/messaging/channel';
+
 export type AutomationTriggerType =
   | 'new_message_received'
   | 'first_inbound_message'
@@ -182,6 +184,20 @@ export interface AutomationContext {
   tag_id?: string;
   /** Agent the conversation was assigned to, for conversation_assigned. */
   agent_id?: string;
+  /**
+   * Which platform the triggering event came from. Absent means
+   * WhatsApp — every dispatch predates the Instagram channel.
+   *
+   * Steps do not branch on this to pick a transport: ChannelSenderService
+   * routes by `conversations.channel`, so a send step works on either
+   * platform untouched. It is here so *conditions* can target one
+   * channel, and so channel-specific steps (a WhatsApp template) can
+   * refuse cleanly rather than failing at the API.
+   */
+  channel?: Channel;
+  /** Instagram comment that triggered this, for the comment → DM funnel. */
+  ig_comment_id?: string;
+  ig_media_id?: string;
 }
 
 /** Dispatch input — mirrors runAutomationsForTrigger's original argument shape. */

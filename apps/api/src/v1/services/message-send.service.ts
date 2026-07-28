@@ -1,5 +1,10 @@
-import { Injectable, Logger, HttpStatus } from '@nestjs/common';
+import { Injectable, Logger, HttpStatus, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  InstagramSendService,
+  InstagramWindowClosedError,
+  InstagramNotConnectedError,
+} from '../../instagram/services/instagram-send.service';
 import {
   sendTextMessage,
   sendTemplateMessage,
@@ -69,7 +74,13 @@ function isMessageTemplate(row: any): boolean {
 export class MessageSendService {
   private readonly logger = new Logger(MessageSendService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // forwardRef: InstagramModule imports V1Module for its webhook
+    // fan-out, so this is a genuine cycle.
+    @Inject(forwardRef(() => InstagramSendService))
+    private readonly instagramSend: InstagramSendService,
+  ) {}
 
   validateSendMessageParams(params: {
     messageType: string;
@@ -173,6 +184,22 @@ export class MessageSendService {
 
     if (!conversation) {
       throw new ApiError('not_found', 'Conversation not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Everything below this point speaks the WhatsApp Cloud API —
+    // templates, product messages, E.164 phone numbers, phone-variant
+    // retries. None of it has an Instagram equivalent, so rather than
+    // thread a second transport through a 200-line WhatsApp-shaped
+    // method, Instagram conversations are routed out here.
+    if (conversation.channel === 'instagram') {
+      return this.sendOnInstagram({
+        accountId,
+        conversationId,
+        messageType,
+        contentText,
+        mediaUrl,
+        templateName,
+      });
     }
 
     const contact = conversation.contacts;
@@ -470,5 +497,106 @@ export class MessageSendService {
     }
 
     return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
+  }
+
+  /**
+   * Instagram branch of `POST /v1/messages`.
+   *
+   * Kept narrow on purpose. The public API's WhatsApp path accepts
+   * templates, product messages and product lists; Instagram supports
+   * none of those, so rather than silently ignoring the parameters this
+   * rejects them by name. An integrator who sends `type: "template"` to
+   * an Instagram conversation has a bug, and a clear 400 is the fastest
+   * way for them to find it.
+   *
+   * Persistence, the 24-hour window check and the outbound message row
+   * all live in InstagramSendService — this only translates the public
+   * API's vocabulary into it.
+   */
+  private async sendOnInstagram(args: {
+    accountId: string;
+    conversationId: string;
+    messageType: string;
+    contentText?: string | null;
+    mediaUrl?: string | null;
+    templateName?: string | null;
+  }): Promise<SendMessageResult> {
+    if (args.messageType === 'template' || args.templateName) {
+      throw new ApiError(
+        'unsupported_on_channel',
+        'Instagram has no message templates. Send a text message instead — note that ' +
+          'Instagram only allows replies within 24 hours of the customer’s last message.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (args.messageType === 'product' || args.messageType === 'product_list') {
+      throw new ApiError(
+        'unsupported_on_channel',
+        'Product messages are a WhatsApp-only feature.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    try {
+      if (args.messageType === 'text') {
+        if (!args.contentText?.trim()) {
+          throw new ApiError(
+            'bad_request',
+            "'content_text' is required for a text message",
+            HttpStatus.BAD_REQUEST,
+          );
+        }
+        const result = await this.instagramSend.sendText({
+          accountId: args.accountId,
+          conversationId: args.conversationId,
+          text: args.contentText,
+        });
+        return {
+          messageId: result.internalId,
+          whatsappMessageId: result.messageId,
+        };
+      }
+
+      if (!args.mediaUrl) {
+        throw new ApiError(
+          'bad_request',
+          "'media_url' is required for a media message",
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      const result = await this.instagramSend.sendMedia({
+        accountId: args.accountId,
+        conversationId: args.conversationId,
+        // 'document' is WhatsApp's name for it; Instagram calls it 'file'.
+        mediaType: args.messageType === 'document' ? 'file' : (args.messageType as any),
+        mediaUrl: args.mediaUrl,
+        caption: args.contentText ?? undefined,
+      });
+      return {
+        messageId: result.internalId,
+        whatsappMessageId: result.messageId,
+      };
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      // A closed messaging window is the expected failure here and is
+      // safe to surface verbatim — the message explains exactly why and
+      // what the integrator can do about it.
+      if (err instanceof InstagramWindowClosedError) {
+        throw new ApiError(
+          'messaging_window_closed',
+          err.message,
+          HttpStatus.CONFLICT,
+        );
+      }
+      if (err instanceof InstagramNotConnectedError) {
+        throw new ApiError(
+          'instagram_not_configured',
+          err.message,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      throw err;
+    }
   }
 }

@@ -192,7 +192,11 @@ export function Step2SelectAudience({
         // "All" — fetch the total, then subtract exclude set if any.
         const { count } = await supabase
           .from('contacts')
-          .select('*', { count: 'exact', head: true });
+          .select('*', { count: 'exact', head: true })
+          // Instagram-only contacts have no phone and are dropped from
+          // the real audience server-side (dashboard-broadcast.service).
+          // Counting them here would promise a reach the send can't meet.
+          .not('phone', 'is', null);
         const total = count ?? 0;
         setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
       }

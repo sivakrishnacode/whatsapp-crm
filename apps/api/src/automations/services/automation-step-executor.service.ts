@@ -4,6 +4,7 @@ import type { Queue } from 'bullmq';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AutomationMetaSendService } from '../../whatsapp/automation-meta-send.service';
+import { ChannelSenderService } from '../../common/messaging/channel-sender.service';
 import { isDeliverableUrl } from '../../common/security/ssrf.util';
 import { AutomationConditionService } from './automation-condition.service';
 import { interpolate } from './automation-interpolation.util';
@@ -35,7 +36,9 @@ export class AutomationStepExecutorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly condition: AutomationConditionService,
+    /** WhatsApp-only paths (templates). Plain sends go via channelSender. */
     private readonly metaSend: AutomationMetaSendService,
+    private readonly channelSender: ChannelSenderService,
     @InjectQueue(AUTOMATIONS_PENDING_QUEUE) private readonly queue: Queue,
   ) {}
 
@@ -171,13 +174,15 @@ export class AutomationStepExecutorService {
         const text = interpolate(cfg.text, args.context);
         if (!text.trim()) throw new Error('send_message has empty text');
         const conversationId = await this.resolveConversationId(args);
-        const { whatsapp_message_id } = await this.metaSend.sendText({
+        // Routed by conversations.channel — an automation triggered by
+        // an Instagram DM replies on Instagram, with no branch here.
+        const { messageId } = await this.channelSender.sendText({
           accountId: args.automation.accountId,
           conversationId,
           contactId: args.contactId,
           text,
         });
-        return `sent via Meta (${whatsapp_message_id})`;
+        return `sent via Meta (${messageId})`;
       }
 
       case 'send_template': {
@@ -186,6 +191,15 @@ export class AutomationStepExecutorService {
         if (!cfg.template_name)
           throw new Error('send_template needs template_name');
         const conversationId = await this.resolveConversationId(args);
+        // WhatsApp-only. Instagram has no approved-template mechanism,
+        // so this raises UnsupportedOnChannelError rather than sending
+        // the raw template name as text — which is what a naive
+        // fallback would do, and would look like a bug to the customer.
+        await this.channelSender.assertSupported(
+          args.automation.accountId,
+          conversationId,
+          'templates',
+        );
         // Meta templates use positional {{1}}, {{2}}, … placeholders, so
         // we MUST emit params in strict numeric order. Lexicographic sort
         // of "1", "2", …, "10" yields "1", "10", "2", … which silently
@@ -424,11 +438,23 @@ export class AutomationStepExecutorService {
     if (fromCtx) return fromCtx;
     if (!args.contactId)
       throw new Error('cannot resolve conversation: no contact');
+    // Deliberately NOT filtered by channel. A contact reachable on
+    // Instagram has no phone and vice versa (identities are not merged
+    // across channels), so a contact owns at most one thread and this
+    // finds it whichever platform it is on. The send itself is routed
+    // by `conversations.channel` in ChannelSenderService, so an
+    // automation fired by an Instagram DM replies on Instagram without
+    // this resolver needing to know.
+    //
+    // Ordered so that if identity merging ever does produce two
+    // threads, this picks the more recently active one rather than an
+    // arbitrary row.
     const convo = await this.prisma.conversations.findFirst({
       where: {
         account_id: args.automation.accountId,
         contact_id: args.contactId,
       },
+      orderBy: { last_message_at: 'desc' },
     });
     if (!convo) throw new Error('no conversation for contact');
     return convo.id;

@@ -16,6 +16,7 @@ import { ApiExceptionFilter } from '../utils/api-exception.filter';
 import { ok, okList, ApiError } from '../utils/respond.util';
 import { parseListParams, getKeysetWhereClause, buildPage } from '../utils/pagination.util';
 import { serializeConversation, serializeMessage } from '../utils/conversations.util';
+import { CHANNELS, isChannel } from '../../common/messaging/channel';
 import { Prisma } from '@prisma/client';
 
 @Controller('v1/conversations')
@@ -32,6 +33,7 @@ export class ConversationsController {
     @Query('cursor') cursorQuery?: string,
     @Query('status') status?: string,
     @Query('contact_id') contactId?: string,
+    @Query('channel') channel?: string,
   ) {
     const { limit, cursor } = parseListParams({ limit: limitQuery, cursor: cursorQuery });
 
@@ -44,6 +46,20 @@ export class ConversationsController {
     }
     if (contactId) {
       whereClause.contact_id = contactId;
+    }
+    // Optional, and deliberately unset by default: existing integrators
+    // expect this endpoint to return everything, and silently hiding
+    // Instagram threads from them would be a worse surprise than
+    // returning threads they don't recognise (each carries `channel`).
+    if (channel) {
+      if (!isChannel(channel)) {
+        throw new ApiError(
+          'invalid_request',
+          `Unknown channel "${channel}". Valid values: ${CHANNELS.join(', ')}.`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      whereClause.channel = channel;
     }
 
     if (cursor) {

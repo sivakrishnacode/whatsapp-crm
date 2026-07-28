@@ -100,10 +100,15 @@ export async function resolveConversationByPhone(
     }
   }
 
+  // This resolver reaches a contact by phone number, so the thread it
+  // wants is always the WhatsApp one. Without the filter it could
+  // return that contact's Instagram thread instead and the caller would
+  // send a WhatsApp message into it.
   const conv = await prisma.conversations.findFirst({
     where: {
       account_id: accountId,
       contact_id: contactId,
+      channel: 'whatsapp',
     },
     select: { id: true },
   });
@@ -118,6 +123,7 @@ export async function resolveConversationByPhone(
         account_id: accountId,
         user_id: ownerUserId,
         contact_id: contactId,
+        channel: 'whatsapp',
       },
       select: { id: true },
     });

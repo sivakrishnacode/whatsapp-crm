@@ -9,6 +9,7 @@ import { AutomationsModule } from './automations/automations.module';
 import { FlowsModule } from './flows/flows.module';
 import { V1Module } from './v1/v1.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
+import { InstagramModule } from './instagram/instagram.module';
 import { AccountModule } from './account/account.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { EcommerceModule } from './ecommerce/ecommerce.module';
@@ -28,6 +29,7 @@ import { AiModule } from './ai/ai.module';
     FlowsModule,
     V1Module,
     WhatsappModule,
+    InstagramModule,
     // Phase 5
     AccountModule,
     IntegrationsModule,

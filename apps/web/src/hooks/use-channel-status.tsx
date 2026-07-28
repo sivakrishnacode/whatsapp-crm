@@ -23,9 +23,9 @@ import { CHANNEL_IDS, CHANNELS, type ChannelId } from '@/lib/nav/channels';
  * this value, so fetching per-consumer would mean three Meta API calls
  * per page load. One fetch, shared.
  *
- * Only WhatsApp has a real backend today. Every other channel resolves
- * to `not_connected` from its registry status — there is no channel
- * table to query yet.
+ * WhatsApp and Instagram both have real backends and are fetched here.
+ * Web and Phone are still frames and resolve to `unavailable` from
+ * their registry status — there is no config table to query for them.
  */
 
 export type ConnectionState =
@@ -68,27 +68,47 @@ export function ChannelStatusProvider({ children }: { children: ReactNode }) {
     if (!accountId) return;
     let cancelled = false;
 
+    const UNREACHABLE = {
+      state: 'not_connected' as const,
+      message: 'Could not reach the server to check the connection.',
+    };
+
+    // Both live channels are fetched together, and independently: one
+    // channel's endpoint being slow or broken must not leave the other
+    // stuck on 'loading' forever in the rail.
     (async () => {
-      try {
-        const res = await fetch('/api/whatsapp/config', { cache: 'no-store' });
-        const data = await res.json();
-        if (cancelled) return;
-        setStatuses((prev) => ({
-          ...prev,
-          whatsapp: data?.connected
-            ? { state: 'connected' }
-            : { state: 'not_connected', message: data?.message },
-        }));
-      } catch {
-        if (cancelled) return;
-        setStatuses((prev) => ({
-          ...prev,
-          whatsapp: {
-            state: 'not_connected',
-            message: 'Could not reach the server to check the connection.',
-          },
-        }));
-      }
+      const [whatsapp, instagram] = await Promise.allSettled([
+        fetch('/api/whatsapp/config', { cache: 'no-store' }).then((r) => r.json()),
+        fetch('/api/instagram/config', { cache: 'no-store' }).then((r) => r.json()),
+      ]);
+      if (cancelled) return;
+
+      setStatuses((prev) => ({
+        ...prev,
+        whatsapp:
+          whatsapp.status === 'fulfilled'
+            ? whatsapp.value?.connected
+              ? { state: 'connected' }
+              : { state: 'not_connected', message: whatsapp.value?.message }
+            : UNREACHABLE,
+        instagram:
+          instagram.status === 'fulfilled'
+            ? instagram.value?.connected
+              ? { state: 'connected' }
+              : {
+                  state: 'not_connected',
+                  // `last_error` carries the actionable detail — an
+                  // expired token, or a webhook subscription that
+                  // failed at connect time and left the account
+                  // silently receiving nothing.
+                  message:
+                    instagram.value?.last_error ??
+                    (instagram.value?.status === 'token_expired'
+                      ? 'Instagram access expired. Reconnect the account.'
+                      : undefined),
+                }
+            : UNREACHABLE,
+      }));
     })();
 
     return () => {
@@ -116,7 +136,7 @@ export function useChannelStatus(): StatusMap {
   return useContext(ChannelStatusContext)?.statuses ?? INITIAL_STATUSES;
 }
 
-/** Re-run the WhatsApp check — call after saving the connection form. */
+/** Re-run the channel checks — call after saving a connection form. */
 export function useRefreshChannelStatus(): () => void {
   return useContext(ChannelStatusContext)?.refresh ?? (() => {});
 }

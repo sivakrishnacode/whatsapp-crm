@@ -121,6 +121,17 @@ Send a WhatsApp message to a phone number. Scope: `messages:send`. You
 pass an **E.164 number**, not an internal id — the endpoint
 finds-or-creates the contact + conversation, then sends.
 
+To reply on Instagram, pass `conversation_id` instead of `to`: an
+Instagram user has no phone number to address, so a thread must already
+exist (they messaged you first, or you sent a private reply to their
+comment). The endpoint routes by the conversation's channel
+automatically. Two Instagram-specific errors:
+
+| Code | Meaning |
+|---|---|
+| `unsupported_on_channel` (400) | `type: "template"`, `product`, or `product_list` on an Instagram conversation. Instagram has no template mechanism and no catalogue. |
+| `messaging_window_closed` (409) | More than 24 hours since the customer's last message. There is no template to re-open it — you must wait for them to write again. |
+
 ```bash
 curl -X POST https://your-crm.example.com/api/v1/messages \
   -H "Authorization: Bearer converse360_live_xxx" \
@@ -200,11 +211,27 @@ Read or update one contact. Scopes: `contacts:read` / `contacts:write`.
 pass `tags` (an array of tag names) to replace the contact's tags. A
 contact in another account returns `404`.
 
+**`phone` can be `null`.** Instagram-only contacts are identified by an
+Instagram-scoped ID and have no phone number at all. Every contact
+carries `channels` (the platforms it is reachable on) and
+`instagram_username`; check `channels` before assuming `phone` is a
+string.
+
 ### `GET /api/v1/conversations`
 
 List conversations, newest first. Scope: `conversations:read`.
-Paginated. Optional filters: `?status=` (`open` / `pending` / `closed`)
-and `?contact_id=`. Each conversation embeds its contact + tags.
+Paginated. Optional filters: `?status=` (`open` / `pending` / `closed`),
+`?contact_id=`, and `?channel=` (`whatsapp` / `instagram`). Each
+conversation embeds its contact + tags.
+
+**Channels.** Conversations now span WhatsApp and Instagram. Every
+conversation carries `channel` and `last_inbound_at` (the customer's
+last message — what Instagram's 24-hour reply window counts from).
+
+`?channel=` is unset by default and returns **everything**: silently
+hiding Instagram threads from an existing integration would be a worse
+surprise than returning threads it doesn't recognise. Filter explicitly
+if you only want one platform. An unknown value is a `400`.
 
 ### `GET /api/v1/conversations/{id}`
 
@@ -215,9 +242,20 @@ to another account.
 
 List a conversation's messages, newest first. Scope: `messages:read`.
 Paginated. Each message includes its `direction` (`inbound` /
-`outbound`), `status` (delivery state), `whatsapp_message_id`, and
-`content_*`. The conversation is verified to belong to your account
-first (`404` otherwise).
+`outbound`), `status` (delivery state), `message_id`, and `content_*`.
+The conversation is verified to belong to your account first (`404`
+otherwise).
+
+`whatsapp_message_id` is retained as an alias of `message_id` for
+backwards compatibility — on an Instagram conversation it carries an
+Instagram `mid`. Prefer `message_id` in new integrations.
+
+`status` differs by channel. WhatsApp goes `sent` → `delivered` →
+`read`; **Instagram has no delivery receipt**, so it goes `sent` →
+`read` and never reports `delivered`. Do not treat the absence of
+`delivered` on Instagram as a failure. `deleted_at` is set when the
+platform reports a message as deleted — the row is kept so reply chains
+stay resolvable.
 
 ### `POST /api/v1/broadcasts`
 

@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
+import { MessagingModule } from '../common/messaging/messaging.module';
 import { AutomationsController } from './automations.controller';
 import { AutomationsEngineController } from './automations-engine.controller';
 import { AutomationsService } from './automations.service';
@@ -18,6 +19,9 @@ import { InternalDispatchGuard } from './guards/internal-dispatch.guard';
   imports: [
     BullModule.registerQueue({ name: AUTOMATIONS_PENDING_QUEUE }),
     forwardRef(() => WhatsappModule),
+    // send_message steps route by conversation channel; send_template
+    // steps use it to refuse cleanly on Instagram.
+    forwardRef(() => MessagingModule),
   ],
   controllers: [AutomationsController, AutomationsEngineController],
   providers: [

@@ -730,6 +730,10 @@ export class WhatsappWebhookService {
         data: {
           last_message_text: parsedContent.contentText || `[${message.type}]`,
           last_message_at: new Date(),
+          // Distinct from last_message_at, which any outbound also
+          // bumps. Only a *customer* message reopens the 24-hour reply
+          // window, so the window clock needs its own column.
+          last_inbound_at: new Date(),
           unread_count: (conversation.unread_count || 0) + 1,
           updated_at: new Date(),
         },
@@ -1050,6 +1054,14 @@ export class WhatsappWebhookService {
     }
   }
 
+  /**
+   * The WhatsApp thread for a contact, created on first inbound.
+   *
+   * `channel` is pinned rather than left off: since Instagram landed a
+   * contact can own one thread per platform, and an unfiltered lookup
+   * would happily hand this webhook an Instagram conversation to append
+   * a WhatsApp message to.
+   */
   private async findOrCreateConversation(
     accountId: string,
     configOwnerUserId: string,
@@ -1059,6 +1071,7 @@ export class WhatsappWebhookService {
       where: {
         account_id: accountId,
         contact_id: contactId,
+        channel: 'whatsapp',
       },
     });
 
@@ -1072,6 +1085,7 @@ export class WhatsappWebhookService {
           account_id: accountId,
           user_id: configOwnerUserId,
           contact_id: contactId,
+          channel: 'whatsapp',
         },
       });
       return { conversation: newConv, created: true };

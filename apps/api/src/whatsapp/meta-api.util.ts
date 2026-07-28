@@ -57,70 +57,21 @@ async function throwMetaError(
 // request/response call sites that just bubble a message to the user.
 // Background jobs need to *branch* on the failure: an expired token
 // means skip this account and warn, a rate limit means back off, and
-// anything else is a genuine error worth logging loudly. These classes
-// are additive — throwMetaError keeps its existing behaviour and no
-// existing caller changes.
+// anything else is a genuine error worth logging loudly.
+//
+// These now live in common/messaging/meta-errors.ts — the Instagram
+// channel hits the same Meta infrastructure and needs identical
+// classification. Re-exported here so every existing import keeps
+// working unchanged.
 // ============================================================
 
-export class MetaApiError extends Error {
-  constructor(
-    message: string,
-    readonly code?: number,
-    readonly status?: number,
-  ) {
-    super(message);
-    this.name = 'MetaApiError';
-  }
-}
+export {
+  MetaApiError,
+  MetaTokenExpiredError,
+  MetaRateLimitError,
+} from '../common/messaging/meta-errors';
 
-/** HTTP 401, or Meta error code 190 — access token expired/invalidated. */
-export class MetaTokenExpiredError extends MetaApiError {
-  constructor(message: string, code?: number, status?: number) {
-    super(message, code, status);
-    this.name = 'MetaTokenExpiredError';
-  }
-}
-
-/** HTTP 429, or Meta throttling codes 4 / 80007 / 130429. */
-export class MetaRateLimitError extends MetaApiError {
-  constructor(message: string, code?: number, status?: number) {
-    super(message, code, status);
-    this.name = 'MetaRateLimitError';
-  }
-}
-
-const RATE_LIMIT_CODES = new Set([4, 80007, 130429]);
-
-/**
- * Classifying counterpart to throwMetaError — same body parsing, but
- * picks a typed error subclass so callers can branch without matching
- * on message strings.
- */
-async function throwClassifiedMetaError(
-  response: Response,
-  fallback: string,
-): Promise<never> {
-  let message = fallback;
-  let code: number | undefined;
-  try {
-    const data = (await response.json()) as MetaErrorResponse;
-    if (data.error?.message) message = data.error.message;
-    code = data.error?.code;
-  } catch {
-    // response body wasn't JSON — keep the fallback
-  }
-
-  if (response.status === 401 || code === 190) {
-    throw new MetaTokenExpiredError(message, code, response.status);
-  }
-  if (
-    response.status === 429 ||
-    (code !== undefined && RATE_LIMIT_CODES.has(code))
-  ) {
-    throw new MetaRateLimitError(message, code, response.status);
-  }
-  throw new MetaApiError(message, code, response.status);
-}
+import { throwClassifiedMetaError } from '../common/messaging/meta-errors';
 
 export interface SendTextMessageArgs {
   phoneNumberId: string;

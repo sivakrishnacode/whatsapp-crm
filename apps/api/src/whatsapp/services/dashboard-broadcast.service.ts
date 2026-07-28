@@ -50,11 +50,20 @@ export interface CreateDashboardBroadcastParams {
 
 interface AudienceContact {
   id: string;
-  phone: string | null;
+  /**
+   * Never null. `contacts.phone` became nullable when Instagram landed,
+   * but a WhatsApp broadcast is addressed *by* phone — so
+   * `resolveAudience` filters phone-less contacts out and this stays a
+   * plain string for every consumer downstream.
+   */
+  phone: string;
   name: string | null;
   email: string | null;
   company: string | null;
 }
+
+/** A contacts row as selected, before the phone filter narrows it. */
+type AudienceRow = Omit<AudienceContact, 'phone'> & { phone: string | null };
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,7 +77,10 @@ function sleep(ms: number) {
  */
 export function resolveBroadcastVariables(
   variables: Record<string, VariableMapping>,
-  contact: AudienceContact,
+  // AudienceRow, not AudienceContact: the delivery loop passes a raw
+  // contacts row (nullable phone) that it has already guarded. The
+  // field map below tolerates nulls anyway.
+  contact: AudienceRow,
   customValues?: Map<string, string>,
 ): string[] {
   const keys = Object.keys(variables)
@@ -217,7 +229,7 @@ export class DashboardBroadcastService {
       company: true,
     } as const;
 
-    let contacts: AudienceContact[] = [];
+    let contacts: AudienceRow[] = [];
 
     if (audience.type === 'all') {
       contacts = await this.prisma.contacts.findMany({
@@ -272,7 +284,14 @@ export class DashboardBroadcastService {
       contacts = contacts.filter((c) => !excludedIds.has(c.id));
     }
 
-    return contacts;
+    // Drop contacts that carry no phone. Since Instagram landed,
+    // `audience.type === 'all'` can sweep up Instagram-only contacts —
+    // and there is no way to broadcast to them: Instagram has no
+    // approved-template mechanism, so bulk unsolicited DMs are both
+    // technically impossible and a fast route to app restriction.
+    // Filtering here means one silent, correct exclusion instead of N
+    // per-recipient send failures.
+    return contacts.filter((c): c is AudienceContact => Boolean(c.phone));
   }
 
   /**
@@ -305,8 +324,12 @@ export class DashboardBroadcastService {
       where: { account_id: accountId, phone: { in: phones } },
       select,
     });
+    // `phone: { in: phones }` cannot match a NULL, so every row here has
+    // one — the filter is for the type system, not the data.
     const byPhone = new Map<string, AudienceContact>(
-      existing.map((c) => [c.phone, c]),
+      existing
+        .filter((c): c is AudienceContact => Boolean(c.phone))
+        .map((c) => [c.phone, c] as const),
     );
 
     for (const phone of phones) {
@@ -320,7 +343,8 @@ export class DashboardBroadcastService {
         },
         select,
       });
-      byPhone.set(created.phone, created);
+      // `phone` was just written from a non-empty string above.
+      byPhone.set(phone, { ...created, phone });
     }
 
     return phones

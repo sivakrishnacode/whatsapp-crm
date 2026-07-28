@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { FlowMetaSendService } from '../../whatsapp/flow-meta-send.service';
+import { ChannelSenderService } from '../../common/messaging/channel-sender.service';
 import { loadAiConfig } from '../lib/config';
 import { buildConversationContext } from '../lib/context';
 import { retrieveKnowledge } from '../lib/knowledge';
@@ -21,8 +21,8 @@ export class AiReplyService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(forwardRef(() => FlowMetaSendService))
-    private readonly flowMetaSendService: FlowMetaSendService,
+    @Inject(forwardRef(() => ChannelSenderService))
+    private readonly channelSender: ChannelSenderService,
   ) {}
 
   /**
@@ -107,8 +107,10 @@ export class AiReplyService {
       const claimed = claimResult?.[0]?.claim_ai_reply_slot === true;
       if (!claimed) return; // Lost the slot claim race
 
-      // 9. Send the message via Flows engine
-      await this.flowMetaSendService.sendText({
+      // 9. Send, routed by the conversation's channel. The AI bot works
+      //    on Instagram DMs and WhatsApp alike without knowing which —
+      //    that is the whole point of ChannelSenderService.
+      await this.channelSender.sendText({
         accountId,
         conversationId,
         contactId,

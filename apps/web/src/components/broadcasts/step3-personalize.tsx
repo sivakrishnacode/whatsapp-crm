@@ -95,6 +95,9 @@ export function Step3Personalize({
         supabase
           .from('contacts')
           .select('*')
+          // The preview substitutes {{phone}}, so pick a contact that
+          // actually has one rather than rendering a blank.
+          .not('phone', 'is', null)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle(),
@@ -206,7 +209,7 @@ export function Step3Personalize({
         if (mapping.type === 'static' && mapping.value) {
           replacement = mapping.value;
         } else if (mapping.type === 'field' && mapping.value) {
-          const fieldMap: Record<string, string | undefined> = {
+          const fieldMap: Record<string, string | null | undefined> = {
             name: contact.name,
             phone: contact.phone,
             email: contact.email,

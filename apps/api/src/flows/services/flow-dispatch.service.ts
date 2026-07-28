@@ -2,7 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { Flow, FlowNode, FlowRun } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { FlowMetaSendService } from '../../whatsapp/flow-meta-send.service';
+import {
+  ChannelSenderService,
+  UnsupportedOnChannelError,
+} from '../../common/messaging/channel-sender.service';
 import { decideFallback, resolveFallbackPolicy } from '../flow-fallback.util';
 import {
   evaluateConditionPredicate,
@@ -30,11 +33,18 @@ import type {
  * Flow runner — ported from apps/web/src/lib/flows/engine.ts
  * (`dispatchInboundToFlows` + node executors + the synchronous
  * advance loop), swapped from the Supabase service-role client to
- * PrismaService and from `meta-send.ts` to FlowMetaSendService.
+ * PrismaService and from `meta-send.ts` to ChannelSenderService.
  *
- * The single entry point `dispatchInbound` is called (via the
- * internal machine-to-machine bridge) by the WhatsApp webhook on
- * every inbound message. It decides whether the message belongs to
+ * Sending goes through ChannelSenderService rather than a
+ * platform-specific sender, so a flow runs unchanged on a WhatsApp
+ * thread or an Instagram DM — the router reads `conversations.channel`
+ * and picks the transport. The one node type that cannot cross over is
+ * `send_list`: Instagram has no list message, so that node fails the
+ * run with a clear reason rather than silently sending something the
+ * author did not write. See UnsupportedOnChannelError.
+ *
+ * The entry point `dispatchInbound` is called by the WhatsApp and
+ * Instagram webhooks on every inbound message. It decides whether the message belongs to
  * an active conversation flow (advance it) or matches the entry
  * trigger of an active flow (start a new run) — and reports back so
  * the webhook knows whether to also fire automations.
@@ -63,7 +73,7 @@ export class FlowDispatchService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly metaSend: FlowMetaSendService,
+    private readonly channelSender: ChannelSenderService,
   ) {}
 
   // ============================================================
@@ -282,7 +292,7 @@ export class FlowDispatchService {
     node: FlowNode,
   ): Promise<void> {
     const cfg = node.config as unknown as SendButtonsNodeConfig;
-    const { whatsapp_message_id } = await this.metaSend.sendInteractiveButtons({
+    const { messageId: whatsapp_message_id } = await this.channelSender.sendButtons({
       accountId: run.accountId,
       conversationId: run.conversationId!,
       contactId: run.contactId!,
@@ -298,28 +308,56 @@ export class FlowDispatchService {
     await this.stashLastPromptMessageId(run.id, whatsapp_message_id);
   }
 
+  /**
+   * The one node type that cannot cross channels.
+   *
+   * Instagram has no list-message primitive, and flattening a list into
+   * quick replies would drop the section headings, the row descriptions
+   * and — past 13 rows — options the customer actually needs. So an
+   * Instagram run hitting a send_list node ends the run with a reason
+   * an author can act on, rather than sending something they never
+   * wrote or suspending forever waiting for a reply to a prompt that
+   * was never delivered.
+   */
   private async sendListAndSuspend(
     run: FlowRun,
     node: FlowNode,
   ): Promise<void> {
     const cfg = node.config as unknown as SendListNodeConfig;
-    const { whatsapp_message_id } = await this.metaSend.sendInteractiveList({
-      accountId: run.accountId,
-      conversationId: run.conversationId!,
-      contactId: run.contactId!,
-      bodyText: cfg.text,
-      buttonLabel: cfg.button_label,
-      headerText: cfg.header_text,
-      footerText: cfg.footer_text,
-      sections: cfg.sections.map((s) => ({
-        title: s.title,
-        rows: s.rows.map((r) => ({
-          id: r.reply_id,
-          title: r.title,
-          description: r.description,
+
+    let whatsapp_message_id: string;
+    try {
+      const result = await this.channelSender.sendList({
+        accountId: run.accountId,
+        conversationId: run.conversationId!,
+        contactId: run.contactId!,
+        bodyText: cfg.text,
+        buttonLabel: cfg.button_label,
+        headerText: cfg.header_text,
+        footerText: cfg.footer_text,
+        sections: cfg.sections.map((s) => ({
+          title: s.title,
+          rows: s.rows.map((r) => ({
+            id: r.reply_id,
+            title: r.title,
+            description: r.description,
+          })),
         })),
-      })),
-    });
+      });
+      whatsapp_message_id = result.messageId;
+    } catch (err) {
+      if (err instanceof UnsupportedOnChannelError) {
+        await this.logEvent(run.id, 'error', node.nodeKey, {
+          reason: 'send_list_unsupported_on_channel',
+          channel: err.channel,
+          detail: err.message,
+        });
+        await this.endRun(run.id, 'failed', 'send_list_unsupported_on_channel');
+        return;
+      }
+      throw err;
+    }
+
     await this.logEvent(run.id, 'message_sent', node.nodeKey, {
       node_type: 'send_list',
       whatsapp_message_id,
@@ -495,7 +533,7 @@ export class FlowDispatchService {
       if (node.nodeType === 'send_message') {
         const cfg = node.config as unknown as SendMessageNodeConfig;
         try {
-          const { whatsapp_message_id } = await this.metaSend.sendText({
+          const { messageId: whatsapp_message_id } = await this.channelSender.sendText({
             accountId: run.accountId,
             conversationId: run.conversationId!,
             contactId: run.contactId!,
@@ -519,7 +557,7 @@ export class FlowDispatchService {
       if (node.nodeType === 'send_media') {
         const cfg = node.config as unknown as SendMediaNodeConfig;
         try {
-          const { whatsapp_message_id } = await this.metaSend.sendMedia({
+          const { messageId: whatsapp_message_id } = await this.channelSender.sendMedia({
             accountId: run.accountId,
             conversationId: run.conversationId!,
             contactId: run.contactId!,
@@ -551,7 +589,7 @@ export class FlowDispatchService {
         // wake us up via handleReplyForActiveRun's collect_input branch.
         const cfg = node.config as unknown as CollectInputNodeConfig;
         try {
-          const { whatsapp_message_id } = await this.metaSend.sendText({
+          const { messageId: whatsapp_message_id } = await this.channelSender.sendText({
             accountId: run.accountId,
             conversationId: run.conversationId!,
             contactId: run.contactId!,
@@ -877,7 +915,7 @@ export class FlowDispatchService {
         // or var_key missing — rare). Re-send the prompt so they try again.
         const cfg = currentNode.config as unknown as CollectInputNodeConfig;
         try {
-          await this.metaSend.sendText({
+          await this.channelSender.sendText({
             accountId: run.accountId,
             conversationId: run.conversationId!,
             contactId: run.contactId!,

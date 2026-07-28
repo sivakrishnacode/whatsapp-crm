@@ -141,6 +141,10 @@ const nextConfig: NextConfig = {
         { source: "/api/flows/:path*", destination: `${nestApiUrl}/flows/:path*` },
         { source: "/api/v1/:path*", destination: `${nestApiUrl}/v1/:path*` },
         { source: "/api/whatsapp/:path*", destination: `${nestApiUrl}/whatsapp/:path*` },
+        // Dashboard-facing Instagram endpoints (config, send, comments).
+        // NOT the webhook or the OAuth callback — Meta calls those on the
+        // API's own public domain, so they never pass through here.
+        { source: "/api/instagram/:path*", destination: `${nestApiUrl}/instagram/:path*` },
         // Phase 5 Migrations
         { source: "/api/account", destination: `${nestApiUrl}/account` },
         { source: "/api/account/:path*", destination: `${nestApiUrl}/account/:path*` },

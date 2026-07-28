@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { InstagramModule } from '../instagram/instagram.module';
 import { MeController } from './controllers/me.controller';
 import { ContactsController } from './controllers/contacts.controller';
 import { ConversationsController } from './controllers/conversations.controller';
@@ -10,6 +11,12 @@ import { MessageSendService } from './services/message-send.service';
 import { BroadcastSendService } from './services/broadcast-send.service';
 
 @Module({
+  imports: [
+    // POST /v1/messages routes Instagram conversations to
+    // InstagramSendService. forwardRef because InstagramModule imports
+    // this one back for its webhook fan-out.
+    forwardRef(() => InstagramModule),
+  ],
   controllers: [
     MeController,
     ContactsController,

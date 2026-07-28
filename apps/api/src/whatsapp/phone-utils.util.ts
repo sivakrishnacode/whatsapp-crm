@@ -21,8 +21,17 @@ export function normalizePhone(phone: string): string {
  * Compare two phone numbers accounting for trunk prefix differences.
  * e.g. "370063949836" (with trunk 0) matches "37063949836" (without trunk 0)
  * by comparing the last 8 digits.
+ *
+ * Accepts null because `contacts.phone` is nullable — Instagram-only
+ * contacts have an IGSID and no phone. A missing phone matches nothing,
+ * which is what callers scanning for a phone-keyed contact want; making
+ * that explicit here beats a null guard at each of the three call sites.
  */
-export function phonesMatch(phone1: string, phone2: string): boolean {
+export function phonesMatch(
+  phone1: string | null | undefined,
+  phone2: string | null | undefined,
+): boolean {
+  if (!phone1 || !phone2) return false;
   const n1 = normalizePhone(phone1);
   const n2 = normalizePhone(phone2);
   if (n1 === n2) return true;

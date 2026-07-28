@@ -43,12 +43,19 @@ export type NavIcon = ComponentType<{ className?: string }>;
  * onboarding checklist all read from this file, so none of them need
  * touching.
  *
- * IMPORTANT: there is no `channel` column anywhere in the schema yet
- * (conversations / messages / contacts are all implicitly WhatsApp, and
- * `whatsapp_config` is the only channel config table). Only WhatsApp is
- * therefore `status: 'live'`; the rest are frames whose panel links all
- * resolve to a connect screen. When the schema gains a channel enum,
- * flipping a channel to 'live' is what turns its panel into real routes.
+ * `conversations.channel` (migration 050) is what makes a channel real:
+ * contacts, conversations and messages are shared across platforms and
+ * discriminated by that column, with one config table per channel
+ * (`whatsapp_config`, `instagram_config`).
+ *
+ * WhatsApp and Instagram are therefore `live`. Web and Phone remain
+ * frames whose panel links all resolve to the connect screen — flipping
+ * one to 'live' is what turns its panel into real routes, and should
+ * only happen once it has a config table and a working inbound path.
+ *
+ * Not every panel row of a live channel has to exist yet: Instagram's
+ * `[[...section]]` catch-all still backstops the rows that don't
+ * (dm-agents, posts, intents), so adding a page is a pure addition.
  */
 
 /** Stable ids. Also the URL segment under `/channels/<id>`. */
@@ -322,7 +329,7 @@ export const CHANNELS: Record<ChannelId, ChannelDef> = {
     id: 'instagram',
     label: 'Instagram',
     icon: InstagramIcon,
-    status: 'placeholder',
+    status: 'live',
     // The glyph paints its own brand gradient, so this accent only
     // applies where the icon is swapped for a lucide fallback.
     accentClass: 'text-[#E1306C]',

@@ -45,6 +45,19 @@ interface MessageBubbleProps {
   onToggleReaction?: (emoji: string) => void;
 }
 
+/**
+ * Delivery ticks.
+ *
+ * No channel branch is needed, and that is deliberate rather than an
+ * oversight: Instagram has no per-message delivery receipt, so an
+ * Instagram message is only ever written as `sent` and then promoted to
+ * `read` by the messaging_seen webhook. The `delivered` case simply
+ * never fires there, and the single tick an Instagram message shows
+ * until it is read is the honest state.
+ *
+ * Do not "fix" this by defaulting Instagram sends to `delivered` — that
+ * would display a receipt the platform never gave us.
+ */
 function StatusIcon({ status }: { status: Message["status"] }) {
   switch (status) {
     case "sending":

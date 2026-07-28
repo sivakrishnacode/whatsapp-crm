@@ -172,9 +172,16 @@ export class WhatsappDashboardController {
           .json({ error: 'Contact not found' });
       }
 
-      // Find or create the conversation
+      // Find or create the conversation. This endpoint sends via the
+      // WhatsApp Cloud API, so it must pin channel='whatsapp' — a
+      // contact can own one thread per channel and the unfiltered
+      // lookup would sometimes return their Instagram thread.
       const existing = await this.prisma.conversations.findFirst({
-        where: { account_id: account.accountId, contact_id },
+        where: {
+          account_id: account.accountId,
+          contact_id,
+          channel: 'whatsapp',
+        },
         select: { id: true },
       });
 
@@ -186,6 +193,7 @@ export class WhatsappDashboardController {
             account_id: account.accountId,
             user_id: account.userId,
             contact_id,
+            channel: 'whatsapp',
           },
           select: { id: true },
         });

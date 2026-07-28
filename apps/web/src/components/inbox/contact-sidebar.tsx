@@ -6,7 +6,13 @@ import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type { Contact, Deal, ContactNote, Tag } from "@/types";
 import {
+  contactDisplayName,
+  contactHandle,
+  contactInitial,
+} from "@/lib/contacts/display";
+import {
   Phone,
+  AtSign,
   Mail,
   Copy,
   Check,
@@ -76,9 +82,10 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     fetchContactData();
   }, [fetchContactData]);
 
-  const handleCopyPhone = useCallback(async () => {
-    if (!contact?.phone) return;
-    await navigator.clipboard.writeText(contact.phone);
+  const handleCopyIdentifier = useCallback(async () => {
+    const value = contactHandle(contact);
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     // Dep is the whole `contact` object (not `contact?.phone`) so the
@@ -123,8 +130,11 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     );
   }
 
-  const displayName = contact.name || contact.phone;
-  const initials = displayName.charAt(0).toUpperCase();
+  // Instagram contacts have no phone, so the old `name || phone`
+  // idiom would render blank. See lib/contacts/display.
+  const displayName = contactDisplayName(contact);
+  const initials = contactInitial(contact);
+  const handle = contactHandle(contact);
 
   return (
     <div className="flex h-full w-70 flex-col border-l border-border bg-card">
@@ -151,20 +161,29 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
             )}
           </div>
 
-          {/* Phone */}
+          {/* Identifier — a phone number on WhatsApp, an @handle on
+              Instagram. Rendered only when there is one: an
+              Instagram-only contact whose name we resolved has neither
+              worth repeating here. */}
           <div className="mt-4 space-y-2">
-            <button
-              onClick={handleCopyPhone}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
-            >
-              <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="flex-1 text-left">{contact.phone}</span>
-              {copied ? (
-                <Check className="h-3 w-3 text-primary" />
-              ) : (
-                <Copy className="h-3 w-3 text-muted-foreground" />
-              )}
-            </button>
+            {handle && (
+              <button
+                onClick={handleCopyIdentifier}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
+              >
+                {contact.phone ? (
+                  <Phone className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <AtSign className="h-4 w-4 text-muted-foreground" />
+                )}
+                <span className="flex-1 text-left">{handle}</span>
+                {copied ? (
+                  <Check className="h-3 w-3 text-primary" />
+                ) : (
+                  <Copy className="h-3 w-3 text-muted-foreground" />
+                )}
+              </button>
+            )}
 
             {contact.email && (
               <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground">

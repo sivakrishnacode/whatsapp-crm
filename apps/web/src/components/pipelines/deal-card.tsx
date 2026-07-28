@@ -3,6 +3,7 @@
 import type { Deal, PipelineStage } from "@/types";
 import { Calendar, Check, X } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
+import { contactDisplayName, contactInitial } from "@/lib/contacts/display";
 
 interface DealCardProps {
   deal: Deal;
@@ -19,6 +20,11 @@ function formatDate(dateStr: string) {
   });
 }
 
+/**
+ * Kept for the assignee avatar, which is a plain name string. Contact
+ * initials go through contactInitial() instead, since a contact may
+ * have no phone to fall back to.
+ */
 function initials(name?: string, fallback?: string) {
   const source = (name || fallback || "?").trim();
   if (!source) return "?";
@@ -26,7 +32,7 @@ function initials(name?: string, fallback?: string) {
 }
 
 export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
-  const contactLabel = deal.contact?.name || deal.contact?.phone || "No contact";
+  const contactLabel = deal.contact ? contactDisplayName(deal.contact) : "No contact";
   const assigneeLabel = deal.assignee?.full_name || null;
 
   return (
@@ -73,7 +79,7 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
       {/* Contact row */}
       <div className="mt-2 flex items-center gap-2">
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
-          {initials(deal.contact?.name, deal.contact?.phone)}
+          {deal.contact ? contactInitial(deal.contact) : "?"}
         </span>
         <span className="truncate text-xs text-muted-foreground">{contactLabel}</span>
       </div>

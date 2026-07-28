@@ -14,7 +14,18 @@ import {
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus, Tag } from "@/types";
+import type {
+  Conversation,
+  ConversationChannel,
+  ConversationStatus,
+  Tag,
+} from "@/types";
+import { conversationChannel } from "@/lib/inbox/channel";
+import { contactDisplayName, contactInitial } from "@/lib/contacts/display";
+import {
+  InstagramIcon,
+  WhatsAppIcon,
+} from "@/components/channels/channel-icons";
 import { Search, ChevronDown, X, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Input } from "@/components/ui/input";
@@ -56,6 +67,21 @@ const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
   { label: "Closed", value: "closed" },
 ];
 
+/**
+ * Channel filter, kept separate from the status filter so the two
+ * compose ("unread Instagram") instead of one clobbering the other.
+ *
+ * Defaults to "all": the point of a unified inbox is that an agent
+ * works one queue, so hiding a channel is an opt-in.
+ */
+type ChannelFilter = "all" | ConversationChannel;
+
+const CHANNEL_OPTIONS: { label: string; value: ChannelFilter }[] = [
+  { label: "All channels", value: "all" },
+  { label: "WhatsApp", value: "whatsapp" },
+  { label: "Instagram", value: "instagram" },
+];
+
 // Conversations fetched per page. 30 gives ~2 screens of content at
 // typical item height (~64 px) without pulling the whole table.
 const PAGE_SIZE = 30;
@@ -69,6 +95,7 @@ export function ConversationList({
 }: ConversationListProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
@@ -230,6 +257,14 @@ export function ConversationList({
   const filtered = useMemo(() => {
     let result = conversations;
 
+    if (channelFilter !== "all") {
+      // Rows written before the column existed, and realtime payloads
+      // that omit it, are WhatsApp — matching the DB default.
+      result = result.filter(
+        (c) => (c.channel ?? "whatsapp") === channelFilter,
+      );
+    }
+
     if (filter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
     } else if (filter !== "all") {
@@ -250,13 +285,21 @@ export function ConversationList({
       result = result.filter((c) => {
         const name = c.contact?.name?.toLowerCase() ?? "";
         const phone = c.contact?.phone?.toLowerCase() ?? "";
+        // Without this an Instagram contact is unsearchable: they have
+        // no phone, and their name is often just the handle.
+        const handle = c.contact?.ig_username?.toLowerCase() ?? "";
         const lastMsg = c.last_message_text?.toLowerCase() ?? "";
-        return name.includes(q) || phone.includes(q) || lastMsg.includes(q);
+        return (
+          name.includes(q) ||
+          phone.includes(q) ||
+          handle.includes(q) ||
+          lastMsg.includes(q)
+        );
       });
     }
 
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+  }, [conversations, filter, channelFilter, search, selectedTagIds, selectedCompany]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -286,6 +329,7 @@ export function ConversationList({
   );
 
   const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
+  const activeChannel = CHANNEL_OPTIONS.find((o) => o.value === channelFilter);
 
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
@@ -323,6 +367,32 @@ export function ConversationList({
                     filter === opt.value
                       ? "text-primary"
                       : "text-popover-foreground"
+                  )}
+                >
+                  {opt.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger className="inline-flex h-7 items-center justify-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
+              {activeChannel?.label ?? "All channels"}
+              <ChevronDown className="h-3 w-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              className="border-border bg-popover"
+            >
+              {CHANNEL_OPTIONS.map((opt) => (
+                <DropdownMenuItem
+                  key={opt.value}
+                  onClick={() => setChannelFilter(opt.value)}
+                  className={cn(
+                    "text-sm",
+                    channelFilter === opt.value
+                      ? "text-primary"
+                      : "text-popover-foreground",
                   )}
                 >
                   {opt.label}
@@ -515,14 +585,34 @@ interface ConversationItemProps {
   onSelect: (conversation: Conversation) => void;
 }
 
+/**
+ * Small channel glyph on the avatar's corner.
+ *
+ * Rendered for every channel including WhatsApp — an inbox where only
+ * *some* rows carry a badge reads as "these are special" rather than
+ * "here is which platform each one is on".
+ */
+function ChannelBadge({ channel }: { channel: ConversationChannel }) {
+  const Icon = channel === "instagram" ? InstagramIcon : WhatsAppIcon;
+  return (
+    <span
+      title={channel === "instagram" ? "Instagram" : "WhatsApp"}
+      className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-card ring-2 ring-card"
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </span>
+  );
+}
+
 function ConversationItem({
   conversation,
   isActive,
   onSelect,
 }: ConversationItemProps) {
   const contact = conversation.contact;
-  const displayName = contact?.name || contact?.phone || "Unknown";
-  const initials = displayName.charAt(0).toUpperCase();
+  const displayName = contactDisplayName(contact);
+  const initials = contactInitial(contact);
+  const channel = conversationChannel(conversation);
 
   const handleClick = useCallback(() => {
     onSelect(conversation);
@@ -542,17 +632,23 @@ function ConversationItem({
         isActive && "border-l-2 border-primary bg-muted/70"
       )}
     >
-      {/* Avatar */}
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
-        {contact?.avatar_url ? (
-          <img
-            src={contact.avatar_url}
-            alt={displayName}
-            className="h-10 w-10 rounded-full object-cover"
-          />
-        ) : (
-          initials
-        )}
+      {/* Avatar, with a channel glyph pinned to its corner. A badge on
+          the avatar rather than a row of its own: an agent scanning the
+          list needs to know which platform they are about to reply on
+          before they click, and vertical space here is scarce. */}
+      <div className="relative shrink-0">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
+          {contact?.avatar_url ? (
+            <img
+              src={contact.avatar_url}
+              alt={displayName}
+              className="h-10 w-10 rounded-full object-cover"
+            />
+          ) : (
+            initials
+          )}
+        </div>
+        <ChannelBadge channel={channel} />
       </div>
 
       {/* Content */}

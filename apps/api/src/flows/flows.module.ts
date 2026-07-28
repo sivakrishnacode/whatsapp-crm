@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
+import { MessagingModule } from '../common/messaging/messaging.module';
 import { InternalDispatchGuard } from '../automations/guards/internal-dispatch.guard';
 import { FlowsController } from './flows.controller';
 import { FlowsEngineController } from './flows-engine.controller';
@@ -16,6 +17,9 @@ import { FlowsSweepProcessor } from './flows-sweep.processor';
   imports: [
     BullModule.registerQueue({ name: FLOWS_SWEEP_QUEUE }),
     forwardRef(() => WhatsappModule),
+    // Flow send nodes route by conversation channel, so a flow runs on
+    // Instagram DMs as well as WhatsApp.
+    forwardRef(() => MessagingModule),
   ],
   controllers: [FlowsController, FlowsEngineController],
   providers: [

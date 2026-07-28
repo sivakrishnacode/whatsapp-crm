@@ -4,7 +4,16 @@ import { normalizePhone, phonesMatch, isValidE164, sanitizePhoneForMeta } from '
 
 export interface ApiContact {
   id: string;
-  phone: string;
+  /**
+   * NULL for Instagram-only contacts, who are identified by an
+   * Instagram-scoped ID instead. Integrators that assume a string here
+   * should check `channels` before dereferencing it.
+   */
+  phone: string | null;
+  /** Public @handle. Display only — usernames are mutable. */
+  instagram_username: string | null;
+  /** Which platforms this contact is reachable on. */
+  channels: string[];
   name: string | null;
   email: string | null;
   company: string | null;
@@ -16,9 +25,15 @@ export interface ApiContact {
 
 export function serializeContact(row: any): ApiContact {
   const joins = row.contact_tags ?? [];
+  const channels: string[] = [];
+  if (row.phone) channels.push('whatsapp');
+  if (row.ig_scoped_id) channels.push('instagram');
+
   return {
     id: row.id,
-    phone: row.phone,
+    phone: row.phone ?? null,
+    instagram_username: row.ig_username ?? null,
+    channels,
     name: row.name ?? null,
     email: row.email ?? null,
     company: row.company ?? null,
@@ -84,6 +99,9 @@ export async function findExistingContact(
     },
   });
 
+  // phonesMatch treats a null phone as "matches nothing", so
+  // Instagram-only contacts swept in by a loose filter can never be
+  // returned from a phone lookup.
   return candidates.find((c) => phonesMatch(c.phone, phone)) ?? null;
 }
 

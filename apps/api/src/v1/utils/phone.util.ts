@@ -8,7 +8,17 @@ export function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '');
 }
 
-export function phonesMatch(phone1: string, phone2: string): boolean {
+/**
+ * Nullable-tolerant: `contacts.phone` is nullable since Instagram
+ * landed (Instagram-only contacts have an IGSID and no phone). A
+ * missing phone matches nothing. Kept in step with the identical
+ * helper in whatsapp/phone-utils.util.ts.
+ */
+export function phonesMatch(
+  phone1: string | null | undefined,
+  phone2: string | null | undefined,
+): boolean {
+  if (!phone1 || !phone2) return false;
   const n1 = normalizePhone(phone1);
   const n2 = normalizePhone(phone2);
   if (n1 === n2) return true;

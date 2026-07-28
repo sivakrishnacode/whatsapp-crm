@@ -464,8 +464,15 @@ export class FacebookLeadsWebhookController {
     // Create conversation + message
     const lastMessage = `New Facebook Lead: ${contact.name}`;
 
+    // A lead-gen lead is followed up on WhatsApp (the contact is created
+    // from the form's phone field), so this is the WhatsApp thread —
+    // pinned explicitly now that a contact can own one per channel.
     let conversation = await this.prisma.conversations.findFirst({
-      where: { account_id: accountId, contact_id: contact.id },
+      where: {
+        account_id: accountId,
+        contact_id: contact.id,
+        channel: 'whatsapp',
+      },
     });
 
     if (!conversation) {
@@ -474,6 +481,7 @@ export class FacebookLeadsWebhookController {
           account_id: accountId,
           user_id: page.user_id,
           contact_id: contact.id,
+          channel: 'whatsapp',
           status: 'open',
           last_message_text: lastMessage,
           last_message_at: new Date(),
