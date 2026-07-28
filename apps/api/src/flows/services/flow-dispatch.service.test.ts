@@ -164,7 +164,12 @@ describe('FlowDispatchService.dispatchInbound', () => {
     expect(result).toEqual({ consumed: false, outcome: 'no_match' });
     // Tenant scoping on the active-run lookup.
     expect(prisma.flowRun.findFirst).toHaveBeenCalledWith({
-      where: { accountId: 'acc-1', contactId: 'contact-1', status: 'active' },
+      where: {
+        accountId: 'acc-1',
+        contactId: 'contact-1',
+        status: 'active',
+        conversation: { channel: 'whatsapp' },
+      },
       orderBy: { startedAt: 'desc' },
     });
   });

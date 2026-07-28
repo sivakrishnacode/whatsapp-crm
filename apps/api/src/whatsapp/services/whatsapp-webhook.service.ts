@@ -755,6 +755,7 @@ export class WhatsappWebhookService {
         contactId: contactRecord.id,
         conversationId: conversation.id,
         isFirstInboundMessage,
+        channel: 'whatsapp',
         message: parsedContent.interactiveReplyId
           ? {
               kind: 'interactive_reply',

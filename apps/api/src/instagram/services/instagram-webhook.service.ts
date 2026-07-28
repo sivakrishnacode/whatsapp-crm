@@ -882,6 +882,7 @@ export class InstagramWebhookService {
         contactId,
         conversationId: conversation.id,
         isFirstInboundMessage: args.isFirstInbound,
+        channel: 'instagram',
         message: args.interactiveReplyId
           ? {
               kind: 'interactive_reply',

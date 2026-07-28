@@ -271,6 +271,8 @@ export interface DispatchInboundInput {
   conversationId: string;
   message: ParsedInbound;
   isFirstInboundMessage: boolean;
+  /** Channel of the conversation triggering the dispatch (e.g. 'whatsapp', 'instagram'). */
+  channel?: string;
 }
 
 export interface DispatchInboundResult {

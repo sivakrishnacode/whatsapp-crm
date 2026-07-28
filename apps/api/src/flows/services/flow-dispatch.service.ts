@@ -6,6 +6,7 @@ import {
   ChannelSenderService,
   UnsupportedOnChannelError,
 } from '../../common/messaging/channel-sender.service';
+import { toChannel } from '../../common/messaging/channel';
 import { decideFallback, resolveFallbackPolicy } from '../flow-fallback.util';
 import {
   evaluateConditionPredicate,
@@ -84,9 +85,12 @@ export class FlowDispatchService {
     input: DispatchInboundInput,
   ): Promise<DispatchInboundResult> {
     try {
+      const channel = toChannel(input.channel);
+
       const activeRun = await this.loadActiveRunForContact(
         input.accountId,
         input.contactId,
+        channel,
       );
 
       // Idempotency — only matters if there's already a run for this
@@ -116,6 +120,7 @@ export class FlowDispatchService {
         input.accountId,
         input.message,
         input.isFirstInboundMessage,
+        channel,
       );
       if (!flow || !flow.entryNodeId) {
         return { consumed: false, outcome: 'no_match' };
@@ -138,6 +143,7 @@ export class FlowDispatchService {
   private async loadActiveRunForContact(
     accountId: string,
     contactId: string,
+    channel?: string,
   ): Promise<FlowRun | null> {
     // The partial unique index `idx_one_active_run_per_contact` makes
     // "two active runs for one contact in one account" impossible by
@@ -146,7 +152,12 @@ export class FlowDispatchService {
     // clean up the stale one.
     try {
       return await this.prisma.flowRun.findFirst({
-        where: { accountId, contactId, status: 'active' },
+        where: {
+          accountId,
+          contactId,
+          status: 'active',
+          ...(channel ? { conversation: { channel } } : {}),
+        },
         orderBy: { startedAt: 'desc' },
       });
     } catch (err) {
@@ -245,10 +256,15 @@ export class FlowDispatchService {
     accountId: string,
     message: ParsedInbound,
     isFirstInbound: boolean,
+    channel?: string,
   ): Promise<Flow | null> {
     // Only text messages can match an entry trigger. Interactive replies
     // are responses to existing prompts; they never start a new flow.
     if (message.kind !== 'text') return null;
+
+    // Flows in this CRM are WhatsApp Flows (located under WhatsApp -> Flows in the UI).
+    // They must only trigger on WhatsApp conversations.
+    if (channel && channel !== 'whatsapp') return null;
 
     let flows: Flow[];
     try {
