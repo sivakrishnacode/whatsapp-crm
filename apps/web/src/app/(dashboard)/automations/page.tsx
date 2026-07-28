@@ -271,7 +271,7 @@ function AutomationCard({
   onLogs: () => void
   onDelete: () => void
 }) {
-  const meta = triggerMeta(automation.trigger_type)
+  const meta = triggerMeta(automation.trigger_type, automation.trigger_config)
   return (
     <li className="rounded-xl border border-border bg-card transition-colors hover:border-border">
       <div className="flex items-center gap-4 p-4">

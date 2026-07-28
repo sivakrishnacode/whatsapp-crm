@@ -45,13 +45,30 @@ export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
   },
 }
 
-export function triggerMeta(t: AutomationTriggerType | string): TriggerMeta {
-  return (
+export function triggerMeta(
+  t: AutomationTriggerType | string,
+  config?: unknown,
+): TriggerMeta {
+  const base =
     TRIGGER_META[t as AutomationTriggerType] ?? {
       label: t,
       pillClass: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
     }
-  )
+
+  if (config && typeof config === 'object') {
+    const keywords = (config as { keywords?: string[] })?.keywords
+    if (Array.isArray(keywords) && keywords.length > 0) {
+      const filtered = keywords.filter((k) => typeof k === 'string' && k.trim().length > 0)
+      if (filtered.length > 0) {
+        return {
+          ...base,
+          label: `${base.label}: ${filtered.join(', ')}`,
+        }
+      }
+    }
+  }
+
+  return base
 }
 
 export function formatRelative(iso: string | null | undefined): string {
