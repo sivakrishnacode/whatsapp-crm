@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react"
@@ -30,6 +31,7 @@ import {
   Loader2,
   ArrowDown,
   ArrowUp,
+  AlertTriangle,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -44,6 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import type {
   AccountMember,
+  Automation,
   AutomationStepType,
   AutomationTriggerType,
   CustomField,
@@ -200,6 +203,16 @@ interface AutomationResources {
   customFields: CustomField[]
   pipelines: PipelineOption[]
   stages: PipelineStageOption[]
+  automations: Automation[]
+  flows: FlowOption[]
+}
+
+export interface FlowOption {
+  id: string
+  name: string
+  status?: string
+  trigger_type: string
+  trigger_config: Record<string, unknown>
 }
 
 interface PipelineOption {
@@ -221,6 +234,8 @@ const ResourcesContext = createContext<AutomationResources>({
   customFields: [],
   pipelines: [],
   stages: [],
+  automations: [],
+  flows: [],
 })
 
 function useResources(): AutomationResources {
@@ -234,6 +249,8 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   const [customFields, setCustomFields] = useState<CustomField[]>([])
   const [pipelines, setPipelines] = useState<PipelineOption[]>([])
   const [stages, setStages] = useState<PipelineStageOption[]>([])
+  const [automations, setAutomations] = useState<Automation[]>([])
+  const [flows, setFlows] = useState<FlowOption[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -268,8 +285,7 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
     })()
 
     // Members go through the API so we inherit its email-visibility
-    // rules (agents/viewers don't see emails). Unreachable on older
-    // deployments → pickers fall back to a raw agent-id input.
+    // rules (agents/viewers don't see emails).
     void (async () => {
       try {
         const res = await fetch("/api/account/members", { cache: "no-store" })
@@ -281,6 +297,29 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
       }
     })()
 
+    // Existing automations and flows for keyword conflict checking
+    void (async () => {
+      try {
+        const res = await fetch("/api/automations", { cache: "no-store" })
+        if (!res.ok) return
+        const json = (await res.json()) as { automations?: Automation[] }
+        if (!cancelled) setAutomations(json.automations ?? [])
+      } catch {
+        // Optional
+      }
+    })()
+
+    void (async () => {
+      try {
+        const res = await fetch("/api/flows", { cache: "no-store" })
+        if (!res.ok) return
+        const json = (await res.json()) as { flows?: FlowOption[] }
+        if (!cancelled) setFlows(json.flows ?? [])
+      } catch {
+        // Optional
+      }
+    })()
+
     return () => {
       cancelled = true
     }
@@ -288,7 +327,16 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
 
   return (
     <ResourcesContext.Provider
-      value={{ tags, members, templates, customFields, pipelines, stages }}
+      value={{
+        tags,
+        members,
+        templates,
+        customFields,
+        pipelines,
+        stages,
+        automations,
+        flows,
+      }}
     >
       {children}
     </ResourcesContext.Provider>
@@ -736,6 +784,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
               type={state.trigger_type}
               config={state.trigger_config}
               channels={state.channels}
+              currentAutomationId={initial.id}
               onTypeChange={(t) => {
                 // IG-only triggers auto-lock the automation to Instagram so
                 // the user doesn't have to set it manually.
@@ -767,10 +816,138 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
 // Trigger card
 // ------------------------------------------------------------
 
+export interface KeywordConflict {
+  keyword: string
+  sourceType: "automation" | "flow"
+  id: string
+  name: string
+}
+
+function findKeywordConflicts(
+  currentAutomationId: string | undefined,
+  currentKeywords: string[],
+  automations: Automation[],
+  flows: FlowOption[],
+): KeywordConflict[] {
+  if (!currentKeywords || currentKeywords.length === 0) return []
+
+  const normalizedCurrent = currentKeywords
+    .map((k) => (typeof k === "string" ? k.trim().toLowerCase() : ""))
+    .filter(Boolean)
+  if (normalizedCurrent.length === 0) return []
+
+  const conflicts: KeywordConflict[] = []
+  const seenKey = new Set<string>()
+
+  // Check Automations
+  for (const aut of automations) {
+    if (currentAutomationId && aut.id === currentAutomationId) continue
+    const trigType = aut.trigger_type
+    if (
+      trigType === "keyword_match" ||
+      trigType === "instagram_comment" ||
+      trigType === "instagram_story_reply"
+    ) {
+      const cfg = aut.trigger_config as { keywords?: string[] }
+      const existingKeywords = (cfg?.keywords ?? []).map((k) =>
+        typeof k === "string" ? k.trim().toLowerCase() : "",
+      )
+      for (const kw of normalizedCurrent) {
+        if (existingKeywords.includes(kw)) {
+          const key = `automation::${aut.id}::${kw}`
+          if (!seenKey.has(key)) {
+            seenKey.add(key)
+            conflicts.push({
+              keyword: kw,
+              sourceType: "automation",
+              id: aut.id,
+              name: aut.name || "Untitled automation",
+            })
+          }
+        }
+      }
+    }
+  }
+
+  // Check Flows
+  for (const fl of flows) {
+    if (fl.trigger_type === "keyword") {
+      const cfg = fl.trigger_config as { keywords?: string[] }
+      const existingKeywords = (cfg?.keywords ?? []).map((k) =>
+        typeof k === "string" ? k.trim().toLowerCase() : "",
+      )
+      for (const kw of normalizedCurrent) {
+        if (existingKeywords.includes(kw)) {
+          const key = `flow::${fl.id}::${kw}`
+          if (!seenKey.has(key)) {
+            seenKey.add(key)
+            conflicts.push({
+              keyword: kw,
+              sourceType: "flow",
+              id: fl.id,
+              name: fl.name || "Untitled flow",
+            })
+          }
+        }
+      }
+    }
+  }
+
+  return conflicts
+}
+
+function KeywordWarningBanner({ conflicts }: { conflicts: KeywordConflict[] }) {
+  if (conflicts.length === 0) return null
+
+  return (
+    <div className="mt-2.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200 shadow-sm">
+      <div className="flex items-center gap-1.5 font-semibold text-amber-400">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+        Keyword conflict warning
+      </div>
+      <p className="mt-1 text-[11px] leading-normal text-amber-200/90">
+        The keyword(s) below already exist in active workflows. Duplicate keywords can trigger multiple automations or flows simultaneously:
+      </p>
+      <div className="mt-2 space-y-1">
+        {conflicts.map((c, idx) => (
+          <div key={idx} className="flex items-center gap-1.5 text-[11px]">
+            <span className="font-mono font-medium text-amber-300">"{c.keyword}"</span>
+            <span className="text-amber-200/70">is used in {c.sourceType === "automation" ? "Automation" : "Flow"}:</span>
+            <span className="font-medium text-amber-300 truncate max-w-[140px]">{c.name}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function KeywordWarningBannerWrapper({
+  currentAutomationId,
+  config,
+}: {
+  currentAutomationId?: string
+  config: KeywordMatchTriggerConfig
+}) {
+  const { automations, flows } = useResources()
+  const rawKeywords = config?.keywords ?? []
+  const conflicts = useMemo(
+    () =>
+      findKeywordConflicts(
+        currentAutomationId,
+        rawKeywords,
+        automations,
+        flows,
+      ),
+    [currentAutomationId, rawKeywords, automations, flows],
+  )
+  return <KeywordWarningBanner conflicts={conflicts} />
+}
+
 function TriggerCard({
   type,
   config,
   channels,
+  currentAutomationId,
   onTypeChange,
   onConfigChange,
   onChannelsChange,
@@ -778,6 +955,7 @@ function TriggerCard({
   type: AutomationTriggerType
   config: Record<string, unknown>
   channels: string[]
+  currentAutomationId?: string
   onTypeChange: (t: AutomationTriggerType) => void
   onConfigChange: (c: Record<string, unknown>) => void
   onChannelsChange: (ch: string[]) => void
@@ -880,10 +1058,16 @@ function TriggerCard({
             </div>
 
             {(type === "keyword_match" || type === "instagram_comment" || type === "instagram_story_reply") && (
-              <KeywordMatchConfig
-                config={config as unknown as KeywordMatchTriggerConfig}
-                onChange={onConfigChange}
-              />
+              <>
+                <KeywordMatchConfig
+                  config={config as unknown as KeywordMatchTriggerConfig}
+                  onChange={onConfigChange}
+                />
+                <KeywordWarningBannerWrapper
+                  currentAutomationId={currentAutomationId}
+                  config={config as unknown as KeywordMatchTriggerConfig}
+                />
+              </>
             )}
             {type === "tag_added" && (
               <div>
