@@ -41,6 +41,24 @@ const KEY_PLACEHOLDER: Record<AiProvider, string> = {
   anthropic: 'sk-ant-...',
 };
 
+const PROVIDER_MODELS: Record<AiProvider, Array<{ value: string; label: string }>> = {
+  openai: [
+    { value: 'gpt-4o-mini', label: 'gpt-4o-mini (Fast & Cost-Efficient)' },
+    { value: 'gpt-4o', label: 'gpt-4o (Flagship Multimodal)' },
+    { value: 'gpt-4-turbo', label: 'gpt-4-turbo (High Intelligence)' },
+    { value: 'gpt-4', label: 'gpt-4 (Legacy Flagship)' },
+    { value: 'gpt-3.5-turbo', label: 'gpt-3.5-turbo (Legacy)' },
+    { value: 'o3-mini', label: 'o3-mini (Reasoning Model)' },
+    { value: 'o1-mini', label: 'o1-mini (Reasoning Model)' },
+    { value: 'o1', label: 'o1 (Reasoning Model)' },
+  ],
+  anthropic: [
+    { value: 'claude-3-5-haiku-latest', label: 'claude-3-5-haiku-latest (Fast & Lightweight)' },
+    { value: 'claude-3-5-sonnet-latest', label: 'claude-3-5-sonnet-latest (Flagship)' },
+    { value: 'claude-3-opus-latest', label: 'claude-3-opus-latest (Complex Reasoning)' },
+  ],
+};
+
 export function AiConfig() {
   const { accountId, accountRole, profileLoading } = useAuth();
   const canEdit = accountRole ? canEditSettings(accountRole) : false;
@@ -108,15 +126,10 @@ export function AiConfig() {
     void fetchConfig();
   }, [accountId, fetchConfig]);
 
-  // Swap the model default when the provider changes, unless the user
-  // typed a custom model.
+  // Swap the model default when the provider changes.
   const handleProviderChange = (next: AiProvider) => {
     setProvider(next);
-    const isDefaultModel =
-      model === AI_PROVIDER_DEFAULT_MODEL.openai ||
-      model === AI_PROVIDER_DEFAULT_MODEL.anthropic ||
-      model.trim() === '';
-    if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
+    setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
   };
 
   const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
@@ -269,13 +282,29 @@ export function AiConfig() {
 
               <div className="space-y-2">
                 <Label htmlFor="ai-model">Model</Label>
-                <Input
-                  id="ai-model"
+                <Select
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
+                  onValueChange={(v) => {
+                    if (v) setModel(v);
+                  }}
                   disabled={disabled}
-                />
+                >
+                  <SelectTrigger id="ai-model">
+                    <SelectValue placeholder="Select a model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROVIDER_MODELS[provider].map((m) => (
+                      <SelectItem key={m.value} value={m.value}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                    {!PROVIDER_MODELS[provider].some((m) => m.value === model) && model && (
+                      <SelectItem value={model}>
+                        {model}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
