@@ -65,22 +65,14 @@ export class AutomationDispatchService {
       // The channel the event came from. WhatsApp's webhook predates
       // the field and omits it, so absent means WhatsApp — `toChannel`
       // owns that default rather than each call site guessing.
-      const eventChannel = input.context?.channel
-        ? toChannel(input.context.channel)
-        : null;
+      const eventChannel = toChannel(input.context?.channel);
 
       for (const automation of automations) {
         // Channel scoping. An EMPTY `channels` array means "no
         // restriction" — the default, and what every automation
         // predating the column carries — so this only ever narrows.
-        //
-        // When the event has no channel at all (a time-based run, the
-        // manual entrypoint) a scoped automation is skipped rather
-        // than assumed to match: firing an Instagram-only rule from a
-        // context that cannot prove it is Instagram is the wrong way
-        // to be wrong.
         if (automation.channels.length > 0) {
-          if (!eventChannel || !automation.channels.includes(eventChannel)) {
+          if (!automation.channels.includes(eventChannel)) {
             continue;
           }
         }

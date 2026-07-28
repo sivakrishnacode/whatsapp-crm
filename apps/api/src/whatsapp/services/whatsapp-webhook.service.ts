@@ -799,6 +799,7 @@ export class WhatsappWebhookService {
           context: {
             message_text: inboundText,
             conversation_id: conversation.id,
+            channel: 'whatsapp',
           },
         })
         .catch((err) =>
