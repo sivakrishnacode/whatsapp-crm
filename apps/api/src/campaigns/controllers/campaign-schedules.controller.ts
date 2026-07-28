@@ -68,10 +68,25 @@ export class CampaignSchedulesController {
       });
     }
 
-    if (type === 'broadcast' && !body.broadcast_id) {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        error: 'broadcast_id is required for broadcast campaigns',
+    const UUID_REGEX =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (type === 'broadcast') {
+      const broadcastId = typeof body.broadcast_id === 'string' ? body.broadcast_id : '';
+      if (!broadcastId || !UUID_REGEX.test(broadcastId)) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          error: 'broadcast_id must be a valid broadcast UUID (e.g. 3fa85f64-5717-4562-b3fc-2c963f66afa6)',
+        });
+      }
+      const broadcastExists = await this.prisma.broadcasts.findFirst({
+        where: { id: broadcastId },
+        select: { id: true },
       });
+      if (!broadcastExists) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          error: `Broadcast with id '${broadcastId}' was not found.`,
+        });
+      }
     }
 
     if (type === 'retargeting' && !body.retargeting_config) {
