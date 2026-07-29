@@ -18,7 +18,28 @@ export type AutomationTriggerType =
   // conflating them means a rule written to answer a DM also fires on
   // every matching comment, with no way to tell them apart.
   | 'instagram_comment'
-  | 'instagram_story_reply';
+  | 'instagram_story_reply'
+  /**
+   * Web-widget-only: a visitor opened a chat and sent their first message.
+   *
+   * Not a duplicate of `first_inbound_message`, which fires on all three
+   * channels — a rule meant to greet website visitors would otherwise also
+   * greet every new WhatsApp contact.
+   */
+  | 'web_chat_started'
+  /**
+   * A form was submitted. CHANNEL-AGNOSTIC on purpose: a hosted submission
+   * has no channel at all, so channel-locking it would mean it never fires.
+   * `trigger_config.form_id` narrows it to one form; omitted = any form.
+   */
+  | 'form_submitted'
+  /**
+   * Appointment lifecycle. Also channel-agnostic — a booking made on a
+   * hosted page belongs to no channel.
+   */
+  | 'appointment_booked'
+  | 'appointment_cancelled'
+  | 'appointment_rescheduled';
 
 /**
  * Triggers that accept a keyword filter in their `trigger_config`.
@@ -43,6 +64,11 @@ export const TRIGGER_CHANNEL_LOCK: Partial<
 > = {
   instagram_comment: 'instagram',
   instagram_story_reply: 'instagram',
+  web_chat_started: 'web',
+  // form_submitted and the appointment_* triggers are DELIBERATELY absent.
+  // They are not channel events: a hosted form submission or a booking made
+  // on a public page has no channel, so locking them to one would mean they
+  // never fire for the most common case.
 };
 
 export type AutomationStepType =
@@ -56,7 +82,16 @@ export type AutomationStepType =
   | 'wait'
   | 'condition'
   | 'send_webhook'
-  | 'close_conversation';
+  | 'close_conversation'
+  /**
+   * Send someone a form. Works on every channel because it sends a link,
+   * which every channel can carry — except on web, where it sends a card
+   * the widget renders inline (making a visitor already in a browser open a
+   * new tab to answer two questions is pointless drop-off).
+   */
+  | 'send_form'
+  /** Same shape, for a booking page. */
+  | 'send_booking_link';
 
 export type AutomationLogStatus = 'success' | 'partial' | 'failed';
 
@@ -81,6 +116,8 @@ export type AutomationTriggerConfig =
   | KeywordMatchTriggerConfig
   | TagTriggerConfig
   | TimeBasedTriggerConfig
+  | FormSubmittedTriggerConfig
+  | AppointmentTriggerConfig
   | Record<string, unknown>;
 
 export interface SendMessageStepConfig {
@@ -153,6 +190,32 @@ export interface SendWebhookStepConfig {
   body_template?: string;
 }
 
+export interface SendFormStepConfig {
+  form_id: string;
+  /**
+   * Message sent alongside the link. Supports `{{ vars.* }}` interpolation
+   * like every other message config.
+   */
+  message_text?: string;
+}
+
+export interface SendBookingLinkStepConfig {
+  appointment_type_id: string;
+  message_text?: string;
+}
+
+/** Config shape for the form_submitted trigger. */
+export interface FormSubmittedTriggerConfig {
+  /** Omitted or empty = any form in the account. */
+  form_id?: string;
+}
+
+/** Config shape for the appointment_* triggers. */
+export interface AppointmentTriggerConfig {
+  /** Omitted or empty = any appointment type. */
+  appointment_type_id?: string;
+}
+
 export type AutomationStepConfig =
   | SendMessageStepConfig
   | SendTemplateStepConfig
@@ -163,6 +226,8 @@ export type AutomationStepConfig =
   | WaitStepConfig
   | ConditionStepConfig
   | SendWebhookStepConfig
+  | SendFormStepConfig
+  | SendBookingLinkStepConfig
   | Record<string, never>
   | Record<string, unknown>;
 
@@ -241,6 +306,18 @@ export interface AutomationContext {
   vars?: Record<string, unknown>;
   /** The tag id that was added, for tag_added trigger. */
   tag_id?: string;
+  /** Which form was submitted, for the form_submitted trigger's filter. */
+  form_id?: string;
+  /** The submission row, so a follow-up can quote what the person answered. */
+  submission_id?: string;
+  /** Which appointment type, for the appointment_* triggers' filter. */
+  appointment_type_id?: string;
+  appointment_id?: string;
+  /**
+   * Answers keyed by field_key, exposed to interpolation as
+   * `{{ vars.form.<field_key> }}`.
+   */
+  form?: Record<string, unknown>;
   /** Agent the conversation was assigned to, for conversation_assigned. */
   agent_id?: string;
   /**

@@ -189,8 +189,12 @@ export function MessageComposer({
   const canSend = useCan("send-messages");
   const readOnly = !canSend;
   // Media (like free-form text) is only allowed inside the 24h window.
-  // Instagram has no approved-template mechanism and no catalogue.
-  const supportsTemplates = channel !== "instagram";
+  // Templates and the catalogue are WhatsApp mechanisms: Instagram has
+  // neither, and web needs neither — we render the bubble ourselves, so
+  // there is nothing to pre-approve. Mirrors CHANNEL_CAPABILITIES on the
+  // API; an equality check rather than `!== "instagram"` so a new channel
+  // does not inherit WhatsApp's affordances by default.
+  const supportsTemplates = channel === "whatsapp";
   const inputsDisabled = readOnly || sessionExpired;
 
   const clearTimer = useCallback(() => {
@@ -467,10 +471,17 @@ export function MessageComposer({
       {sessionExpired && (
         <div className="mb-2 flex items-center justify-between gap-2 rounded-lg bg-amber-500/10 px-3 py-2">
           <p className="text-xs text-amber-400">
-            {supportsTemplates
+            {channel === "whatsapp"
               ? "24-hour session expired. Use a template to re-engage."
               : // Telling an Instagram agent to "use a template" would
                 // send them looking for a button that cannot exist.
+                //
+                // Web never reaches this branch — it has no messaging
+                // window at all, so `sessionExpired` is always false there
+                // (see message-thread's sessionInfo). Keyed on the channel
+                // rather than on `supportsTemplates` anyway, so if that
+                // ever changes the copy does not start naming the wrong
+                // platform.
                 "24-hour reply window closed. Instagram has no templates — you can only reply once this person messages again."}
           </p>
           {supportsTemplates && (

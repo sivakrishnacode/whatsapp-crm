@@ -23,16 +23,16 @@ import { CHANNEL_IDS, CHANNELS, type ChannelId } from '@/lib/nav/channels';
  * this value, so fetching per-consumer would mean three Meta API calls
  * per page load. One fetch, shared.
  *
- * WhatsApp and Instagram both have real backends and are fetched here.
- * Web and Phone are still frames and resolve to `unavailable` from
- * their registry status — there is no config table to query for them.
+ * WhatsApp, Instagram and Web all have real backends and are fetched
+ * here. Phone is still a frame and resolves to `unavailable` from its
+ * registry status — there is no config table to query for it.
  */
 
 export type ConnectionState =
   | 'loading'
   | 'connected'
   | 'not_connected'
-  /** Reachable but not implemented — Instagram / Web / Phone today. */
+  /** Reachable but not implemented — Phone today. */
   | 'unavailable';
 
 export interface ChannelStatus {
@@ -73,13 +73,14 @@ export function ChannelStatusProvider({ children }: { children: ReactNode }) {
       message: 'Could not reach the server to check the connection.',
     };
 
-    // Both live channels are fetched together, and independently: one
-    // channel's endpoint being slow or broken must not leave the other
+    // Every live channel is fetched together, and independently: one
+    // channel's endpoint being slow or broken must not leave the others
     // stuck on 'loading' forever in the rail.
     (async () => {
-      const [whatsapp, instagram] = await Promise.allSettled([
+      const [whatsapp, instagram, web] = await Promise.allSettled([
         fetch('/api/whatsapp/config', { cache: 'no-store' }).then((r) => r.json()),
         fetch('/api/instagram/config', { cache: 'no-store' }).then((r) => r.json()),
+        fetch('/api/web/config', { cache: 'no-store' }).then((r) => r.json()),
       ]);
       if (cancelled) return;
 
@@ -106,6 +107,26 @@ export function ChannelStatusProvider({ children }: { children: ReactNode }) {
                     (instagram.value?.status === 'token_expired'
                       ? 'Instagram access expired. Reconnect the account.'
                       : undefined),
+                }
+            : UNREACHABLE,
+        web:
+          web.status === 'fulfilled'
+            ? web.value?.connected
+              ? { state: 'connected' }
+              : {
+                  state: 'not_connected',
+                  // Web has no OAuth to fail, so "not connected" has
+                  // exactly two causes worth distinguishing: an admin
+                  // turned it off, or the snippet has never been seen
+                  // loading. The second is the common one on a new
+                  // account and needs a next action, not a diagnosis.
+                  message:
+                    web.value?.last_error ??
+                    (web.value?.status === 'disabled'
+                      ? 'The web widget is turned off.'
+                      : web.value?.allowed_origins?.length === 0
+                        ? 'Add your website’s domain to finish setup.'
+                        : 'Install the widget snippet on your website.'),
                 }
             : UNREACHABLE,
       }));

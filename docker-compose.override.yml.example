@@ -1,0 +1,71 @@
+# ============================================================
+# TEMPORARY: expose the marketing site on the VPS's public IP.
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   docker compose up -d site
+#   -> http://<VPS_IP>:3032/
+#
+# REVERT BY DELETING IT:
+#   rm docker-compose.override.yml && docker compose up -d site
+#
+# ------------------------------------------------------------
+# READ THIS BEFORE USING IT
+# ------------------------------------------------------------
+# `docker-compose.override.yml` is picked up AUTOMATICALLY by every
+# `docker compose` command. There is no flag, no prompt and no log line saying
+# it applied — which is the whole reason it is convenient, and the whole reason
+# it is a footgun. Left behind after a debugging session it silently keeps the
+# port public forever, and the next person to wonder why 3032 answers on the
+# public IP has no obvious file to look at.
+#
+# So: use it, then delete it. To check whether it is currently active:
+#
+#   docker compose config | grep -A2 'published: "3032"'
+#     0.0.0.0  -> this override IS applied (public)
+#     127.0.0.1 -> it is not (loopback only, the normal state)
+#
+# The real file is gitignored, so it cannot be committed. This `.example` is
+# tracked precisely so it can reach the VPS via `git pull` — a gitignored file
+# obviously cannot.
+#
+# ------------------------------------------------------------
+# WHY ONLY THE SITE
+# ------------------------------------------------------------
+# The site is static, public, and carries nothing secret, so serving it briefly
+# over plain HTTP costs only that search engines might index the IP:port form.
+#
+# `web` (3031) and `api` (8001) are deliberately NOT here, and should not be
+# added:
+#
+#   * api on a public port puts every webhook and dashboard endpoint on plain
+#     HTTP, outside TLS and outside whatever path allowlist your nginx applies.
+#   * web on a public port serves the dashboard over HTTP, so Supabase session
+#     cookies travel unencrypted.
+#   * Docker publishes ports by writing its own iptables rules, which sit AHEAD
+#     of ufw. `ufw deny 8001` does not close a published port. The loopback bind
+#     in docker-compose.yml is what closes it — removing that is not something
+#     a firewall rule can compensate for later.
+#
+# Once nginx is proxying converse360.in -> 127.0.0.1:3032, delete this file.
+# ============================================================
+
+services:
+  site:
+    # `!override` is load-bearing — do not drop it.
+    #
+    # Compose MERGES list values from an override file by default, so a plain
+    # `ports:` here appends rather than replaces: you get both
+    # "127.0.0.1:3032:80" and "3032:80", both claiming host port 3032, and the
+    # container refuses to start with
+    #
+    #   Error response from daemon: ports are not available: exposing port TCP
+    #   0.0.0.0:3032 -> 127.0.0.1:0: listen tcp 0.0.0.0:3032: bind: address
+    #   already in use
+    #
+    # which reads like something else is using the port rather than a config
+    # mistake. `!override` replaces the parent list outright, which is also what
+    # makes deleting this file a clean revert.
+    #
+    # Requires Compose v2.24+. Check with `docker compose version`.
+    ports: !override
+      - "3032:80"

@@ -1,6 +1,16 @@
 import type { Conversation, ConversationChannel } from "@/types";
 
 /**
+ * Every channel a conversation may live on. Mirrors `CHANNELS` in
+ * apps/api's `common/messaging/channel.ts`, which is the authority.
+ */
+const CHANNELS: readonly ConversationChannel[] = [
+  "whatsapp",
+  "instagram",
+  "web",
+];
+
+/**
  * The channel a conversation lives on, with the safe default applied.
  *
  * `conversations.channel` is NOT NULL with a `whatsapp` default in the
@@ -13,11 +23,17 @@ import type { Conversation, ConversationChannel } from "@/types";
  * means a missing value renders as WhatsApp (which every pre-Instagram
  * row is) instead of `undefined` leaking into a badge or a filter
  * comparison.
+ *
+ * Membership-checked rather than compared against one known value: with
+ * three channels, an `=== "instagram" ? … : "whatsapp"` shape would
+ * quietly relabel every web thread as WhatsApp, and the inbox would
+ * offer a template picker for a channel that has no templates.
  */
 export function conversationChannel(
   conversation: Pick<Conversation, "channel">,
 ): ConversationChannel {
-  return conversation.channel === "instagram" ? "instagram" : "whatsapp";
+  const { channel } = conversation;
+  return channel && CHANNELS.includes(channel) ? channel : "whatsapp";
 }
 
 /** True when replies to this thread go out over Instagram. */
@@ -25,4 +41,11 @@ export function isInstagramConversation(
   conversation: Pick<Conversation, "channel">,
 ): boolean {
   return conversationChannel(conversation) === "instagram";
+}
+
+/** True when replies to this thread go out over the website widget. */
+export function isWebConversation(
+  conversation: Pick<Conversation, "channel">,
+): boolean {
+  return conversationChannel(conversation) === "web";
 }

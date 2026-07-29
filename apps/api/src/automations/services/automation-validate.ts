@@ -177,6 +177,22 @@ function validateOne(
     case 'close_conversation':
       // No config required.
       break;
+    case 'send_form':
+      if (!nonEmpty(c.form_id)) {
+        issues.push({
+          path: `${path}.form_id`,
+          message: 'form is required',
+        });
+      }
+      break;
+    case 'send_booking_link':
+      if (!nonEmpty(c.appointment_type_id)) {
+        issues.push({
+          path: `${path}.appointment_type_id`,
+          message: 'appointment type is required',
+        });
+      }
+      break;
     default:
       issues.push({ path, message: `unknown step type: ${step.step_type}` });
   }
@@ -230,6 +246,9 @@ export function validateTriggerForActivation(
       issues.push({ path: 'trigger.tag_id', message: 'tag is required' });
     }
   }
+  // form_submitted, appointment_booked/cancelled/rescheduled, web_chat_started:
+  // no required config — all filters (form_id, appointment_type_id) are optional
+  // (omit = any). No validation needed.
 
   return issues;
 }

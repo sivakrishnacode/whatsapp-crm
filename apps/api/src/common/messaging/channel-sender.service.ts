@@ -2,6 +2,7 @@ import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FlowMetaSendService } from '../../whatsapp/flow-meta-send.service';
 import { InstagramSendService } from '../../instagram/services/instagram-send.service';
+import { WebSendService } from '../../web/services/web-send.service';
 import { capabilitiesFor, toChannel, type Channel } from './channel';
 import type {
   InteractiveButton,
@@ -31,6 +32,36 @@ export class UnsupportedOnChannelError extends Error {
   }
 }
 
+/**
+ * Raised when a step wants to message a contact who has no thread to
+ * message them on.
+ *
+ * WHY IT IS ITS OWN CLASS, ALONGSIDE UnsupportedOnChannelError
+ *   The two are different questions — "this channel cannot do that" versus
+ *   "there is nowhere to send it" — but they want the identical answer from
+ *   an engine: skip this step, mark the run partial, keep going.
+ *
+ *   The case that made this necessary is a hosted form submission. It
+ *   creates or matches a contact but has no conversation at all: the person
+ *   filled in a web page, they were never in a chat. Every non-messaging
+ *   step of a `form_submitted` automation (add a tag, create a deal, fire a
+ *   webhook) is perfectly runnable; only the sends are not. Treating that
+ *   as a failure would mark the whole run failed and bury the steps that
+ *   did work.
+ */
+export class NoReachableConversationError extends Error {
+  constructor(
+    readonly contactId: string | null,
+    message?: string,
+  ) {
+    super(
+      message ??
+        'This contact has no conversation to message, so the step was skipped.',
+    );
+    this.name = 'NoReachableConversationError';
+  }
+}
+
 export interface ChannelSendResult {
   /** The platform's own message id — a WhatsApp wamid or an Instagram mid. */
   messageId: string;
@@ -57,13 +88,25 @@ interface BaseArgs {
  *   delegates. An automation fired by an Instagram DM replies on
  *   Instagram with no change to the automation engine at all.
  *
+ *   Web proved the seam works: adding it was a branch per method here
+ *   and nothing whatsoever in the three engines. AI auto-reply, every
+ *   automation and every flow started working on the web widget without
+ *   being told the channel exists.
+ *
  * CAPABILITY GAPS ARE EXPLICIT, NOT SILENT
- *   Instagram has no list messages and no templates. Rather than
- *   quietly downgrading (which produces a message the flow author did
- *   not write) or crashing, unsupported combinations throw
- *   UnsupportedOnChannelError and the caller decides. The one exception
- *   is buttons, where Instagram's quick replies are a genuine
- *   equivalent rather than a downgrade.
+ *   Instagram has no list messages and no templates; web has no
+ *   templates either. Rather than quietly downgrading (which produces a
+ *   message the flow author did not write) or crashing, unsupported
+ *   combinations throw UnsupportedOnChannelError and the caller decides.
+ *   The one exception is buttons, where Instagram's quick replies are a
+ *   genuine equivalent rather than a downgrade.
+ *
+ * WEB IS CHECKED FIRST IN EVERY METHOD
+ *   Not for precedence — the branches are mutually exclusive — but
+ *   because the WhatsApp path is the fall-through `else`. A new channel
+ *   that forgets its branch silently becomes WhatsApp and throws deep
+ *   inside a Meta call, so every non-WhatsApp channel needs an explicit
+ *   one. Worth remembering when Phone lands.
  */
 @Injectable()
 export class ChannelSenderService {
@@ -75,6 +118,8 @@ export class ChannelSenderService {
     private readonly whatsapp: FlowMetaSendService,
     @Inject(forwardRef(() => InstagramSendService))
     private readonly instagram: InstagramSendService,
+    @Inject(forwardRef(() => WebSendService))
+    private readonly web: WebSendService,
   ) {}
 
   /**
@@ -101,6 +146,15 @@ export class ChannelSenderService {
     args: BaseArgs & { text: string },
   ): Promise<ChannelSendResult> {
     const channel = await this.channelOf(args.accountId, args.conversationId);
+
+    if (channel === 'web') {
+      const result = await this.web.sendText({
+        accountId: args.accountId,
+        conversationId: args.conversationId,
+        text: args.text,
+      });
+      return { messageId: result.messageId };
+    }
 
     if (channel === 'instagram') {
       const result = await this.instagram.sendText({
@@ -129,6 +183,18 @@ export class ChannelSenderService {
     },
   ): Promise<ChannelSendResult> {
     const channel = await this.channelOf(args.accountId, args.conversationId);
+
+    if (channel === 'web') {
+      const result = await this.web.sendMedia({
+        accountId: args.accountId,
+        conversationId: args.conversationId,
+        kind: args.kind,
+        link: args.link,
+        caption: args.caption,
+        filename: args.filename,
+      });
+      return { messageId: result.messageId };
+    }
 
     if (channel === 'instagram') {
       const result = await this.instagram.sendMedia({
@@ -174,6 +240,18 @@ export class ChannelSenderService {
     },
   ): Promise<ChannelSendResult> {
     const channel = await this.channelOf(args.accountId, args.conversationId);
+
+    if (channel === 'web') {
+      const result = await this.web.sendButtons({
+        accountId: args.accountId,
+        conversationId: args.conversationId,
+        bodyText: args.bodyText,
+        buttons: args.buttons.map((b) => ({ id: b.id, title: b.title })),
+        headerText: args.headerText,
+        footerText: args.footerText,
+      });
+      return { messageId: result.messageId };
+    }
 
     if (channel === 'instagram') {
       // Instagram quick replies have no header/footer. Folding them
@@ -232,6 +310,29 @@ export class ChannelSenderService {
         'Instagram has no list-message type. Use a buttons step instead — ' +
           'Instagram supports up to 13 quick replies.',
       );
+    }
+
+    if (channel === 'web') {
+      const result = await this.web.sendList({
+        accountId: args.accountId,
+        conversationId: args.conversationId,
+        bodyText: args.bodyText,
+        buttonLabel: args.buttonLabel,
+        // Meta's row shape uses `id`; ours is structurally the same, so
+        // this is a rename rather than a conversion. Kept explicit so a
+        // future divergence in either shape shows up here as a type error.
+        sections: args.sections.map((section) => ({
+          title: section.title,
+          rows: section.rows.map((row) => ({
+            id: row.id,
+            title: row.title,
+            description: row.description,
+          })),
+        })),
+        headerText: args.headerText,
+        footerText: args.footerText,
+      });
+      return { messageId: result.messageId };
     }
 
     const { whatsapp_message_id } = await this.whatsapp.sendInteractiveList({

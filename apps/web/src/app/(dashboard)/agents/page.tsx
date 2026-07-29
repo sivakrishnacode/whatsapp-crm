@@ -1,16 +1,28 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Sparkles, Settings2 } from 'lucide-react';
+import { Bot, Sparkles, Settings2, BookOpen } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AiPlayground } from '@/components/agents/ai-playground';
 import { AiConfig } from '@/components/settings/ai-config';
+import { AiKnowledge } from '@/components/agents/ai-knowledge';
 
-type Tab = 'playground' | 'setup';
+type Tab = 'playground' | 'knowledge' | 'setup';
 
 export default function AgentsPage() {
   const [tab, setTab] = useState<Tab>('playground');
   const [decided, setDecided] = useState(false);
+
+  // The Web channel panel's "Knowledge Base" row links to `?tab=knowledge`.
+  // Honouring it is what lets one shared surface serve every channel's nav
+  // without the corpus being duplicated per channel.
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    if (requested === 'knowledge' || requested === 'setup') {
+      setTab(requested);
+      setDecided(true);
+    }
+  }, []);
 
   // Land first-time users on Setup, returning users on the Playground.
   useEffect(() => {
@@ -54,6 +66,9 @@ export default function AgentsPage() {
             <TabsTrigger value="playground">
               <Sparkles className="mr-1.5 h-4 w-4" /> Playground
             </TabsTrigger>
+            <TabsTrigger value="knowledge">
+              <BookOpen className="mr-1.5 h-4 w-4" /> Knowledge
+            </TabsTrigger>
             <TabsTrigger value="setup">
               <Settings2 className="mr-1.5 h-4 w-4" /> Setup
             </TabsTrigger>
@@ -61,6 +76,10 @@ export default function AgentsPage() {
 
           <TabsContent value="playground" className="mt-4">
             <AiPlayground onGoToSetup={() => setTab('setup')} />
+          </TabsContent>
+
+          <TabsContent value="knowledge" className="mt-4">
+            <AiKnowledge />
           </TabsContent>
 
           <TabsContent value="setup" className="mt-4">

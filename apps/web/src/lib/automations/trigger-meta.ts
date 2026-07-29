@@ -43,6 +43,26 @@ export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
     label: 'Instagram Story Reply',
     pillClass: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
   },
+  web_chat_started: {
+    label: 'Web Chat Started',
+    pillClass: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
+  },
+  form_submitted: {
+    label: 'Form Submitted',
+    pillClass: 'border-violet-500/30 bg-violet-500/10 text-violet-300',
+  },
+  appointment_booked: {
+    label: 'Appointment Booked',
+    pillClass: 'border-green-500/30 bg-green-500/10 text-green-300',
+  },
+  appointment_cancelled: {
+    label: 'Appointment Cancelled',
+    pillClass: 'border-red-500/30 bg-red-500/10 text-red-300',
+  },
+  appointment_rescheduled: {
+    label: 'Appointment Rescheduled',
+    pillClass: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  },
 }
 
 export function triggerMeta(

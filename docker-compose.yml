@@ -2,6 +2,11 @@ services:
   redis:
     image: redis:7-alpine
     container_name: wacrm-redis
+    restart: unless-stopped
+    # No `ports:` at all — deliberately. Redis is only ever reached from the
+    # api container over the compose network, and an exposed Redis with no
+    # password is one of the most reliably exploited misconfigurations there
+    # is. Nothing outside this file needs to reach it.
     command: [ "redis-server", "--save", "", "--appendonly", "no" ]
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
@@ -14,8 +19,21 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     container_name: wacrm-api
+    restart: unless-stopped
     ports:
-      - "8001:8001"
+      # BOUND TO LOOPBACK, not 0.0.0.0.
+      #
+      # `"8001:8001"` publishes on every interface, so the API was reachable at
+      # http://converse360.in:8001 — straight past nginx, straight past TLS, and
+      # past the api.converse360.in path allowlist. Every dashboard endpoint and
+      # every webhook was answerable over plain HTTP on a port nobody thinks to
+      # check.
+      #
+      # Docker's port publishing also writes its own iptables rules, which sit
+      # in front of ufw — so `ufw deny 8001` does NOT close it. Binding to
+      # 127.0.0.1 is what actually closes it, and it is why nginx proxies to
+      # 127.0.0.1:8001 rather than to a container name.
+      - "127.0.0.1:8001:8001"
     depends_on:
       redis:
         condition: service_healthy
@@ -25,17 +43,39 @@ services:
       - REDIS_URL=redis://redis:6379
       - PORT=8001
 
+  # The marketing site at converse360.in. Static, no build step, no env.
+  #
+  # Its own service on its own port so the host proxy's job is uniform: three
+  # hostnames, three loopback ports, nothing needing a filesystem web root or a
+  # sync step when the page changes.
+  site:
+    build:
+      context: .
+      dockerfile: apps/site/Dockerfile
+    container_name: wacrm-site
+    restart: unless-stopped
+    ports:
+      # 3032 — adjacent to web's 3031 so the trio reads as a block, and
+      # deliberately not 8080, which is the port most likely to already be
+      # taken on a VPS that has ever run anything else.
+      - "127.0.0.1:3032:80"
+
   web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
     container_name: wacrm-web
+    restart: unless-stopped
     ports:
-      - "3031:3000"
+      # Loopback only — same reasoning as the api service above.
+      - "127.0.0.1:3031:3000"
     depends_on:
       - api
     env_file:
       - apps/web/.env.local
     environment:
+      # Container-to-container, so SSR fetches and the /api/* rewrite never
+      # leave the host. Read by next.config.ts's rewrites and by the public
+      # form/booking pages' server-side fetch.
       - NEST_API_URL=http://api:8001
       - DOCKERIZED=true

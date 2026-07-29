@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AutomationMetaSendService } from '../../whatsapp/automation-meta-send.service';
 import {
   ChannelSenderService,
+  NoReachableConversationError,
   UnsupportedOnChannelError,
 } from '../../common/messaging/channel-sender.service';
 import { isDeliverableUrl } from '../../common/security/ssrf.util';
@@ -153,7 +154,15 @@ export class AutomationStepExecutorService {
         //
         // The run continues and ends 'partial', so the log shows both
         // what was skipped and why.
-        if (err instanceof UnsupportedOnChannelError) {
+        // Two different questions — "this channel cannot do that" and
+        // "there is nobody to send it to" — with the same right answer:
+        // skip the step, mark the run partial, keep going. A
+        // form_submitted automation on a hosted submission has no
+        // conversation, and its tag / deal / webhook steps must still run.
+        if (
+          err instanceof UnsupportedOnChannelError ||
+          err instanceof NoReachableConversationError
+        ) {
           results.push({
             step_id: step.id,
             step_type: step.stepType as AutomationStepType,
@@ -253,6 +262,70 @@ export class AutomationStepExecutorService {
           params,
         });
         return `template sent via Meta (${whatsapp_message_id})`;
+      }
+
+      /**
+       * Send someone a form or a booking page.
+       *
+       * ONE IMPLEMENTATION FOR BOTH, AND FOR EVERY CHANNEL
+       *   Both send a message containing a public URL, which every channel
+       *   can carry — so this rides `ChannelSenderService.sendText` and
+       *   works on WhatsApp, Instagram and web without a branch.
+       *
+       *   The web channel could do better (an inline card the widget
+       *   renders, so a visitor already in a browser does not open a new
+       *   tab). That lives in `WebSendService.sendCard` and is wired up in
+       *   the widget; routing to it from here would need the sender to
+       *   expose a card method on every channel, which it deliberately
+       *   does not. A link on web is correct, just not optimal.
+       */
+      case 'send_form':
+      case 'send_booking_link': {
+        const cfg = step.stepConfig as {
+          form_id?: string;
+          appointment_type_id?: string;
+          message_text?: string;
+        };
+        if (!args.contactId) throw new Error(`${step.stepType} needs a contact`);
+
+        const targetId =
+          step.stepType === 'send_form' ? cfg.form_id : cfg.appointment_type_id;
+        if (!targetId) {
+          throw new Error(
+            `${step.stepType} needs a ${step.stepType === 'send_form' ? 'form' : 'appointment type'}`,
+          );
+        }
+
+        const link = await this.resolvePublicLink(
+          args.automation.accountId,
+          step.stepType,
+          targetId,
+        );
+        if (!link) {
+          // Unpublished or deleted. A message containing a dead link is
+          // worse than no message: the recipient tries it, it 404s, and
+          // they conclude the business is broken.
+          throw new Error(
+            step.stepType === 'send_form'
+              ? 'that form is not published, so no link was sent'
+              : 'that appointment type is not bookable, so no link was sent',
+          );
+        }
+
+        const intro = cfg.message_text
+          ? interpolate(cfg.message_text, args.context)
+          : step.stepType === 'send_form'
+            ? 'Please fill in this short form:'
+            : 'Pick a time that suits you:';
+
+        const conversationId = await this.resolveConversationId(args);
+        const { messageId } = await this.channelSender.sendText({
+          accountId: args.automation.accountId,
+          conversationId,
+          contactId: args.contactId,
+          text: `${intro}\n${link}`,
+        });
+        return `${step.stepType} sent (${messageId})`;
       }
 
       case 'add_tag': {
@@ -473,13 +546,60 @@ export class AutomationStepExecutorService {
     };
   }
 
+  /**
+   * The public URL for a form or an appointment type, or null when it is
+   * not publicly reachable.
+   *
+   * Account-scoped, and reads the raw tables rather than injecting
+   * FormsService / AppointmentTypesService. That is a deliberate trade:
+   * importing them would put AutomationsModule → FormsModule →
+   * AutomationsModule in the graph, and both of those modules already
+   * depend on this one for dispatch. Two `findFirst`s avoid a third
+   * forwardRef cycle for what is a slug lookup.
+   */
+  private async resolvePublicLink(
+    accountId: string,
+    stepType: 'send_form' | 'send_booking_link',
+    targetId: string,
+  ): Promise<string | null> {
+    const base =
+      process.env.PUBLIC_APP_URL?.replace(/\/+$/, '') ?? 'http://localhost:3000';
+
+    if (stepType === 'send_form') {
+      const form = await this.prisma.forms.findFirst({
+        where: { id: targetId, account_id: accountId, status: 'published' },
+        select: { slug: true },
+      });
+      return form ? `${base}/f/${form.slug}` : null;
+    }
+
+    // appointment_types lives in migration 055 (Phase 6).
+    // Until that schema is applied, the model does not exist on PrismaClient.
+    // The `as any` cast is intentional and will be removed once the Prisma
+    // client is regenerated after running 055.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const type = await (this.prisma as any).appointment_types?.findFirst({
+      where: { id: targetId, account_id: accountId, is_active: true },
+      select: { slug: true },
+    });
+    return type ? `${base}/book/${type.slug}` : null;
+
+  }
+
   private async resolveConversationId(
     args: StepExecutionArgs,
   ): Promise<string> {
     const fromCtx = args.context.conversation_id;
     if (fromCtx) return fromCtx;
-    if (!args.contactId)
-      throw new Error('cannot resolve conversation: no contact');
+    if (!args.contactId) {
+      // Skippable, not fatal — see NoReachableConversationError. A
+      // form_submitted run with no identifiable person should still add
+      // tags and fire webhooks.
+      throw new NoReachableConversationError(
+        null,
+        'This step needs someone to message, and the trigger identified nobody. Skipped.',
+      );
+    }
     // Pin the channel when the triggering event told us one.
     //
     // An earlier version left this unfiltered, reasoning that a contact
@@ -506,10 +626,15 @@ export class AutomationStepExecutorService {
       orderBy: { last_message_at: 'desc' },
     });
     if (!convo) {
-      throw new Error(
+      // The common cause is a contact created by a hosted form submission,
+      // who has never been in a conversation on any channel. That is an
+      // ordinary state, not an error, so the step is skipped and the run
+      // continues.
+      throw new NoReachableConversationError(
+        args.contactId,
         channel
-          ? `no ${channel} conversation for contact`
-          : 'no conversation for contact',
+          ? `This contact has no ${channel} conversation, so the step was skipped.`
+          : 'This contact has no conversation to message, so the step was skipped.',
       );
     }
     return convo.id;

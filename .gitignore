@@ -50,3 +50,15 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 /ref
+.agents/
+
+# Local docker-compose overrides.
+#
+# `docker-compose.override.yml` is applied automatically by every
+# `docker compose` command, with no flag and no log line. Committing one would
+# silently change how the stack runs for everybody — most damagingly by
+# republishing a loopback-bound port publicly.
+#
+# The tracked `.example` beside it is the intended way to share one.
+docker-compose.override.yml
+docker-compose.*.local.yml

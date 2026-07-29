@@ -32,6 +32,7 @@ import {
   ArrowDown,
   ArrowUp,
   AlertTriangle,
+  Calendar,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -107,11 +108,15 @@ const STEP_META: Record<AutomationStepType, StepMeta> = {
   condition: { label: "Condition (If/Else)", icon: GitBranch, border: "border-l-amber-500" },
   send_webhook: { label: "Send Webhook", icon: Webhook, border: "border-l-primary" },
   close_conversation: { label: "Close Conversation", icon: CircleSlash, border: "border-l-primary" },
+  send_form: { label: "Send Form", icon: FileText, border: "border-l-primary" },
+  send_booking_link: { label: "Send Booking Link", icon: Calendar, border: "border-l-primary" },
 }
 
 const ADDABLE_STEPS: AutomationStepType[] = [
   "send_message",
   "send_template",
+  "send_form",
+  "send_booking_link",
   "add_tag",
   "remove_tag",
   "assign_conversation",

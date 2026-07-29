@@ -1,7 +1,39 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+/**
+ * Routes that are public by nature and must never trigger an auth check.
+ *
+ * These are hit by anonymous visitors on customers' websites, at their
+ * traffic volume rather than ours. Every other request below pays a
+ * `supabase.auth.getUser()` — a network round trip — and for these it
+ * could only ever return "no user". Left in the general path, a customer
+ * with a busy site would make us issue one Supabase call per pageview,
+ * and the widget would feel slow for a reason nothing in the widget code
+ * explains.
+ *
+ * Ordered so the widget's own paths come first; they are the hottest.
+ */
+const PUBLIC_PREFIXES = [
+  '/widget/',
+  '/api/public/',
+  // Hosted forms, booking pages, and the reschedule/cancel page.
+  //
+  // The reschedule page deliberately lives at `/book/manage/<token>` and
+  // NOT at `/appointments/<token>`: `/appointments` is the authenticated
+  // dashboard route, so a `/appointments/` prefix here would also match
+  // `/appointments/types` and silently drop the auth check on a dashboard
+  // page. Public and authenticated surfaces must not share a prefix.
+  '/f/',
+  '/book/',
+] as const
+
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+  if (PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return NextResponse.next({ request })
+  }
+
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -82,7 +114,10 @@ export async function middleware(request: NextRequest) {
     '/channels',
     '/automations',
     '/flows',
+    '/forms',
+    '/appointments',
     '/agents',
+
     '/notifications',
     '/members',
     '/integrations',

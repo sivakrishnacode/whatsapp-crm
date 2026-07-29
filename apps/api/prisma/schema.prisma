@@ -42,6 +42,11 @@ model Account {
   profiles                      Profile[]
   tags                          tags[]
   webhook_endpoints             webhook_endpoints[]
+  forms                         forms[]
+  form_submissions              form_submissions[]
+  form_bookings                 form_bookings[]
+  web_config                    web_config?
+  web_sessions                  web_sessions[]
   whatsapp_config               whatsapp_config?
   whatsapp_orders               whatsapp_orders[]
   whatsapp_products             whatsapp_products[]
@@ -565,6 +570,8 @@ model users {
   usage_tracking                                                     usage_tracking[]
   user_subscriptions_user_subscriptions_manually_assigned_byTousers  user_subscriptions[]            @relation("user_subscriptions_manually_assigned_byTousers")
   user_subscriptions_user_subscriptions_user_idTousers               user_subscriptions?             @relation("user_subscriptions_user_idTousers")
+  forms                                                              forms[]
+  web_config                                                         web_config[]
   webhook_endpoints                                                  webhook_endpoints[]
   whatsapp_config                                                    whatsapp_config[]
 
@@ -952,6 +959,10 @@ model contacts {
   ig_scoped_id                  String?
   /// Cached @handle. Display only; usernames are mutable, never key on them.
   ig_username                   String?
+  /// Opaque browser-persisted visitor id for the web widget. Account-scoped
+  /// (unlike an IGSID, it means nothing outside this tenant). NULL for every
+  /// non-web contact. See contacts_identity_chk: phone OR ig_scoped_id OR this.
+  web_visitor_id                String?
   automationLogs                AutomationLog[]
   automationPendingExecutions   AutomationPendingExecution[]
   broadcast_recipients          broadcast_recipients[]
@@ -968,9 +979,13 @@ model contacts {
   notifications                 notifications[]
   whatsapp_orders               whatsapp_orders[]
   instagram_comments            instagram_comments[]
+  web_sessions                  web_sessions[]
+  form_submissions              form_submissions[]
+  form_bookings                 form_bookings[]
 
   @@unique([account_id, phone_normalized], map: "idx_contacts_account_phone_normalized", where: raw("(phone_normalized <> ''::text)"))
   @@unique([account_id, ig_scoped_id], map: "idx_contacts_account_igsid", where: raw("(ig_scoped_id IS NOT NULL)"))
+  @@unique([account_id, web_visitor_id], map: "idx_contacts_account_web_visitor", where: raw("(web_visitor_id IS NOT NULL)"))
   @@index([account_id], map: "idx_contacts_account")
   @@index([phone], map: "idx_contacts_phone")
   @@index([user_id], map: "idx_contacts_user_id")
@@ -1007,6 +1022,9 @@ model conversations {
   messages              messages[]
   notifications         notifications[]
   instagram_comments    instagram_comments[]
+  web_sessions          web_sessions[]
+  form_submissions      form_submissions[]
+  form_bookings         form_bookings[]
 
   @@index([account_id], map: "idx_conversations_account")
   @@index([account_id, contact_id], map: "idx_conversations_account_contact")
@@ -1694,6 +1712,203 @@ model instagram_comments {
   @@unique([account_id, ig_comment_id])
   @@index([account_id, status, commented_at(sort: Desc)], map: "idx_instagram_comments_account_status")
   @@index([account_id, ig_media_id], map: "idx_instagram_comments_media")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model forms {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id       String             @db.Uuid
+  user_id          String             @db.Uuid
+  name             String
+  description      String?
+  /// Public URL segment (/f/<slug>). Unique per account, not globally.
+  slug             String
+  /// 'form' | 'booking'. One table because they share the whole builder,
+  /// renderer and submission path — booking just adds an appointment_slot
+  /// field and an appointment on submit.
+  kind             String             @default("form")
+  /// draft | published | archived
+  status           String             @default("draft")
+  /// Ordered field definitions. Validated server-side on every submission
+  /// by form-validate.ts, which is the authority — client checks are UX.
+  fields           Json               @default("[]")
+  settings         Json               @default("{\"captcha\": false, \"honeypot\": true, \"min_seconds\": 2, \"redirect_url\": null, \"submit_label\": \"Submit\", \"success_mode\": \"message\", \"success_message\": \"Thanks — we have got your details.\"}")
+  notify           Json               @default("{\"emails\": [], \"in_app\": true}")
+  /// Denormalised: avoids a COUNT(*) per row of the forms list.
+  submission_count Int                @default(0)
+  /// When this form's slot_picker offers slots. NULL = takes no bookings.
+  /// Read whole by slot-engine.util.ts; nothing filters on it.
+  availability     Json?
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime           @default(now()) @db.Timestamptz(6)
+  accounts         Account            @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users            users              @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  submissions      form_submissions[]
+  bookings         form_bookings[]
+  prechat_for      web_config[]       @relation("web_config_prechat_form")
+  offline_for      web_config[]       @relation("web_config_offline_form")
+
+  @@unique([account_id, slug])
+  @@index([account_id, updated_at(sort: Desc)], map: "idx_forms_account_updated")
+  @@index([account_id, slug], map: "idx_forms_account_slug_published", where: raw("(status = 'published'::text)"))
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model form_submissions {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String         @db.Uuid
+  form_id         String         @db.Uuid
+  contact_id      String?        @db.Uuid
+  /// Set only for widget submissions — what lets a form_submitted
+  /// automation reply in the thread the visitor is already in.
+  conversation_id String?        @db.Uuid
+  /// Answers keyed by field_key. Stays readable after the form is edited:
+  /// a submission is a historical record, not a view of the current form.
+  data            Json           @default("{}")
+  /// referrer, utm, page_url, user_agent, ip_hash (hashed, never raw).
+  meta            Json?
+  /// hosted | embed | widget | whatsapp_flow | api | automation
+  source          String         @default("hosted")
+  /// new | read | spam
+  status          String         @default("new")
+  created_at      DateTime       @default(now()) @db.Timestamptz(6)
+  accounts        Account        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  forms           forms          @relation(fields: [form_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contacts        contacts?      @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
+  conversations   conversations? @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
+  bookings        form_bookings[]
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_form_submissions_account_created")
+  @@index([form_id, created_at(sort: Desc)], map: "idx_form_submissions_form_created")
+  @@index([contact_id, created_at(sort: Desc)], map: "idx_form_submissions_contact", where: raw("(contact_id IS NOT NULL)"))
+  @@schema("public")
+}
+
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model form_bookings {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String            @db.Uuid
+  form_id         String            @db.Uuid
+  submission_id   String?           @db.Uuid
+  contact_id      String?           @db.Uuid
+  conversation_id String?           @db.Uuid
+  starts_at       DateTime          @db.Timestamptz(6)
+  /// Stored, not derived from the form's current slot length — recomputing
+  /// would rewrite the history of every past booking when that changes.
+  ends_at         DateTime          @db.Timestamptz(6)
+  /// The zone the time was agreed in, so "10am" still reads as what the
+  /// customer booked after a DST change or a business relocating.
+  timezone        String            @default("UTC")
+  /// confirmed | cancelled | completed | no_show
+  status          String            @default("confirmed")
+  /// Bearer capability for /book/manage/<token>. Covers reschedule and cancel.
+  manage_token    String            @unique
+  /// Denormalised from forms.availability.capacity: an EXCLUDE constraint
+  /// cannot join, so the flag it keys on has to live on the row. True exempts
+  /// the booking from form_bookings_no_overlap (group bookings overlap by
+  /// design) and it is counted transactionally instead.
+  capacity_group  Boolean           @default(false)
+  notes           String?
+  cancelled_at    DateTime?         @db.Timestamptz(6)
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime          @default(now()) @db.Timestamptz(6)
+  accounts        Account           @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  forms           forms             @relation(fields: [form_id], references: [id], onUpdate: NoAction)
+  submissions     form_submissions? @relation(fields: [submission_id], references: [id], onUpdate: NoAction)
+  contacts        contacts?         @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
+  conversations   conversations?    @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
+
+  @@index([form_id, starts_at], map: "idx_form_bookings_form_starts")
+  @@index([account_id, starts_at(sort: Desc)], map: "idx_form_bookings_account_starts")
+  @@index([contact_id, starts_at(sort: Desc)], map: "idx_form_bookings_contact", where: raw("(contact_id IS NOT NULL)"))
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model web_config {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id     String        @unique @db.Uuid
+  user_id        String        @db.Uuid
+  /// PUBLIC. Ships inside a <script> tag on the customer's own site, so treat
+  /// as world-readable: it locates the account, it authorises nothing.
+  /// Globally unique — the bootstrap endpoint has nothing else to route on.
+  widget_key     String        @unique
+  /// SECRET, AES-256-GCM encrypted at rest. Signs visitor session tokens and
+  /// verifies identity-verification HMACs. Never included in any response.
+  widget_secret  String
+  /// Origins permitted to embed the widget. EMPTY DENIES EVERYTHING — the
+  /// opposite of automations.channels, deliberately: a default-open allowlist
+  /// would make every new account an open relay.
+  allowed_origins String[]     @default([])
+  /// disconnected | connected | disabled
+  status         String        @default("disconnected")
+  /// Set the first time a bootstrap call is served from an allowed origin.
+  /// With no OAuth to complete, an observed live load IS what "connected" means.
+  installed_at   DateTime?     @db.Timestamptz(6)
+  last_seen_at   DateTime?     @db.Timestamptz(6)
+  /// Launcher + panel appearance, read and written whole. No query filters on it.
+  appearance     Json          @default("{\"theme\": \"auto\", \"accent\": \"#2D7FF9\", \"title\": \"Chat with us\", \"teaser\": null, \"position\": \"right\", \"greeting\": null, \"subtitle\": \"We typically reply in a few minutes\", \"launcher_icon\": \"chat\", \"teaser_delay_seconds\": 8}")
+  /// Weekly schedule + timezone. NULL = always open.
+  business_hours Json?
+  ai_enabled     Boolean       @default(false)
+  show_branding  Boolean       @default(true)
+  locale         String        @default("en")
+  last_error     String?
+  /// Form shown before the chat starts. NULL = start chatting immediately.
+  /// Capturing a phone or email here is what upgrades an anonymous
+  /// web_visitor_id contact into a durable one.
+  prechat_form_id String?      @db.Uuid
+  /// Form offered instead of live chat outside business hours. NULL = let
+  /// the visitor send anyway (it waits in the inbox).
+  offline_form_id String?      @db.Uuid
+  created_at     DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime      @default(now()) @db.Timestamptz(6)
+  accounts       Account       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users          users         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  prechat_form   forms?        @relation("web_config_prechat_form", fields: [prechat_form_id], references: [id], onUpdate: NoAction)
+  offline_form   forms?        @relation("web_config_offline_form", fields: [offline_form_id], references: [id], onUpdate: NoAction)
+
+  @@index([account_id], map: "idx_web_config_account")
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model web_sessions {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String         @db.Uuid
+  /// Deliberately NOT a FK to contacts.web_visitor_id: a session is recorded
+  /// at first page load, before the visitor has sent anything.
+  visitor_id      String
+  contact_id      String?        @db.Uuid
+  conversation_id String?        @db.Uuid
+  started_at      DateTime       @default(now()) @db.Timestamptz(6)
+  last_seen_at    DateTime       @default(now()) @db.Timestamptz(6)
+  ended_at        DateTime?      @db.Timestamptz(6)
+  page_url        String?
+  referrer        String?
+  utm             Json?
+  user_agent      String?
+  /// Salted hash, never the raw address. Abuse rate-limiting and coarse geo
+  /// only — raw IPs of third parties browsing our customers' sites would be a
+  /// liability with no product justification.
+  ip_hash         String?
+  country         String?
+  pages_viewed    Int            @default(1)
+  created_at      DateTime       @default(now()) @db.Timestamptz(6)
+  accounts        Account        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contacts        contacts?      @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
+  conversations   conversations? @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
+
+  @@index([account_id, started_at(sort: Desc)], map: "idx_web_sessions_account_started")
+  @@index([account_id, visitor_id, started_at(sort: Desc)], map: "idx_web_sessions_account_visitor")
+  @@index([conversation_id], map: "idx_web_sessions_conversation", where: raw("(conversation_id IS NOT NULL)"))
   @@schema("public")
 }
 

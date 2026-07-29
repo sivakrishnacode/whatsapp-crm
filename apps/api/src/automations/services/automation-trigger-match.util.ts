@@ -28,6 +28,34 @@ export function triggerMatches(
   triggerConfig: unknown,
   ctx: AutomationContext | undefined,
 ): boolean {
+  /**
+   * Entity-scoped triggers: `form_submitted` may name one form,
+   * `appointment_*` may name one appointment type. An omitted or empty id
+   * means "any", matching how `automations.channels` treats an empty array
+   * — one convention for "unscoped" across the engine.
+   *
+   * Filtered here rather than in the dispatch query because the query keys
+   * on (accountId, triggerType, isActive) and adding a JSONB predicate to
+   * it would cost an index for a filter that runs over a handful of rows.
+   */
+  if (triggerType === 'form_submitted') {
+    const wanted = (triggerConfig as { form_id?: string } | null)?.form_id;
+    if (!wanted) return true;
+    return ctx?.form_id === wanted;
+  }
+
+  if (
+    triggerType === 'appointment_booked' ||
+    triggerType === 'appointment_cancelled' ||
+    triggerType === 'appointment_rescheduled'
+  ) {
+    const wanted = (
+      triggerConfig as { appointment_type_id?: string } | null
+    )?.appointment_type_id;
+    if (!wanted) return true;
+    return ctx?.appointment_type_id === wanted;
+  }
+
   if (!KEYWORD_FILTERED.has(triggerType)) return true;
   const cfg = triggerConfig as KeywordMatchTriggerConfig;
   const hasKeywords = Array.isArray(cfg?.keywords) && cfg.keywords.length > 0;

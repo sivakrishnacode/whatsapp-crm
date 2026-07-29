@@ -145,6 +145,14 @@ const nextConfig: NextConfig = {
         // NOT the webhook or the OAuth callback — Meta calls those on the
         // API's own public domain, so they never pass through here.
         { source: "/api/instagram/:path*", destination: `${nestApiUrl}/instagram/:path*` },
+        // Web channel — dashboard-facing widget configuration.
+        { source: "/api/web/:path*", destination: `${nestApiUrl}/web/:path*` },
+        // The widget's own visitor-facing surface, called by anonymous
+        // browsers on customers' websites. Same-origin through this proxy
+        // so the widget iframe never makes a cross-origin request and CORS
+        // stays out of the picture — the origin allowlist in
+        // widget-key.guard is what actually gates access, not CORS.
+        { source: "/api/public/:path*", destination: `${nestApiUrl}/public/:path*` },
         // Phase 5 Migrations
         { source: "/api/account", destination: `${nestApiUrl}/account` },
         { source: "/api/account/:path*", destination: `${nestApiUrl}/account/:path*` },
@@ -158,7 +166,18 @@ const nextConfig: NextConfig = {
         { source: "/api/ai/:path*", destination: `${nestApiUrl}/ai/:path*` },
         { source: "/api/ctwa/:path*", destination: `${nestApiUrl}/ctwa/:path*` },
         { source: "/api/campaigns/:path*", destination: `${nestApiUrl}/campaigns/:path*` },
+        // Phase 4 — Form builder
+        { source: "/api/forms", destination: `${nestApiUrl}/forms` },
+        { source: "/api/forms/:path*", destination: `${nestApiUrl}/forms/:path*` },
+        // Phase 6 — Appointments
+        // Booking lives under /api/forms and /api/public/forms: a booking IS
+        // a form carrying a slot-picker field, so it needs no routes of its
+        // own. There were /api/appointments* rewrites here pointing at Nest
+        // controllers that never existed — every call 404'd.
+        { source: "/api/bookings", destination: `${nestApiUrl}/bookings` },
+        { source: "/api/bookings/:path*", destination: `${nestApiUrl}/bookings/:path*` },
       ],
+
       afterFiles: [],
       fallback: [],
     };
@@ -215,8 +234,89 @@ const nextConfig: NextConfig = {
         // Security headers on every response, including /_next/static
         // assets (nosniff matters there) and /api/* (HSTS + referrer-
         // policy don't hurt).
-        source: "/:path*",
+        //
+        // EXCLUDES /widget, /f, /book — see the next rules for why.
+        source: "/:path((?!widget/|f/|book/).*)",
         headers: [...SECURITY_HEADERS],
+      },
+      {
+        // Forms can be embedded in iframes on customer sites.
+        // We apply the same baseline security headers but omit
+        // X-Frame-Options and relax frame-ancestors in CSP.
+        source: "/f/:path*",
+        headers: SECURITY_HEADERS.filter(h => h.key !== "X-Frame-Options").map(h => 
+          h.key === "Content-Security-Policy-Report-Only" 
+            ? { ...h, value: h.value.replace("frame-ancestors 'none'", "frame-ancestors *") }
+            : h
+        ),
+      },
+      {
+        // Booking pages can be embedded in iframes on customer sites.
+        source: "/book/:path*",
+        headers: SECURITY_HEADERS.filter(h => h.key !== "X-Frame-Options").map(h => 
+          h.key === "Content-Security-Policy-Report-Only" 
+            ? { ...h, value: h.value.replace("frame-ancestors 'none'", "frame-ancestors *") }
+            : h
+        ),
+      },
+      {
+        /**
+         * The widget is the ONE surface that must be framable.
+         *
+         * Every other route in this app is protected by
+         * `X-Frame-Options: DENY` + `frame-ancestors 'none'`, which is
+         * correct: an authenticated dashboard has no business being
+         * embedded. But the widget's entire delivery mechanism is an
+         * iframe on somebody else's website, so those two headers make it
+         * render as a blank box — and only in production, only on a real
+         * customer domain, because nothing frames it in local dev. This
+         * is the single most likely way this feature ships broken.
+         *
+         * Next.js merges headers from every matching rule and cannot
+         * *remove* one, so the rule above is negated-path-matched to skip
+         * `/widget/` entirely, and this rule re-adds the subset that is
+         * still safe here.
+         *
+         * `frame-ancestors *` rather than a per-account allowlist: this is
+         * a static config evaluated at build time and has no access to
+         * which origins a given account permits. The real enforcement is
+         * server-side in `WidgetKeyGuard`, which checks the request
+         * Origin against `web_config.allowed_origins` and refuses —
+         * strictly stronger than a CSP the browser applies, since it also
+         * covers non-browser callers. Framing the widget from a
+         * disallowed origin therefore renders an error, not a chat.
+         */
+        source: "/widget/:path*",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          // No Referer to third-party sites from inside the frame.
+          { key: "Referrer-Policy", value: "no-referrer" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+          },
+          {
+            key: "Content-Security-Policy",
+            // Enforced, not report-only, unlike the app-wide policy: this
+            // is a small surface we fully control, so there is no legacy
+            // to shake out first.
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "style-src 'self' 'unsafe-inline'",
+              // Visitor attachments and agent avatars come from Supabase
+              // public buckets; data: covers inline placeholder assets.
+              "img-src 'self' data: blob: https:",
+              "media-src 'self' blob: https://*.supabase.co",
+              "font-src 'self' data:",
+              // Same-origin only: the widget reaches the API through this
+              // app's own /api/public/* rewrite, never cross-origin.
+              "connect-src 'self'",
+              "base-uri 'self'",
+              "form-action 'self'",
+            ].join("; "),
+          },
+        ],
       },
     ];
   },

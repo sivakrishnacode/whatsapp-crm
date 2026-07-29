@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { WhatsappModule } from '../../whatsapp/whatsapp.module';
 import { InstagramModule } from '../../instagram/instagram.module';
+import { WebModule } from '../../web/web.module';
 import { ChannelSenderService } from './channel-sender.service';
 
 /**
@@ -24,6 +25,7 @@ import { ChannelSenderService } from './channel-sender.service';
     PrismaModule,
     forwardRef(() => WhatsappModule),
     forwardRef(() => InstagramModule),
+    forwardRef(() => WebModule),
   ],
   providers: [ChannelSenderService],
   exports: [ChannelSenderService],

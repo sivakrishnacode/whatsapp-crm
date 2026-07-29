@@ -2,11 +2,11 @@
  * The set of platforms a conversation can live on.
  *
  * `conversations.channel` is a TEXT column guarded by
- * `conversations_channel_chk` (migration 050) rather than a Postgres
- * enum — adding a channel is then one ALTER of a CHECK constraint, not
- * an enum migration. This module is the TypeScript half of that
- * contract: the DB rejects unknown values, and `isChannel` is what
- * stops one reaching the DB in the first place.
+ * `conversations_channel_chk` (migration 050, widened for web in 053)
+ * rather than a Postgres enum — adding a channel is then one ALTER of a
+ * CHECK constraint, not an enum migration. This module is the
+ * TypeScript half of that contract: the DB rejects unknown values, and
+ * `isChannel` is what stops one reaching the DB in the first place.
  *
  * WHY THE FILTER MATTERS EVERYWHERE
  *   Before Instagram, "the conversation for this contact" was
@@ -17,7 +17,7 @@
  *   platform. Every such lookup must pin the channel.
  */
 
-export const CHANNELS = ['whatsapp', 'instagram'] as const;
+export const CHANNELS = ['whatsapp', 'instagram', 'web'] as const;
 
 export type Channel = (typeof CHANNELS)[number];
 
@@ -64,8 +64,14 @@ export interface ChannelCapabilities {
   /**
    * How long after the customer's last message the business may reply
    * freely, in hours.
+   *
+   * `null` means there is NO window — the business may always reply.
+   * That is only true where we own the transport (web), never on a Meta
+   * channel. Treat `null` as "always open", never as "zero hours": the
+   * two readings are opposites and a `?? 0` here would silently close
+   * every web thread.
    */
-  replyWindowHours: number;
+  replyWindowHours: number | null;
 }
 
 export const CHANNEL_CAPABILITIES: Record<Channel, ChannelCapabilities> = {
@@ -94,6 +100,30 @@ export const CHANNEL_CAPABILITIES: Record<Channel, ChannelCapabilities> = {
     lists: false,
     catalog: false,
     replyWindowHours: 24,
+  },
+  web: {
+    // Nothing to pre-approve — we render the UI ourselves, so there is
+    // no concept of a template and nothing for one to buy.
+    templates: false,
+    // Not "unimplemented" — impossible. A web visitor is only reachable
+    // while their tab is open, so there is no audience to bulk-send to.
+    // This is also why appointment reminders for web-only contacts have
+    // to fall back to email.
+    broadcasts: false,
+    // The first channel where a delivery tick is honest: the SSE frame
+    // either reached the visitor's open stream or it did not. WhatsApp
+    // reports Meta's opinion; Instagram reports nothing at all.
+    deliveryReceipts: true,
+    // Both render natively in the widget, so neither is an approximation
+    // of something else the way Instagram's quick replies are.
+    buttons: true,
+    lists: true,
+    // Native commerce is a Meta surface. A web storefront is the
+    // customer's own site, which the widget sits on rather than replaces.
+    catalog: false,
+    // No window at all — see the field docs above. We are the transport,
+    // so no third party imposes a re-engagement rule.
+    replyWindowHours: null,
   },
 };
 

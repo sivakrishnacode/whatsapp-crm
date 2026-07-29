@@ -10,12 +10,14 @@ import { FlowsModule } from './flows/flows.module';
 import { V1Module } from './v1/v1.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { InstagramModule } from './instagram/instagram.module';
+import { WebModule } from './web/web.module';
 import { AccountModule } from './account/account.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { EcommerceModule } from './ecommerce/ecommerce.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { AiModule } from './ai/ai.module';
+import { FormsModule } from './forms/forms.module';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { AiModule } from './ai/ai.module';
     V1Module,
     WhatsappModule,
     InstagramModule,
+    WebModule,
+    FormsModule,
     // Phase 5
     AccountModule,
     IntegrationsModule,
@@ -40,5 +44,3 @@ import { AiModule } from './ai/ai.module';
   ],
 })
 export class AppModule {}
-
-

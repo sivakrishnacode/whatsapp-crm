@@ -26,7 +26,11 @@ import {
   InstagramIcon,
   WhatsAppIcon,
 } from "@/components/channels/channel-icons";
-import { Search, ChevronDown, X, Loader2 } from "lucide-react";
+// Deliberately looser than lucide's own icon type: the brand glyphs are
+// hand-rolled SVGs with a narrower signature, so a record holding both
+// needs the contract the nav registry already settled on.
+import type { NavIcon } from "@/lib/nav/channels";
+import { Search, ChevronDown, X, Loader2, Globe } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Input } from "@/components/ui/input";
 import {
@@ -80,6 +84,7 @@ const CHANNEL_OPTIONS: { label: string; value: ChannelFilter }[] = [
   { label: "All channels", value: "all" },
   { label: "WhatsApp", value: "whatsapp" },
   { label: "Instagram", value: "instagram" },
+  { label: "Web", value: "web" },
 ];
 
 // Conversations fetched per page. 30 gives ~2 screens of content at
@@ -592,14 +597,30 @@ interface ConversationItemProps {
  * *some* rows carry a badge reads as "these are special" rather than
  * "here is which platform each one is on".
  */
+/**
+ * Per-channel glyph and label, as a lookup rather than a ternary chain.
+ *
+ * With three channels a `=== "instagram" ? … : …` shape silently labels
+ * every web thread "WhatsApp" — the same failure `conversationChannel`
+ * was widened to avoid. A record makes the fourth channel a data change.
+ */
+const CHANNEL_GLYPH: Record<
+  ConversationChannel,
+  { icon: NavIcon; label: string; className?: string }
+> = {
+  whatsapp: { icon: WhatsAppIcon, label: "WhatsApp" },
+  instagram: { icon: InstagramIcon, label: "Instagram" },
+  web: { icon: Globe, label: "Web chat", className: "text-[#2D7FF9]" },
+};
+
 function ChannelBadge({ channel }: { channel: ConversationChannel }) {
-  const Icon = channel === "instagram" ? InstagramIcon : WhatsAppIcon;
+  const { icon: Icon, label, className } = CHANNEL_GLYPH[channel];
   return (
     <span
-      title={channel === "instagram" ? "Instagram" : "WhatsApp"}
+      title={label}
       className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-card ring-2 ring-card"
     >
-      <Icon className="h-3.5 w-3.5" />
+      <Icon className={cn("h-3.5 w-3.5", className)} />
     </span>
   );
 }

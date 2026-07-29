@@ -244,11 +244,23 @@ export function MessageThread({
   const channel = conversation
     ? conversationChannel(conversation)
     : "whatsapp";
-  const sendPath =
-    channel === "instagram" ? "/api/instagram/send" : "/api/whatsapp/send";
+  const SEND_PATHS: Record<typeof channel, string> = {
+    whatsapp: "/api/whatsapp/send",
+    instagram: "/api/instagram/send",
+    web: "/api/web/send",
+  };
+  const sendPath = SEND_PATHS[channel];
 
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
+    // Web has NO messaging window — we own the transport, so there is no
+    // third party imposing a re-engagement rule
+    // (CHANNEL_CAPABILITIES.web.replyWindowHours is null). Returning
+    // "never expired" here is what keeps the composer enabled and the
+    // countdown chip hidden; without it a web thread would lock an agent
+    // out 24 hours after the visitor's last message for no reason.
+    if (channel === "web") return { expired: false, remaining: "" };
+
     if (!messages.length) return { expired: false, remaining: "" };
 
     // Find last customer message
@@ -272,7 +284,7 @@ export function MessageThread({
         : `${Math.floor(hoursLeft * 60)}m remaining`;
 
     return { expired, remaining };
-  }, [messages]);
+  }, [messages, channel]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
   // depend on `onMessagesLoaded` — otherwise parent re-renders cause
@@ -1340,7 +1352,10 @@ export function MessageThread({
         onSendProductList={handleSendProductList}
       />
 
-      {channel !== "instagram" && (
+      {/* Templates are a WhatsApp mechanism. Instagram has none, and web
+          needs none — we render the bubble, so there is nothing to
+          pre-approve. See CHANNEL_CAPABILITIES. */}
+      {channel === "whatsapp" && (
         <TemplatePicker
           open={templateModalOpen}
           onOpenChange={setTemplateModalOpen}

@@ -5,7 +5,11 @@ import {
   contactInitial,
   isInstagramOnly,
 } from './display';
-import { conversationChannel, isInstagramConversation } from '@/lib/inbox/channel';
+import {
+  conversationChannel,
+  isInstagramConversation,
+  isWebConversation,
+} from '@/lib/inbox/channel';
 
 const whatsappContact = {
   name: 'Siva Krishna',
@@ -102,6 +106,7 @@ describe('conversationChannel', () => {
   it('reads an explicit channel', () => {
     expect(conversationChannel({ channel: 'instagram' })).toBe('instagram');
     expect(conversationChannel({ channel: 'whatsapp' })).toBe('whatsapp');
+    expect(conversationChannel({ channel: 'web' })).toBe('web');
   });
 
   it('defaults a missing channel to whatsapp', () => {
@@ -112,8 +117,21 @@ describe('conversationChannel', () => {
     expect(conversationChannel({ channel: undefined })).toBe('whatsapp');
   });
 
-  it('powers the send-routing predicate', () => {
+  it('does not relabel an unrecognised channel as the one it checks for', () => {
+    // Regression guard for the shape this helper used to have
+    // (`=== 'instagram' ? 'instagram' : 'whatsapp'`), which silently
+    // reported every web thread as WhatsApp — enough for the inbox to
+    // offer a template picker on a channel that has no templates.
+    expect(conversationChannel({ channel: 'web' })).not.toBe('whatsapp');
+  });
+
+  it('powers the send-routing predicates', () => {
     expect(isInstagramConversation({ channel: 'instagram' })).toBe(true);
+    expect(isInstagramConversation({ channel: 'web' })).toBe(false);
     expect(isInstagramConversation({})).toBe(false);
+
+    expect(isWebConversation({ channel: 'web' })).toBe(true);
+    expect(isWebConversation({ channel: 'instagram' })).toBe(false);
+    expect(isWebConversation({})).toBe(false);
   });
 });

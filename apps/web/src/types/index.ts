@@ -158,9 +158,10 @@ export type ConversationStatus = 'open' | 'pending' | 'closed';
 
 /**
  * Platforms a conversation can live on (`conversations.channel`,
- * migration 050). Mirrors CHANNELS in apps/api's common/messaging.
+ * migrations 050 and 053). Mirrors CHANNELS in apps/api's
+ * common/messaging — keep the two in step.
  */
-export type ConversationChannel = 'whatsapp' | 'instagram';
+export type ConversationChannel = 'whatsapp' | 'instagram' | 'web';
 
 export interface Conversation {
   id: string;
@@ -439,7 +440,15 @@ export type AutomationTriggerType =
   // Instagram-specific triggers — these have no WhatsApp equivalent and
   // lock the automation to the Instagram channel when selected.
   | 'instagram_comment'
-  | 'instagram_story_reply';
+  | 'instagram_story_reply'
+  // Web widget-only: a visitor opened a chat and sent their first message.
+  | 'web_chat_started'
+  // Form submitted — channel-agnostic, hosted submissions have no channel.
+  | 'form_submitted'
+  // Appointment lifecycle — also channel-agnostic.
+  | 'appointment_booked'
+  | 'appointment_cancelled'
+  | 'appointment_rescheduled';
 
 export type AutomationStepType =
   | 'send_message'
@@ -452,7 +461,11 @@ export type AutomationStepType =
   | 'wait'
   | 'condition'
   | 'send_webhook'
-  | 'close_conversation';
+  | 'close_conversation'
+  // Sends a form link (or inline card on web) to the contact.
+  | 'send_form'
+  // Sends a booking page link to the contact.
+  | 'send_booking_link';
 
 export type AutomationLogStatus = 'success' | 'partial' | 'failed';
 
@@ -477,7 +490,21 @@ export type AutomationTriggerConfig =
   | KeywordMatchTriggerConfig
   | TagTriggerConfig
   | TimeBasedTriggerConfig
+  | FormSubmittedTriggerConfig
+  | AppointmentTriggerConfig
   | Record<string, unknown>;
+
+/** Config for form_submitted trigger. */
+export interface FormSubmittedTriggerConfig {
+  /** Omitted = any form in the account. */
+  form_id?: string;
+}
+
+/** Config for appointment_* triggers. */
+export interface AppointmentTriggerConfig {
+  /** Omitted = any appointment type. */
+  appointment_type_id?: string;
+}
 
 export interface SendMessageStepConfig {
   text: string;

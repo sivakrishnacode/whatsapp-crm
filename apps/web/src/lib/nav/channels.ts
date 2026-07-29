@@ -4,6 +4,7 @@ import {
   Bot,
   Boxes,
   Calendar,
+  Clock,
   FileText,
   Globe,
   Grid3x3,
@@ -42,19 +43,22 @@ export type NavIcon = ComponentType<{ className?: string }>;
  * onboarding checklist all read from this file, so none of them need
  * touching.
  *
- * `conversations.channel` (migration 050) is what makes a channel real:
- * contacts, conversations and messages are shared across platforms and
- * discriminated by that column, with one config table per channel
- * (`whatsapp_config`, `instagram_config`).
+ * `conversations.channel` (migrations 050 and 053) is what makes a
+ * channel real: contacts, conversations and messages are shared across
+ * platforms and discriminated by that column, with one config table per
+ * channel (`whatsapp_config`, `instagram_config`, `web_config`).
  *
- * WhatsApp and Instagram are therefore `live`. Web and Phone remain
- * frames whose panel links all resolve to the connect screen — flipping
+ * WhatsApp, Instagram and Web are therefore `live`. Phone remains a
+ * frame whose panel links all resolve to the connect screen — flipping
  * one to 'live' is what turns its panel into real routes, and should
  * only happen once it has a config table and a working inbound path.
  *
- * Not every panel row of a live channel has to exist yet: Instagram's
- * `[[...section]]` catch-all still backstops the rows that don't
- * (dm-agents, posts, intents), so adding a page is a pure addition.
+ * Not every panel row of a live channel has to exist yet: the
+ * `[[...section]]` catch-alls still backstop the rows that don't
+ * (Instagram's dm-agents/posts/intents), so adding a page is a pure
+ * addition. That backstop only covers routes inside the channel's own URL
+ * space — a panel row pointing at a flat route must not be listed before
+ * that route exists, because nothing catches it.
  */
 
 /** Stable ids. Also the URL segment under `/channels/<id>`. */
@@ -286,8 +290,33 @@ const WEB_PANEL: PanelGroup[] = [
         icon: Sparkles,
         href: '/channels/web/widget',
       },
+      {
+        id: 'web-behaviour',
+        label: 'Behaviour',
+        icon: Clock,
+        href: '/channels/web/behaviour',
+      },
+      {
+        id: 'web-forms',
+        label: 'Forms',
+        icon: FileText,
+        // Channel-agnostic flat route surfaced in the Web panel because
+        // hosted forms and booking pages are the two things most often
+        // built alongside a website widget. `matchPaths` lights this row
+        // for any /forms sub-route (builder, submissions, etc.) so the
+        // panel stays open while the user is working on a form.
+        //
+        // Appointments used to sit next to this row as its own section. It
+        // was removed: booking IS a form — a form carrying a slot-picker
+        // field — so a separate top-level Appointments surface meant two
+        // half-built ways to collect the same thing, with two field
+        // systems and two submission paths that would drift.
+        href: '/forms',
+        matchPaths: ['/forms'],
+      },
     ],
   },
+
   {
     label: 'Assets',
     items: [
@@ -295,7 +324,19 @@ const WEB_PANEL: PanelGroup[] = [
         id: 'web-knowledge',
         label: 'Knowledge Base',
         icon: Boxes,
-        href: '/channels/web/knowledge',
+        // Points at the shared AI surface, not a page under /channels/web.
+        // One corpus answers WhatsApp, Instagram and web alike — a
+        // channel-scoped copy would imply a scope it does not have, and would
+        // need a second copy the day Instagram wants one. Same reasoning as
+        // Automations moving out of the WhatsApp panel.
+        //
+        // Deliberately NO `matchPaths: ['/agents']`, unlike the Flows row in
+        // the WhatsApp panel. `/flows` is only ever reached from that panel,
+        // but `/agents` is a PRIMARY RAIL destination in its own right —
+        // claiming it here made the rail's own AI Agents row resolve to the
+        // Web channel panel instead of itself. `nav-config.test.ts` catches
+        // exactly this.
+        href: '/agents?tab=knowledge',
       },
     ],
   },
@@ -340,7 +381,7 @@ export const CHANNELS: Record<ChannelId, ChannelDef> = {
     id: 'web',
     label: 'Web',
     icon: Globe,
-    status: 'placeholder',
+    status: 'live',
     accentClass: 'text-[#2D7FF9]',
     tagline:
       'Put an AI agent on your website to greet visitors, answer questions, and capture leads.',
