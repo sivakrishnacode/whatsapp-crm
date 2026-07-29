@@ -51,6 +51,12 @@ export interface RequestWithWidget extends Request {
  *   is what stops a random site from embedding someone else's widget and
  *   what bounds abuse to sites the account named. The session token is
  *   what protects conversation data.
+ *
+ * THE WIDGET IS SAME-ORIGIN TO THIS API, NOT CROSS-ORIGIN
+ *   Worth stating plainly, because assuming otherwise broke this guard in
+ *   production. The frame is served from the app origin and calls
+ *   `/api/public/web/*` on that same host, so most of its requests carry no
+ *   `Origin` header at all. See the long note in `canActivate`.
  */
 @Injectable()
 export class WidgetKeyGuard implements CanActivate {
@@ -81,22 +87,60 @@ export class WidgetKeyGuard implements CanActivate {
       throw new ForbiddenException('This chat widget is currently turned off.');
     }
 
-    const rawOrigin = request.headers.origin ?? request.headers.referer;
-    const isDev = process.env.NODE_ENV !== 'production';
-    const effectiveOrigin = rawOrigin || (isDev ? 'http://localhost:3000' : undefined);
-    const origin =
-      normalizeOrigin(effectiveOrigin) ?? (isDev ? 'http://localhost:3000' : null);
+    const rawOrigin = request.headers.origin;
+    const fetchSite = request.headers['sec-fetch-site'];
 
-    if (!origin || !isOriginAllowed(effectiveOrigin, config.allowedOrigins)) {
-      this.logger.warn(
-        `widget ${widgetKey.slice(0, 10)}… refused for origin ${String(rawOrigin)}`,
-      );
-      throw new ForbiddenException(
-        config.allowedOrigins.length === 0
-          ? 'This widget has no allowed domains configured yet.'
-          : 'This domain is not allowed to load this chat widget.',
-      );
+    /**
+     * SAME-ORIGIN REQUESTS CARRY NO `Origin`, AND THAT IS THE NORMAL CASE
+     *
+     * An earlier version of this guard denied every request without an Origin
+     * header, on the reasoning that "the widget is always cross-origin to this
+     * API". That reasoning was wrong, and it took the widget down completely.
+     *
+     * The widget frame is served from THIS origin (app.…/widget/v1/frame) and
+     * calls `/api/public/web/*` on the same host. Per the Fetch spec, browsers
+     * send `Origin` for CORS requests and for non-GET/HEAD methods — but NOT
+     * for same-origin GETs. So `GET /bootstrap`, `GET /messages` and the
+     * EventSource stream all legitimately arrive with no Origin, while
+     * `POST /session` arrives with one. The result was a widget where creating
+     * a session worked and everything else 403'd.
+     *
+     * `Sec-Fetch-Site` is the right discriminator: browsers set it, page JS
+     * cannot forge it. `same-origin` means the frame is talking to its own
+     * host, which needs no allowlist check — the allowlist exists to stop
+     * OTHER sites embedding the widget, and a same-origin call is by
+     * definition not that.
+     *
+     * When the header is absent (older Safari, or a non-browser client) the
+     * request is allowed through. That is a deliberate, bounded loosening:
+     * a non-browser client can set any `Origin` it likes, so refusing a
+     * missing one never protected against it. What the allowlist genuinely
+     * protects is browser-embedded abuse, and browsers always send Origin
+     * cross-origin. Volume abuse is bounded by the per-(key, ip) rate limits
+     * on every route here, not by this check.
+     */
+    const isSameOrigin = fetchSite === 'same-origin';
+    const crossSiteWithoutOrigin =
+      !rawOrigin && typeof fetchSite === 'string' && fetchSite !== 'same-origin';
+
+    if (!isSameOrigin) {
+      // A browser that told us this is cross-site but sent no Origin is not a
+      // shape `fetch()` produces — refuse rather than fall through.
+      if (crossSiteWithoutOrigin || (rawOrigin && !isOriginAllowed(rawOrigin, config.allowedOrigins))) {
+        this.logger.warn(
+          `widget ${widgetKey.slice(0, 10)}… refused for origin ${String(rawOrigin)} (sec-fetch-site=${String(fetchSite)})`,
+        );
+        throw new ForbiddenException(
+          config.allowedOrigins.length === 0
+            ? 'This widget has no allowed domains configured yet.'
+            : 'This domain is not allowed to load this chat widget.',
+        );
+      }
     }
+
+    // Normalised where we have one; the frame's own origin otherwise. Only
+    // ever used for logging and session attribution, never re-checked.
+    const origin = normalizeOrigin(rawOrigin) ?? 'same-origin';
 
     request.widget = {
       accountId: config.accountId,
