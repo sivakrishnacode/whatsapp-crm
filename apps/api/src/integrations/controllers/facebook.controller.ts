@@ -412,6 +412,7 @@ export class FacebookLeadsWebhookController {
           name: name || 'Facebook Lead',
           email: email || null,
           company: company || null,
+          source: 'facebook_lead',
         },
       });
       this.logger.log(`Created contact ${contact.id} from FB lead ${leadgenId}`);

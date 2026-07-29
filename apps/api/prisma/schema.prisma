@@ -963,6 +963,11 @@ model contacts {
   /// (unlike an IGSID, it means nothing outside this tenant). NULL for every
   /// non-web contact. See contacts_identity_chk: phone OR ig_scoped_id OR this.
   web_visitor_id                String?
+  /// How this contact first entered the account. Written once at creation
+  /// and never updated — it describes a past event, not current state.
+  /// Legal values live in contacts_source_chk (migration 056) and are
+  /// mirrored in src/common/contacts/contact-source.ts.
+  source                        String                          @default("unknown")
   automationLogs                AutomationLog[]
   automationPendingExecutions   AutomationPendingExecution[]
   broadcast_recipients          broadcast_recipients[]

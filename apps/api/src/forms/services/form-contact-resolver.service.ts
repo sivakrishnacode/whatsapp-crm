@@ -123,6 +123,7 @@ export class FormContactResolverService {
         name: identity.name ?? null,
         email: identity.email ?? null,
         phone: identity.phone ?? null,
+        source: 'form',
       },
       select: { id: true },
     });

@@ -86,6 +86,24 @@ export interface AccountInvitation {
   accepted_by_user_id: string | null;
 }
 
+/**
+ * Where a contact first entered the account (`contacts.source`,
+ * migration 056). Mirrors CONTACT_SOURCES in
+ * apps/api/src/common/contacts/contact-source.ts and the
+ * `contacts_source_chk` constraint — keep all three in step.
+ */
+export type ContactSource =
+  | 'manual'
+  | 'import'
+  | 'whatsapp'
+  | 'instagram'
+  | 'web'
+  | 'form'
+  | 'facebook_lead'
+  | 'api'
+  | 'broadcast'
+  | 'unknown';
+
 export interface Contact {
   id: string;
   user_id: string;
@@ -107,6 +125,14 @@ export interface Contact {
   email?: string;
   company?: string;
   avatar_url?: string;
+  /**
+   * How this contact first entered the account (migration 056). Written
+   * once at creation, never updated. Optional here because select
+   * projections that predate the column omit it — render it through
+   * `contactSourceMeta` in lib/contacts/source.ts, which treats an
+   * absent value the same as `'unknown'`.
+   */
+  source?: ContactSource | null;
   created_at: string;
   updated_at: string;
   /** Hydrated by queries that embed `contact_tags(tags(*))` (e.g. the

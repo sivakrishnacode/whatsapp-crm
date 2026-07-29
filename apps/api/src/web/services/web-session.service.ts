@@ -188,6 +188,7 @@ export class WebSessionService {
           name: input.profile?.name ?? null,
           email: input.profile?.email ?? null,
           phone: input.profile?.phone ?? null,
+          source: 'web',
         },
         select: { id: true },
       });

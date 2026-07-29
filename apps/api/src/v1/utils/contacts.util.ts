@@ -138,6 +138,7 @@ export async function findOrCreateContact(
         name: input.name ?? sanitized,
         email: input.email ?? null,
         company: input.company ?? null,
+        source: 'api',
       },
       select: { id: true },
     });

@@ -168,6 +168,10 @@ export function ContactForm({
             phone: phone.trim(),
             email: email.trim() || null,
             company: company.trim() || null,
+            // Set on insert only — never in the update branch above.
+            // `source` records how the contact first arrived, so editing
+            // an imported contact must not relabel it as hand-entered.
+            source: 'manual',
           })
           .select('id')
           .single();

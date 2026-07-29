@@ -101,6 +101,7 @@ export class InstagramIdentityService {
           ig_username: username ?? null,
           name: displayName,
           avatar_url: profile?.profilePictureUrl ?? null,
+          source: 'instagram',
         },
       });
       return { contact: created, wasCreated: true };

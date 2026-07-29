@@ -1032,6 +1032,10 @@ export class WhatsappWebhookService {
           user_id: configOwnerUserId,
           phone,
           name: name || phone,
+          // Includes click-to-WhatsApp ad traffic: a CTWA click reaches
+          // us as an ordinary inbound message carrying a referral, so
+          // this is the creation path for those contacts too.
+          source: 'whatsapp',
         },
       });
       return { contact: newContact, wasCreated: true };

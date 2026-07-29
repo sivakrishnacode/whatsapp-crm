@@ -276,6 +276,7 @@ export function ImportModal({
           name: row.name || null,
           email: row.email || null,
           company: row.company || null,
+          source: 'import' as const,
         }));
 
         const { data, error } = await supabase

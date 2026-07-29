@@ -3,16 +3,20 @@ import { useId } from 'react';
 /**
  * Brand glyphs for the channel rail.
  *
- * lucide-react 1.x dropped its brand icons, so WhatsApp and Instagram
- * have to be hand-rolled — the same reason `settings-sections.ts` carries
- * an inline Facebook SVG. Both accept only `className` so they're
- * drop-in-compatible with the lucide icons used everywhere else in the
- * nav (see the `NavIcon` type in lib/nav/channels.ts).
+ * lucide-react 1.x dropped its brand icons, so WhatsApp, Instagram and
+ * Facebook have to be hand-rolled. All three accept only `className` so
+ * they're drop-in-compatible with the lucide icons used everywhere else
+ * in the nav (see the `NavIcon` type in lib/nav/channels.ts).
  *
  * WhatsApp is a filled glyph in `currentColor`, so the rail's
  * `accentClass` tints it like any lucide icon. Instagram is drawn with a
  * real brand gradient, which `currentColor` can't express — it ignores
  * the accent class and paints itself.
+ *
+ * `settings-sections.ts` carries its own inline Facebook SVG rather than
+ * importing the one below: its `SectionMeta.icon` is typed `LucideIcon`,
+ * which demands a forwardRef taking every SVG prop, and this file's
+ * `{ className }` contract deliberately promises less.
  */
 
 export function WhatsAppIcon({ className }: { className?: string }) {
@@ -61,6 +65,29 @@ export function InstagramIcon({ className }: { className?: string }) {
         <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37Z" />
         <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
       </g>
+    </svg>
+  );
+}
+
+/**
+ * Outline rather than filled, unlike WhatsApp above: this one is used at
+ * label size next to lucide glyphs (the contact-source badge), where a
+ * solid brand shape reads as heavier than everything around it.
+ */
+export function FacebookIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
     </svg>
   );
 }

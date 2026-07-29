@@ -340,6 +340,7 @@ export class DashboardBroadcastService {
           account_id: accountId,
           phone,
           name: uniqueByPhone.get(phone)?.name ?? null,
+          source: 'broadcast',
         },
         select,
       });
