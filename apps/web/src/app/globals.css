@@ -88,6 +88,12 @@
 
 :root,
 html[data-mode="dark"] {
+  /* Bound to the app's mode, not the OS preference: native form
+   * controls and scrollbars must follow the picked mode, otherwise a
+   * light-mode OS paints light scrollbars inside the dark UI. */
+  color-scheme: dark;
+  --scrollbar-thumb: oklch(1 0 0 / 0.16);
+  --scrollbar-thumb-hover: oklch(1 0 0 / 0.3);
   --background: oklch(0.13 0.01 260);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.18 0.01 260);
@@ -117,6 +123,9 @@ html[data-mode="dark"] {
 }
 
 html[data-mode="light"] {
+  color-scheme: light;
+  --scrollbar-thumb: oklch(0.55 0.015 260 / 0.32);
+  --scrollbar-thumb-hover: oklch(0.45 0.015 260 / 0.5);
   --background: oklch(0.99 0.002 260);
   --foreground: oklch(0.21 0.01 260);
   --card: oklch(1 0 0);
@@ -229,25 +238,54 @@ html[data-theme="rose"] {
   }
 }
 
-/* Custom class for sidebar scroll - highest specificity */
-.sidebar-nav-scroll::-webkit-scrollbar {
-  width: 8px !important;
-}
+/* ============================================================
+ * SCROLLBARS — one thin, themed treatment for every scroll
+ * container in the app (inbox lists, message thread, sidebars,
+ * dialogs, tables). Native bars are chunky and, on WebKit, drawn
+ * in the OS color scheme, which reads as out-of-place chrome.
+ *
+ * `scrollbar-width` / `scrollbar-color` are inherited, so setting
+ * them on <html> covers Firefox everywhere. The ::-webkit-*
+ * pseudo-elements aren't inherited, so those are declared
+ * unprefixed (i.e. against every element).
+ *
+ * Both live in @layer base so a Tailwind utility
+ * (`[&::-webkit-scrollbar]:hidden`, `[scrollbar-width:none]`) or a
+ * component's styled-jsx can still opt out per element.
+ * ============================================================ */
+@layer base {
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
 
-.sidebar-nav-scroll::-webkit-scrollbar-track {
-  background: transparent !important;
-}
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
 
-.sidebar-nav-scroll::-webkit-scrollbar-thumb {
-  background: #d1d5db !important;
-  border-radius: 4px !important;
-}
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 
-.sidebar-nav-scroll::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af !important;
-}
+  /* Transparent border + padding-box clip insets the thumb, so it
+   * reads as a floating 6px pill rather than a full-width gutter. */
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 9999px;
+  }
 
-.sidebar-nav-scroll {
-  scrollbar-width: thin !important;
-  scrollbar-color: #d1d5db transparent !important;
+  ::-webkit-scrollbar-thumb:hover,
+  ::-webkit-scrollbar-thumb:active {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+
+  /* Chrome/Safari draw stepper buttons on some platforms — the
+   * arrows at each end are the most dated part of the native bar. */
+  ::-webkit-scrollbar-button {
+    display: none;
+  }
 }

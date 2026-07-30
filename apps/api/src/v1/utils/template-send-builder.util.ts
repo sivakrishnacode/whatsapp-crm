@@ -146,6 +146,33 @@ function buildButtonComponent(
   }
 }
 
+/**
+ * The template body with its `{{n}}` placeholders substituted — i.e. the
+ * text WhatsApp actually renders on the recipient's device.
+ *
+ * Needed because Meta renders templates from its own approved copy: the
+ * send response returns only a message id, so nothing carries the text
+ * back for us to store. Callers persist this as the message's
+ * `content_text`, otherwise the sent bubble renders empty in the inbox.
+ *
+ * Placeholders with no supplied value are left verbatim rather than
+ * blanked, which keeps a partially-filled body readable. Values are
+ * read from `params.body` — the same source `buildBodyComponent` sends
+ * to Meta, so the stored text matches what was delivered.
+ */
+export function renderTemplateBody(
+  bodyText: string,
+  params: SendTimeParams = {},
+): string {
+  const values = params.body ?? [];
+  return bodyText.replace(/\{\{(\d+)\}\}/g, (placeholder, raw: string) => {
+    const value = values[Number(raw) - 1];
+    if (value === undefined || value === null) return placeholder;
+    const text = String(value);
+    return text.trim().length > 0 ? text : placeholder;
+  });
+}
+
 export function buildSendComponents(
   template: MessageTemplate,
   params: SendTimeParams = {},

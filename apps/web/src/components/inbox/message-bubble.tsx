@@ -147,7 +147,16 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   );
 }
 
-function MessageContent({ message }: { message: Message }) {
+function MessageContent({
+  message,
+  onPrimary = false,
+}: {
+  message: Message;
+  /** True inside an outbound bubble, which is filled with bg-primary —
+   *  primary-tinted chrome has to switch to the foreground token there or
+   *  it blends into the bubble. Same flag <ReplyQuote> takes. */
+  onPrimary?: boolean;
+}) {
   switch (message.content_type) {
     case "text":
       return (
@@ -224,13 +233,35 @@ function MessageContent({ message }: { message: Message }) {
     case "template":
       return (
         <div>
-          <span className="mb-1 inline-flex items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+          <span
+            className={cn(
+              "mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
+              onPrimary
+                ? "bg-primary-foreground/20 text-primary-foreground"
+                : "bg-primary/20 text-primary",
+            )}
+          >
             <LayoutTemplate className="h-3 w-3" />
             Template
           </span>
-          {message.content_text && (
+          {/* The body is stored at send time (Meta renders templates from
+              its own approved copy and returns no text). Name the template
+              when that text is missing — pre-fix rows and templates that
+              aren't synced locally — so the bubble is never blank. */}
+          {message.content_text ? (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm">
               {message.content_text}
+            </p>
+          ) : (
+            <p
+              className={cn(
+                "mt-1 text-sm italic",
+                onPrimary ? "text-primary-foreground/70" : "text-muted-foreground",
+              )}
+            >
+              {message.template_name
+                ? `Sent template "${message.template_name}"`
+                : "Sent a template"}
             </p>
           )}
         </div>
@@ -387,7 +418,7 @@ export function MessageBubble({
             onPrimary={isAgent}
           />
         )}
-        <MessageContent message={message} />
+        <MessageContent message={message} onPrimary={isAgent} />
         <div
           className={cn(
             "mt-1 flex items-center gap-1",

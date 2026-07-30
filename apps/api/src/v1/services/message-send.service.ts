@@ -21,6 +21,7 @@ import {
   isRecipientNotAllowedError,
 } from '../utils/phone.util';
 import { ApiError } from '../utils/respond.util';
+import { renderTemplateBody } from '../utils/template-send-builder.util';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -439,6 +440,22 @@ export class MessageSendService {
 
     let finalContentText = contentText || null;
     let previewText = contentText || `[${messageType}]`;
+    if (messageType === 'template' && !finalContentText) {
+      // Callers may or may not pre-render the body: the inbox composer
+      // sends content_text, while the contact-detail send and the public
+      // v1 API pass only template_name + params. Derive it here so the
+      // stored message never ends up textless — an empty bubble in the
+      // thread and a "[template]" conversation preview. No-op when the
+      // template row is missing locally (legacy body-only send path).
+      const bodyText: string | undefined =
+        templateRow?.body_text ?? templateRow?.bodyText;
+      if (bodyText) {
+        finalContentText = renderTemplateBody(bodyText, {
+          body: templateMessageParams?.body ?? templateParams,
+        });
+        previewText = finalContentText;
+      }
+    }
     if (messageType === 'product' && interactiveProductParams?.productRetailerId) {
       finalContentText = JSON.stringify({
         type: 'product',

@@ -137,7 +137,7 @@ export function SecondaryPanel({
         </div>
       ) : null}
 
-      <nav className="sidebar-nav-scroll flex-1 overflow-y-auto px-2 pb-3">
+      <nav className="flex-1 overflow-y-auto px-2 pb-3">
         {groups.map((group) => {
           const items = group.items.filter((i) => !i.adminOnly || canEditSettings);
           if (items.length === 0) return null;

@@ -328,7 +328,7 @@ export function PrimaryRail({
           </div>
         ) : null}
 
-        <nav className="sidebar-nav-scroll flex flex-1 flex-col overflow-y-auto px-2 pb-2">
+        <nav className="flex flex-1 flex-col overflow-y-auto px-2 pb-2">
           {/* Search — visual placeholder. Rendered as a real disabled
               control so wiring a command palette later is a one-file
               change, but it is not focusable or clickable today. */}

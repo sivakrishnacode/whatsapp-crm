@@ -8,6 +8,7 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from './phone-utils.util';
+import { renderTemplateBody } from '../v1/utils/template-send-builder.util';
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -141,8 +142,15 @@ export class AutomationMetaSendService {
     // Meta message id. sender_type='bot' distinguishes automation sends
     // from manual agent sends.
     const content_type = input.kind === 'template' ? 'template' : 'text';
-    const content_text = input.kind === 'text' ? input.text : null;
     const template_name = input.kind === 'template' ? input.templateName : null;
+    // Meta renders a template from its own approved copy and returns only
+    // a message id, so the body has to be reconstructed locally or the
+    // inbox shows an empty bubble. Read-only lookup — the payload already
+    // sent to Meta above is untouched by this.
+    const content_text =
+      input.kind === 'text'
+        ? input.text
+        : await this.renderSentTemplateBody(input);
 
     try {
       await this.prisma.messages.create({
@@ -169,7 +177,7 @@ export class AutomationMetaSendService {
       data: {
         last_message_text:
           input.kind === 'template'
-            ? `[template:${input.templateName}]`
+            ? (content_text ?? `[template:${input.templateName}]`)
             : input.text,
         last_message_at: new Date(),
         updated_at: new Date(),
@@ -177,5 +185,29 @@ export class AutomationMetaSendService {
     });
 
     return { whatsapp_message_id: waMessageId };
+  }
+
+  /**
+   * The body text of a template we just sent, with `{{n}}` placeholders
+   * filled from the automation's params — what the recipient sees.
+   *
+   * Returns null when the template isn't in our table (it can be
+   * approved at Meta but not yet synced locally); callers fall back to a
+   * `[template:name]` marker rather than failing a send that Meta has
+   * already accepted.
+   */
+  private async renderSentTemplateBody(
+    input: SendTemplateArgs,
+  ): Promise<string | null> {
+    const row = await this.prisma.message_templates.findFirst({
+      where: {
+        account_id: input.accountId,
+        name: input.templateName,
+        language: input.language || 'en_US',
+      },
+      select: { body_text: true },
+    });
+    if (!row?.body_text) return null;
+    return renderTemplateBody(row.body_text, { body: input.params });
   }
 }
