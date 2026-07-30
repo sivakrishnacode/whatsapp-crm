@@ -141,7 +141,10 @@ export class BookingService {
       },
       select: { starts_at: true, ends_at: true },
     });
-    return rows.map((row) => ({ startsAt: row.starts_at, endsAt: row.ends_at }));
+    return rows.map((row) => ({
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+    }));
   }
 
   /** `liveBookings`, minus one booking — used when rescheduling that one. */
@@ -166,7 +169,10 @@ export class BookingService {
       },
       select: { starts_at: true, ends_at: true },
     });
-    return rows.map((row) => ({ startsAt: row.starts_at, endsAt: row.ends_at }));
+    return rows.map((row) => ({
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+    }));
   }
 
   /**
@@ -358,10 +364,7 @@ export class BookingService {
    * constraint's WHERE clause handles that) while the record of what happened
    * survives, and an automation still needs something to react to.
    */
-  async cancel(
-    manageToken: string,
-    reason?: string,
-  ): Promise<BookingJson> {
+  async cancel(manageToken: string, reason?: string): Promise<BookingJson> {
     const existing = await this.prisma.form_bookings.findUnique({
       where: { manage_token: manageToken },
       select: { id: true, account_id: true, status: true },

@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export type LimitType = 'contacts' | 'messages' | 'broadcasts' | 'flows' | 'team_members' | 'storage';
+export type LimitType =
+  'contacts' | 'messages' | 'broadcasts' | 'flows' | 'team_members' | 'storage';
 
 export interface LimitCheckResult {
   allowed: boolean;
@@ -27,7 +28,10 @@ export class SubscriptionService {
       );
       return rows?.[0] || null;
     } catch (error) {
-      this.logger.error(`Error fetching subscription for user ${userId}`, error);
+      this.logger.error(
+        `Error fetching subscription for user ${userId}`,
+        error,
+      );
       throw error;
     }
   }
@@ -60,11 +64,15 @@ export class SubscriptionService {
       return {
         allowed: Boolean(rows[0].allowed),
         currentUsage: Number(rows[0].currentUsage ?? 0),
-        limitValue: rows[0].limitValue !== null ? Number(rows[0].limitValue) : null,
+        limitValue:
+          rows[0].limitValue !== null ? Number(rows[0].limitValue) : null,
         reason: String(rows[0].reason ?? ''),
       };
     } catch (error) {
-      this.logger.error(`Error checking limit ${limitType} for user ${userId}`, error);
+      this.logger.error(
+        `Error checking limit ${limitType} for user ${userId}`,
+        error,
+      );
       return {
         allowed: false,
         currentUsage: 0,
@@ -91,7 +99,10 @@ export class SubscriptionService {
       );
       return Boolean(rows?.[0]?.success);
     } catch (error) {
-      this.logger.error(`Error incrementing usage ${type} for user ${userId}`, error);
+      this.logger.error(
+        `Error incrementing usage ${type} for user ${userId}`,
+        error,
+      );
       return false;
     }
   }
@@ -113,7 +124,10 @@ export class SubscriptionService {
       );
       return Boolean(rows?.[0]?.success);
     } catch (error) {
-      this.logger.error(`Error decrementing usage ${type} for user ${userId}`, error);
+      this.logger.error(
+        `Error decrementing usage ${type} for user ${userId}`,
+        error,
+      );
       return false;
     }
   }

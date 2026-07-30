@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Post,
-  Req,
-  Res,
-  HttpStatus,
-  Logger,
-} from '@nestjs/common';
+import { Controller, Post, Req, Res, HttpStatus, Logger } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import * as express from 'express';
@@ -32,7 +25,9 @@ export class SubscriptionWebhooksController {
 
     if (!signature) {
       this.logger.warn('Razorpay webhook: Missing x-razorpay-signature');
-      return res.status(HttpStatus.BAD_REQUEST).json({ error: 'Missing signature' });
+      return res
+        .status(HttpStatus.BAD_REQUEST)
+        .json({ error: 'Missing signature' });
     }
 
     const rawBody = req.rawBody ?? Buffer.from('');
@@ -40,7 +35,9 @@ export class SubscriptionWebhooksController {
 
     // Verify webhook signature with timingSafeEqual
     if (webhookSecret) {
-      const expected = createHmac('sha256', webhookSecret).update(bodyStr).digest('hex');
+      const expected = createHmac('sha256', webhookSecret)
+        .update(bodyStr)
+        .digest('hex');
       const sigBuf = Buffer.from(signature);
       const expBuf = Buffer.from(expected);
       const isValid =
@@ -48,7 +45,9 @@ export class SubscriptionWebhooksController {
 
       if (!isValid) {
         this.logger.warn('Razorpay webhook signature verification failed');
-        return res.status(HttpStatus.BAD_REQUEST).json({ error: 'Invalid signature' });
+        return res
+          .status(HttpStatus.BAD_REQUEST)
+          .json({ error: 'Invalid signature' });
       }
     }
 
@@ -70,7 +69,9 @@ export class SubscriptionWebhooksController {
             !notes.planName ||
             !notes.billingCycle
           ) {
-            this.logger.error('Razorpay webhook: Missing metadata in payment/order');
+            this.logger.error(
+              'Razorpay webhook: Missing metadata in payment/order',
+            );
             return res.status(HttpStatus.OK).json({ received: true });
           }
 
@@ -142,7 +143,9 @@ export class SubscriptionWebhooksController {
           const billingCycle = subscription.notes?.billingCycle;
 
           if (!userId || !planName || !billingCycle) {
-            this.logger.error('Razorpay webhook: Missing metadata in subscription');
+            this.logger.error(
+              'Razorpay webhook: Missing metadata in subscription',
+            );
             return res.status(HttpStatus.OK).json({ received: true });
           }
 
@@ -192,7 +195,9 @@ export class SubscriptionWebhooksController {
             },
           });
 
-          this.logger.log(`Razorpay subscription activated for user: ${userId}`);
+          this.logger.log(
+            `Razorpay subscription activated for user: ${userId}`,
+          );
           break;
         }
 
@@ -248,7 +253,9 @@ export class SubscriptionWebhooksController {
                 payment_method: 'manual',
               },
             });
-            this.logger.log(`Razorpay subscription cancelled and downgraded: ${subscription.id}`);
+            this.logger.log(
+              `Razorpay subscription cancelled and downgraded: ${subscription.id}`,
+            );
           }
           break;
         }
@@ -293,7 +300,9 @@ export class SubscriptionWebhooksController {
 
     if (!signature) {
       this.logger.warn('Stripe webhook: Missing stripe-signature');
-      return res.status(HttpStatus.BAD_REQUEST).json({ error: 'Missing signature' });
+      return res
+        .status(HttpStatus.BAD_REQUEST)
+        .json({ error: 'Missing signature' });
     }
 
     if (!stripeSecretKey) {
@@ -310,8 +319,12 @@ export class SubscriptionWebhooksController {
     try {
       event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
     } catch (err: any) {
-      this.logger.warn(`Stripe webhook signature verification failed: ${err.message}`);
-      return res.status(HttpStatus.BAD_REQUEST).json({ error: 'Invalid signature' });
+      this.logger.warn(
+        `Stripe webhook signature verification failed: ${err.message}`,
+      );
+      return res
+        .status(HttpStatus.BAD_REQUEST)
+        .json({ error: 'Invalid signature' });
     }
 
     try {
@@ -319,13 +332,15 @@ export class SubscriptionWebhooksController {
 
       switch (event.type) {
         case 'checkout.session.completed': {
-          const session = event.data.object as Stripe.Checkout.Session;
+          const session = event.data.object;
           const userId = session.metadata?.userId;
           const planName = session.metadata?.planName;
           const billingCycle = session.metadata?.billingCycle;
 
           if (!userId || !planName || !billingCycle) {
-            this.logger.error('Stripe webhook: Missing metadata in checkout session');
+            this.logger.error(
+              'Stripe webhook: Missing metadata in checkout session',
+            );
             return res.status(HttpStatus.OK).json({ received: true });
           }
 
@@ -360,8 +375,12 @@ export class SubscriptionWebhooksController {
               billing_cycle: billingCycle as any,
               trial_start_at: trialStart,
               trial_end_at: trialEnd,
-              current_period_start: new Date(subscription.current_period_start * 1000),
-              current_period_end: new Date(subscription.current_period_end * 1000),
+              current_period_start: new Date(
+                subscription.current_period_start * 1000,
+              ),
+              current_period_end: new Date(
+                subscription.current_period_end * 1000,
+              ),
               cancel_at_period_end: subscription.cancel_at_period_end,
               stripe_subscription_id: subscription.id,
               payment_method: 'stripe',
@@ -372,20 +391,26 @@ export class SubscriptionWebhooksController {
               billing_cycle: billingCycle as any,
               trial_start_at: trialStart,
               trial_end_at: trialEnd,
-              current_period_start: new Date(subscription.current_period_start * 1000),
-              current_period_end: new Date(subscription.current_period_end * 1000),
+              current_period_start: new Date(
+                subscription.current_period_start * 1000,
+              ),
+              current_period_end: new Date(
+                subscription.current_period_end * 1000,
+              ),
               cancel_at_period_end: subscription.cancel_at_period_end,
               stripe_subscription_id: subscription.id,
               payment_method: 'stripe',
             },
           });
 
-          this.logger.log(`Stripe subscription checkout completed for user: ${userId}`);
+          this.logger.log(
+            `Stripe subscription checkout completed for user: ${userId}`,
+          );
           break;
         }
 
         case 'customer.subscription.updated': {
-          const subscription = event.data.object as Stripe.Subscription;
+          const subscription = event.data.object;
           const customerId = subscription.customer as string;
 
           // Retrieve Stripe customer metadata to find userId
@@ -393,7 +418,9 @@ export class SubscriptionWebhooksController {
           const userId = (customer as Stripe.Customer).metadata?.userId;
 
           if (!userId) {
-            this.logger.error('Stripe webhook: User ID not found in customer metadata');
+            this.logger.error(
+              'Stripe webhook: User ID not found in customer metadata',
+            );
             return res.status(HttpStatus.OK).json({ received: true });
           }
 
@@ -412,8 +439,12 @@ export class SubscriptionWebhooksController {
             where: { stripe_subscription_id: subscription.id },
             data: {
               status: dbStatus as any,
-              current_period_start: new Date(subscription.current_period_start * 1000),
-              current_period_end: new Date(subscription.current_period_end * 1000),
+              current_period_start: new Date(
+                subscription.current_period_start * 1000,
+              ),
+              current_period_end: new Date(
+                subscription.current_period_end * 1000,
+              ),
               cancel_at_period_end: subscription.cancel_at_period_end,
             },
           });
@@ -423,7 +454,7 @@ export class SubscriptionWebhooksController {
         }
 
         case 'customer.subscription.deleted': {
-          const subscription = event.data.object as Stripe.Subscription;
+          const subscription = event.data.object;
 
           // Downgrade to FREE plan
           const freePlan = await this.prisma.subscription_plans.findUnique({
@@ -447,13 +478,15 @@ export class SubscriptionWebhooksController {
                 payment_method: 'manual',
               },
             });
-            this.logger.log(`Stripe subscription deleted and downgraded: ${subscription.id}`);
+            this.logger.log(
+              `Stripe subscription deleted and downgraded: ${subscription.id}`,
+            );
           }
           break;
         }
 
         case 'invoice.payment_failed': {
-          const invoice = event.data.object as Stripe.Invoice;
+          const invoice = event.data.object;
 
           await this.prisma.user_subscriptions.updateMany({
             where: { stripe_subscription_id: invoice.subscription as string },

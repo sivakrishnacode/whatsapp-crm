@@ -1,12 +1,52 @@
-import type { MessageTemplate, TemplateButton } from '../types/index';
-import { extractVariableIndices } from './template-validators.util';
+import type {
+  MessageTemplate,
+  TemplateButton,
+  TemplateCard,
+} from '../types/index';
+import {
+  extractNamedVariables,
+  extractVariableIndices,
+} from './template-validators.util';
+
+/** Meta's send-time map pin for a LOCATION header. */
+export interface TemplateLocationParam {
+  latitude: string;
+  longitude: string;
+  name?: string;
+  address?: string;
+}
+
+/** Per-card send-time values for a CAROUSEL template, indexed by card. */
+export interface CardSendParams {
+  headerMediaUrl?: string;
+  headerMediaId?: string;
+  body?: string[];
+  bodyNamed?: Record<string, string>;
+  buttonParams?: Record<number, string>;
+}
 
 export interface SendTimeParams {
   body?: string[];
+  /**
+   * NAMED templates only: body values keyed by parameter name. Takes
+   * precedence over `body` per name; anything missing falls back to the
+   * positional array, so a caller that knows nothing about named
+   * parameters keeps working unchanged.
+   */
+  bodyNamed?: Record<string, string>;
   headerText?: string;
   headerMediaUrl?: string;
   headerMediaId?: string;
+  /** Required for LOCATION headers — the pin is per send, not per template. */
+  headerLocation?: TemplateLocationParam;
   buttonParams?: Record<number, string>;
+  /** CAROUSEL templates: one entry per card, in card order. */
+  cards?: CardSendParams[];
+}
+
+export interface MetaSendCard {
+  card_index: number;
+  components: MetaSendComponent[];
 }
 
 export type MetaSendComponent =
@@ -17,15 +57,71 @@ export type MetaSendComponent =
       sub_type: 'url' | 'quick_reply' | 'copy_code';
       index: string;
       parameters: MetaSendParameter[];
-    };
+    }
+  | { type: 'carousel'; cards: MetaSendCard[] };
 
 type MetaSendParameter =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; parameter_name?: string }
   | { type: 'image'; image: { link?: string; id?: string } }
   | { type: 'video'; video: { link?: string; id?: string } }
   | { type: 'document'; document: { link?: string; id?: string } }
+  | { type: 'location'; location: TemplateLocationParam }
   | { type: 'coupon_code'; coupon_code: string }
   | { type: 'payload'; payload: string };
+
+/**
+ * Resolve the ordered values for one piece of variable-bearing text,
+ * whichever parameter scheme it uses.
+ *
+ * NAMED text yields parameters that carry `parameter_name` — Meta
+ * matches on the name, not the position, but it still wants them as an
+ * array. Values are read from the named map first, then from the
+ * positional array by order of first appearance, so both calling styles
+ * work against the same template.
+ */
+function buildTextParameters(
+  text: string,
+  positional: string[] | undefined,
+  named: Record<string, string> | undefined,
+  where: string,
+): MetaSendParameter[] | null {
+  const names = extractNamedVariables(text);
+  const values = positional ?? [];
+
+  if (names.length > 0) {
+    return names.map((name, i) => {
+      const value = named?.[name] ?? values[i];
+      if (value === undefined || value === null || !String(value).trim()) {
+        throw new Error(
+          `${where} variable {{${name}}} requires a value at send time.`,
+        );
+      }
+      return { type: 'text', parameter_name: name, text: String(value) };
+    });
+  }
+
+  const varCount = extractVariableIndices(text).length;
+  if (varCount === 0 && values.length === 0) return null;
+  if (values.length < varCount) {
+    throw new Error(
+      `${where} has ${varCount} variable(s) but only ${values.length} value(s) were supplied.`,
+    );
+  }
+  return values
+    .slice(0, varCount)
+    .map((value) => ({ type: 'text', text: String(value) }));
+}
+
+function buildMediaParameter(
+  kind: 'image' | 'video' | 'document',
+  link: string | undefined,
+  id: string | undefined,
+): MetaSendParameter {
+  const media: { link?: string; id?: string } = id ? { id } : { link };
+  if (kind === 'image') return { type: 'image', image: media };
+  if (kind === 'video') return { type: 'video', video: media };
+  return { type: 'document', document: media };
+}
 
 function buildHeaderComponent(
   template: MessageTemplate,
@@ -34,18 +130,42 @@ function buildHeaderComponent(
   const headerType = template.header_type;
   if (!headerType) return null;
 
-  if (headerType === 'text') {
-    const varCount = extractVariableIndices(template.header_content ?? '').length;
-    if (varCount === 0) return null;
-    const value = params.headerText;
-    if (!value || !value.trim()) {
+  if (headerType === 'location') {
+    const loc = params.headerLocation;
+    if (!loc?.latitude || !loc?.longitude) {
       throw new Error(
-        'Header text variable {{1}} requires a value — pass headerText.',
+        'Location header requires latitude and longitude at send time — pass headerLocation.',
       );
     }
     return {
       type: 'header',
-      parameters: [{ type: 'text', text: value }],
+      parameters: [{ type: 'location', location: loc }],
+    };
+  }
+
+  if (headerType === 'text') {
+    // A text header takes at most one variable, so `headerText` covers
+    // both schemes — the only difference is that NAMED sends carry the
+    // parameter's name alongside the value. Static text headers ride
+    // along inside the template itself; no header component needed.
+    const content = template.header_content ?? '';
+    const names = extractNamedVariables(content);
+    const varCount = names.length || extractVariableIndices(content).length;
+    if (varCount === 0) return null;
+    const token = names[0] ?? '1';
+    const value = params.headerText;
+    if (!value || !value.trim()) {
+      throw new Error(
+        `Header text variable {{${token}}} requires a value — pass headerText.`,
+      );
+    }
+    return {
+      type: 'header',
+      parameters: [
+        names.length > 0
+          ? { type: 'text', parameter_name: names[0], text: value }
+          : { type: 'text', text: value },
+      ],
     };
   }
 
@@ -56,16 +176,9 @@ function buildHeaderComponent(
       `${headerType} header requires a media link or id at send time — set header_media_url on the template or pass headerMediaUrl/headerMediaId.`,
     );
   }
-  const mediaPayload: { link?: string; id?: string } = id ? { id } : { link };
   return {
     type: 'header',
-    parameters: [
-      headerType === 'image'
-        ? { type: 'image', image: mediaPayload }
-        : headerType === 'video'
-          ? { type: 'video', video: mediaPayload }
-          : { type: 'document', document: mediaPayload },
-    ],
+    parameters: [buildMediaParameter(headerType, link, id)],
   };
 }
 
@@ -73,19 +186,13 @@ function buildBodyComponent(
   template: MessageTemplate,
   params: SendTimeParams,
 ): MetaSendComponent | null {
-  const varCount = extractVariableIndices(template.body_text).length;
-  const body = params.body ?? [];
-  if (varCount === 0 && body.length === 0) return null;
-  if (body.length < varCount) {
-    throw new Error(
-      `Body has ${varCount} variable(s) but only ${body.length} value(s) were supplied.`,
-    );
-  }
-  const values = body.slice(0, varCount);
-  return {
-    type: 'body',
-    parameters: values.map((text) => ({ type: 'text', text: String(text) })),
-  };
+  const parameters = buildTextParameters(
+    template.body_text,
+    params.body,
+    params.bodyNamed,
+    'Body',
+  );
+  return parameters ? { type: 'body', parameters } : null;
 }
 
 function buttonNeedsSendParam(
@@ -94,7 +201,10 @@ function buttonNeedsSendParam(
 ): boolean {
   switch (button.type) {
     case 'URL':
-      return extractVariableIndices(button.url).length > 0;
+      return (
+        extractVariableIndices(button.url).length > 0 ||
+        extractNamedVariables(button.url).length > 0
+      );
     case 'COPY_CODE':
       return true;
     case 'QUICK_REPLY':
@@ -107,14 +217,18 @@ function buildButtonComponent(
   button: TemplateButton,
   index: number,
   override: string | undefined,
+  where = 'URL button',
 ): MetaSendComponent | null {
   if (!buttonNeedsSendParam(button, override)) return null;
 
   switch (button.type) {
     case 'URL': {
       if (!override || !override.trim()) {
+        const token =
+          extractNamedVariables(button.url)[0] ??
+          extractVariableIndices(button.url)[0];
         throw new Error(
-          `URL button #${index + 1} uses {{1}} — requires a buttonParams[${index}] value.`,
+          `${where} #${index + 1} uses {{${token}}} — requires a buttonParams[${index}] value.`,
         );
       }
       return {
@@ -147,30 +261,89 @@ function buildButtonComponent(
 }
 
 /**
- * The template body with its `{{n}}` placeholders substituted — i.e. the
- * text WhatsApp actually renders on the recipient's device.
+ * One carousel card's send-time components. Meta requires the card's
+ * media on every send — same rule as a media header — so the card's
+ * stored sample URL is used when the caller supplies no override.
+ */
+function buildCardComponent(
+  card: TemplateCard,
+  cardIndex: number,
+  params: CardSendParams | undefined,
+): MetaSendCard {
+  const label = `Card #${cardIndex + 1}`;
+  const components: MetaSendComponent[] = [];
+
+  const link = params?.headerMediaUrl ?? card.header_media_url;
+  const id = params?.headerMediaId;
+  if (!link && !id) {
+    throw new Error(
+      `${label} requires a media link or id at send time — set header_media_url on the card or pass cards[${cardIndex}].headerMediaUrl.`,
+    );
+  }
+  components.push({
+    type: 'header',
+    parameters: [
+      buildMediaParameter(
+        card.header_format === 'video' ? 'video' : 'image',
+        link,
+        id,
+      ),
+    ],
+  });
+
+  const bodyParams = buildTextParameters(
+    card.body_text,
+    params?.body,
+    params?.bodyNamed,
+    `${label} body`,
+  );
+  if (bodyParams) components.push({ type: 'body', parameters: bodyParams });
+
+  (card.buttons ?? []).forEach((btn, i) => {
+    const component = buildButtonComponent(
+      btn,
+      i,
+      params?.buttonParams?.[i],
+      `${label} URL button`,
+    );
+    if (component) components.push(component);
+  });
+
+  return { card_index: cardIndex, components };
+}
+
+/**
+ * The template body with its placeholders substituted — i.e. the text
+ * WhatsApp actually renders on the recipient's device.
  *
  * Needed because Meta renders templates from its own approved copy: the
  * send response returns only a message id, so nothing carries the text
  * back for us to store. Callers persist this as the message's
  * `content_text`, otherwise the sent bubble renders empty in the inbox.
  *
- * Placeholders with no supplied value are left verbatim rather than
- * blanked, which keeps a partially-filled body readable. Values are
- * read from `params.body` — the same source `buildBodyComponent` sends
- * to Meta, so the stored text matches what was delivered.
+ * Handles both parameter schemes off the text alone — `{{1}}` reads the
+ * positional array, `{{name}}` reads the named map and falls back to the
+ * positional array by order of first appearance. Placeholders with no
+ * supplied value are left verbatim rather than blanked, which keeps a
+ * partially-filled body readable.
  */
 export function renderTemplateBody(
   bodyText: string,
   params: SendTimeParams = {},
 ): string {
   const values = params.body ?? [];
-  return bodyText.replace(/\{\{(\d+)\}\}/g, (placeholder, raw: string) => {
-    const value = values[Number(raw) - 1];
-    if (value === undefined || value === null) return placeholder;
-    const text = String(value);
-    return text.trim().length > 0 ? text : placeholder;
-  });
+  const order = extractNamedVariables(bodyText);
+  return bodyText.replace(
+    /\{\{\s*([^{}]+?)\s*\}\}/g,
+    (placeholder, raw: string) => {
+      const value = /^\d+$/.test(raw)
+        ? values[Number(raw) - 1]
+        : (params.bodyNamed?.[raw] ?? values[order.indexOf(raw)]);
+      if (value === undefined || value === null) return placeholder;
+      const text = String(value);
+      return text.trim().length > 0 ? text : placeholder;
+    },
+  );
 }
 
 export function buildSendComponents(
@@ -178,6 +351,23 @@ export function buildSendComponents(
   params: SendTimeParams = {},
 ): MetaSendComponent[] {
   const out: MetaSendComponent[] = [];
+  const cards = template.cards ?? [];
+
+  // A carousel is body + carousel only. Its cards carry the media and
+  // the buttons, and Meta rejects an outer header/button component on
+  // one — so the regular branch is skipped entirely rather than merged.
+  if (cards.length > 0) {
+    const body = buildBodyComponent(template, params);
+    if (body) out.push(body);
+    out.push({
+      type: 'carousel',
+      cards: cards.map((card, i) =>
+        buildCardComponent(card, i, params.cards?.[i]),
+      ),
+    });
+    return out;
+  }
+
   const header = buildHeaderComponent(template, params);
   if (header) out.push(header);
   const body = buildBodyComponent(template, params);

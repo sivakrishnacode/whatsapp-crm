@@ -15,7 +15,10 @@ import type { Response } from 'express';
 import { ApiKeyGuard } from '../../auth/guards/api-key.guard';
 import { RequireScope } from '../../auth/decorators/require-scope.decorator';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
-import type { AccountContext, ApiKeyAccountContext } from '../../auth/types/account-context.type';
+import type {
+  AccountContext,
+  ApiKeyAccountContext,
+} from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApiExceptionFilter } from '../utils/api-exception.filter';
 import { ok, okList, ApiError } from '../utils/respond.util';
@@ -59,12 +62,20 @@ export class WebhooksController {
     @Res({ passthrough: true }) res: Response,
   ) {
     if (!body || typeof body !== 'object') {
-      throw new ApiError('bad_request', 'Request body must be a JSON object', HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        'Request body must be a JSON object',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const url = normalizeWebhookUrl(body.url);
     if (!url) {
-      throw new ApiError('bad_request', "'url' must be a valid https:// URL", HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        "'url' must be a valid https:// URL",
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const events = normalizeEvents(body.events);
@@ -110,7 +121,11 @@ export class WebhooksController {
     });
 
     if (!row) {
-      throw new ApiError('not_found', 'Webhook not found', HttpStatus.NOT_FOUND);
+      throw new ApiError(
+        'not_found',
+        'Webhook not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     return ok(serializeWebhookEndpoint(row));
@@ -124,7 +139,11 @@ export class WebhooksController {
     @Body() body: any,
   ) {
     if (!body || typeof body !== 'object') {
-      throw new ApiError('bad_request', 'Request body must be a JSON object', HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        'Request body must be a JSON object',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     // Verify exists
@@ -135,7 +154,11 @@ export class WebhooksController {
       },
     });
     if (!existing) {
-      throw new ApiError('not_found', 'Webhook not found', HttpStatus.NOT_FOUND);
+      throw new ApiError(
+        'not_found',
+        'Webhook not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     const updates: Record<string, any> = {};
@@ -143,7 +166,11 @@ export class WebhooksController {
     if ('url' in body) {
       const url = normalizeWebhookUrl(body.url);
       if (!url) {
-        throw new ApiError('bad_request', "'url' must be a valid https:// URL", HttpStatus.BAD_REQUEST);
+        throw new ApiError(
+          'bad_request',
+          "'url' must be a valid https:// URL",
+          HttpStatus.BAD_REQUEST,
+        );
       }
       updates.url = url;
     }
@@ -162,7 +189,11 @@ export class WebhooksController {
 
     if ('is_active' in body) {
       if (typeof body.is_active !== 'boolean') {
-        throw new ApiError('bad_request', "'is_active' must be a boolean", HttpStatus.BAD_REQUEST);
+        throw new ApiError(
+          'bad_request',
+          "'is_active' must be a boolean",
+          HttpStatus.BAD_REQUEST,
+        );
       }
       updates.is_active = body.is_active;
       if (body.is_active === true) {
@@ -171,7 +202,11 @@ export class WebhooksController {
     }
 
     if (Object.keys(updates).length === 0) {
-      throw new ApiError('bad_request', 'No updatable fields provided', HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        'No updatable fields provided',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const updated = await this.prisma.webhook_endpoints.update({
@@ -196,7 +231,11 @@ export class WebhooksController {
       },
     });
     if (!existing) {
-      throw new ApiError('not_found', 'Webhook not found', HttpStatus.NOT_FOUND);
+      throw new ApiError(
+        'not_found',
+        'Webhook not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     await this.prisma.webhook_endpoints.delete({

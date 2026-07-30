@@ -44,4 +44,4 @@ import {
   ],
   exports: [FormsService, FormSubmitService, BookingService],
 })
-export class FormsModule { }
+export class FormsModule {}

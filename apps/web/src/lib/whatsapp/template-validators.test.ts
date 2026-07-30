@@ -57,7 +57,29 @@ describe('validateBody', () => {
     expect(() => validateBody('Hi {{1}} {{3}}')).toThrow(/contiguous/);
   });
   it('accepts contiguous variables', () => {
-    expect(validateBody('Hi {{1}} {{2}}')).toEqual([1, 2]);
+    expect(validateBody('Hi {{1}} and {{2}} today')).toEqual([1, 2]);
+  });
+
+  // Verified against the live Graph API: "Leading or trailing params not
+  // allowed / Variables can't be at the start or end of the template."
+  it('rejects a body that starts with a variable', () => {
+    expect(() => validateBody('{{1}}, your order is confirmed.')).toThrow(
+      /can't start with a variable/,
+    );
+  });
+  it('rejects a body that ends with a variable', () => {
+    expect(() => validateBody('Your order total is {{1}}')).toThrow(
+      /can't end with a variable/,
+    );
+  });
+  it('rejects a trailing variable even with punctuation after it', () => {
+    // Meta rejects this too — the period does not count as text.
+    expect(() => validateBody('Your order total is {{1}}.')).toThrow(
+      /can't end with a variable/,
+    );
+  });
+  it('accepts a variable surrounded by real words', () => {
+    expect(() => validateBody('Order {{1}} is confirmed')).not.toThrow();
   });
 });
 
@@ -255,6 +277,9 @@ describe('validateTemplatePayload — integration', () => {
     expect(validateTemplatePayload(baseValid)).toEqual({
       bodyVarCount: 0,
       headerVarCount: 0,
+      parameterFormat: 'POSITIONAL',
+      bodyVariableNames: [],
+      headerVariableNames: [],
     });
   });
   it('passes with body variables + matching samples', () => {
@@ -264,13 +289,21 @@ describe('validateTemplatePayload — integration', () => {
         body_text: 'Hi {{1}}, order {{2}} confirmed.',
         sample_values: { body: ['John', 'ORD-42'] },
       }),
-    ).toEqual({ bodyVarCount: 2, headerVarCount: 0 });
+    ).toEqual({
+      bodyVarCount: 2,
+      headerVarCount: 0,
+      parameterFormat: 'POSITIONAL',
+      // Positional placeholders come back as their own tokens, which is
+      // what the NAMED path returns names in.
+      bodyVariableNames: ['1', '2'],
+      headerVariableNames: [],
+    });
   });
   it('throws on missing samples for body variables', () => {
     expect(() =>
       validateTemplatePayload({
         ...baseValid,
-        body_text: 'Hi {{1}}',
+        body_text: 'Hi {{1}}, welcome aboard',
       }),
     ).toThrow(/exactly 1 sample/);
   });

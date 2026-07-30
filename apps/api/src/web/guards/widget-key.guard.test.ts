@@ -6,10 +6,12 @@ import { WidgetKeyGuard } from './widget-key.guard';
 const KEY = `wk_${'a'.repeat(40)}`;
 const ALLOWED = ['https://example.com'];
 
-function guardWith(config: {
-  status?: string;
-  allowedOrigins?: string[];
-} | null) {
+function guardWith(
+  config: {
+    status?: string;
+    allowedOrigins?: string[];
+  } | null,
+) {
   const service = {
     findByWidgetKey: vi.fn(() =>
       Promise.resolve(

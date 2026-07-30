@@ -37,7 +37,9 @@ describe('SubscriptionService', () => {
 
     it('propagates RPC errors (caller decides how to degrade)', async () => {
       prisma.$queryRawUnsafe.mockRejectedValueOnce(new Error('db down'));
-      await expect(service.getUserSubscription('user-1')).rejects.toThrow('db down');
+      await expect(service.getUserSubscription('user-1')).rejects.toThrow(
+        'db down',
+      );
     });
   });
 
@@ -56,7 +58,9 @@ describe('SubscriptionService', () => {
         reason: '',
       });
       expect(prisma.$queryRawUnsafe).toHaveBeenCalledWith(
-        expect.stringContaining('check_subscription_limit($1::uuid, $2, $3::integer)'),
+        expect.stringContaining(
+          'check_subscription_limit($1::uuid, $2, $3::integer)',
+        ),
         'user-1',
         'contacts',
         1,
@@ -67,7 +71,11 @@ describe('SubscriptionService', () => {
       prisma.$queryRawUnsafe.mockResolvedValueOnce([
         { allowed: true, currentUsage: 5, limitValue: null, reason: '' },
       ]);
-      const result = await service.checkSubscriptionLimit('user-1', 'messages', 3);
+      const result = await service.checkSubscriptionLimit(
+        'user-1',
+        'messages',
+        3,
+      );
       expect(result.limitValue).toBeNull();
       expect(prisma.$queryRawUnsafe).toHaveBeenCalledWith(
         expect.any(String),
@@ -105,7 +113,9 @@ describe('SubscriptionService', () => {
   describe('incrementUsage / decrementUsage', () => {
     it('returns the RPC success flag', async () => {
       prisma.$queryRawUnsafe.mockResolvedValueOnce([{ success: true }]);
-      await expect(service.incrementUsage('user-1', 'messages')).resolves.toBe(true);
+      await expect(service.incrementUsage('user-1', 'messages')).resolves.toBe(
+        true,
+      );
       expect(prisma.$queryRawUnsafe).toHaveBeenCalledWith(
         expect.stringContaining('increment_usage($1::uuid, $2, $3::integer)'),
         'user-1',
@@ -114,15 +124,21 @@ describe('SubscriptionService', () => {
       );
 
       prisma.$queryRawUnsafe.mockResolvedValueOnce([{ success: false }]);
-      await expect(service.decrementUsage('user-1', 'messages', 2)).resolves.toBe(false);
+      await expect(
+        service.decrementUsage('user-1', 'messages', 2),
+      ).resolves.toBe(false);
     });
 
     it('returns false instead of throwing when the RPC errors', async () => {
       prisma.$queryRawUnsafe.mockRejectedValueOnce(new Error('boom'));
-      await expect(service.incrementUsage('user-1', 'contacts')).resolves.toBe(false);
+      await expect(service.incrementUsage('user-1', 'contacts')).resolves.toBe(
+        false,
+      );
 
       prisma.$queryRawUnsafe.mockRejectedValueOnce(new Error('boom'));
-      await expect(service.decrementUsage('user-1', 'contacts')).resolves.toBe(false);
+      await expect(service.decrementUsage('user-1', 'contacts')).resolves.toBe(
+        false,
+      );
     });
   });
 });

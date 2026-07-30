@@ -47,7 +47,9 @@ export async function embedTexts(
       throw await providerHttpError('OpenAI embeddings', res);
     }
 
-    const data = (await res.json().catch(() => null)) as EmbeddingResponse | null;
+    const data = (await res
+      .json()
+      .catch(() => null)) as EmbeddingResponse | null;
     const rows = data?.data;
     if (!rows || rows.length !== batch.length) {
       throw new AiError('Embeddings response was malformed.', {

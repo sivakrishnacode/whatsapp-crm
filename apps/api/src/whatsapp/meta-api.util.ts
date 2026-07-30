@@ -29,7 +29,44 @@ export interface MetaSendResult {
 }
 
 interface MetaErrorResponse {
-  error?: { message?: string; code?: number; type?: string };
+  error?: {
+    message?: string;
+    code?: number;
+    type?: string;
+    error_subcode?: number;
+    /** Short human-readable cause, e.g. "Leading or trailing params not allowed". */
+    error_user_title?: string;
+    /** The actionable sentence, e.g. "Variables can't be at the start or end…". */
+    error_user_msg?: string;
+    error_data?: { details?: string };
+  };
+}
+
+/**
+ * Meta's `error.message` is frequently a useless generic — "Invalid
+ * parameter", "Parameter value is not valid" — while the real cause sits
+ * in `error_user_title` / `error_user_msg`. Template rejections are the
+ * worst case: every distinct content rule surfaces as "Invalid
+ * parameter", so without these fields a user has no way to learn what
+ * broke.
+ *
+ * Composed title-first because the title names the rule and the message
+ * says what to do about it.
+ */
+export function formatMetaError(
+  error: NonNullable<MetaErrorResponse['error']> | undefined,
+  fallback: string,
+): string {
+  if (!error) return fallback;
+  const specific = [error.error_user_title, error.error_user_msg]
+    .filter((p): p is string => Boolean(p?.trim()))
+    // Meta sometimes repeats the title verbatim inside the message.
+    .filter((p, i, all) => all.indexOf(p) === i);
+  const detail = error.error_data?.details?.trim();
+  if (detail && !specific.includes(detail)) specific.push(detail);
+
+  if (specific.length > 0) return specific.join(' — ');
+  return error.message?.trim() || fallback;
 }
 
 interface MetaSendResponse {
@@ -43,7 +80,7 @@ async function throwMetaError(
   let message = fallback;
   try {
     const data = (await response.json()) as MetaErrorResponse;
-    if (data.error?.message) message = data.error.message;
+    message = formatMetaError(data.error, fallback);
   } catch {
     // response body wasn't JSON — keep the fallback
   }
@@ -157,12 +194,12 @@ export async function sendTemplateMessage(
   };
 
   if (template) {
+    // Spread rather than copying field-by-field: every send-time
+    // parameter Meta gains (location pins, carousel cards, named body
+    // values) then reaches the builder without another edit here.
     const components = buildSendComponents(template, {
+      ...messageParams,
       body: messageParams?.body ?? params,
-      headerText: messageParams?.headerText,
-      headerMediaUrl: messageParams?.headerMediaUrl,
-      headerMediaId: messageParams?.headerMediaId,
-      buttonParams: messageParams?.buttonParams,
     });
     if (components.length > 0) {
       templatePayload.components = components;

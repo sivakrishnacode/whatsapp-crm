@@ -46,9 +46,12 @@ function makeMocks() {
     },
   };
   const rateLimit = {
-    check: vi
-      .fn()
-      .mockResolvedValue({ success: true, limit: 120, remaining: 119, reset: Date.now() + 60_000 }),
+    check: vi.fn().mockResolvedValue({
+      success: true,
+      limit: 120,
+      remaining: 119,
+      reset: Date.now() + 60_000,
+    }),
   };
   return { prisma, rateLimit };
 }
@@ -89,13 +92,21 @@ describe('ApiKeyGuard', () => {
 
   it('401 unauthorized when no Authorization header is present', async () => {
     const { context, reflector } = makeContext(undefined);
-    await expectApiError(guardFor(reflector).canActivate(context), 401, 'unauthorized');
+    await expectApiError(
+      guardFor(reflector).canActivate(context),
+      401,
+      'unauthorized',
+    );
     expect(prisma.apiKey.findUnique).not.toHaveBeenCalled();
   });
 
   it('401 when the bearer value does not look like an API key', async () => {
     const { context, reflector } = makeContext('Bearer not-a-converse360-key');
-    await expectApiError(guardFor(reflector).canActivate(context), 401, 'unauthorized');
+    await expectApiError(
+      guardFor(reflector).canActivate(context),
+      401,
+      'unauthorized',
+    );
     expect(prisma.apiKey.findUnique).not.toHaveBeenCalled();
   });
 
@@ -106,7 +117,10 @@ describe('ApiKeyGuard', () => {
     prisma.apiKey.findUnique.mockResolvedValueOnce(null);
     await expectApiError(guard.canActivate(context), 401, 'unauthorized');
 
-    prisma.apiKey.findUnique.mockResolvedValueOnce({ ...KEY_ROW, revokedAt: new Date() });
+    prisma.apiKey.findUnique.mockResolvedValueOnce({
+      ...KEY_ROW,
+      revokedAt: new Date(),
+    });
     await expectApiError(guard.canActivate(context), 401, 'unauthorized');
 
     prisma.apiKey.findUnique.mockResolvedValueOnce({
@@ -126,7 +140,12 @@ describe('ApiKeyGuard', () => {
 
   it('429 rate_limited with Retry-After/X-RateLimit-* headers when the budget is exhausted', async () => {
     const reset = Date.now() + 45_000;
-    rateLimit.check.mockResolvedValueOnce({ success: false, limit: 120, remaining: 0, reset });
+    rateLimit.check.mockResolvedValueOnce({
+      success: false,
+      limit: 120,
+      remaining: 0,
+      reset,
+    });
     const { context, reflector } = makeContext(`Bearer ${VALID_KEY}`);
 
     const err = await expectApiError(
@@ -134,16 +153,28 @@ describe('ApiKeyGuard', () => {
       429,
       'rate_limited',
     );
-    expect(err!.headers!['X-RateLimit-Limit']).toBe('120');
-    expect(err!.headers!['X-RateLimit-Remaining']).toBe('0');
-    expect(Number(err!.headers!['Retry-After'])).toBeGreaterThanOrEqual(1);
+    expect(err.headers!['X-RateLimit-Limit']).toBe('120');
+    expect(err.headers!['X-RateLimit-Remaining']).toBe('0');
+    expect(Number(err.headers!['Retry-After'])).toBeGreaterThanOrEqual(1);
   });
 
   it('rate-limits before the scope check (no free hammering with a bad scope)', async () => {
-    rateLimit.check.mockResolvedValueOnce({ success: false, limit: 120, remaining: 0, reset: Date.now() + 1000 });
-    const { context, reflector } = makeContext(`Bearer ${VALID_KEY}`, 'messages:send');
+    rateLimit.check.mockResolvedValueOnce({
+      success: false,
+      limit: 120,
+      remaining: 0,
+      reset: Date.now() + 1000,
+    });
+    const { context, reflector } = makeContext(
+      `Bearer ${VALID_KEY}`,
+      'messages:send',
+    );
 
-    await expectApiError(guardFor(reflector).canActivate(context), 429, 'rate_limited');
+    await expectApiError(
+      guardFor(reflector).canActivate(context),
+      429,
+      'rate_limited',
+    );
     expect(rateLimit.check).toHaveBeenCalledWith('apikey:key-1', {
       limit: 120,
       windowMs: 60_000,
@@ -151,17 +182,23 @@ describe('ApiKeyGuard', () => {
   });
 
   it('403 forbidden naming the missing scope', async () => {
-    const { context, reflector } = makeContext(`Bearer ${VALID_KEY}`, 'messages:send');
+    const { context, reflector } = makeContext(
+      `Bearer ${VALID_KEY}`,
+      'messages:send',
+    );
     const err = await expectApiError(
       guardFor(reflector).canActivate(context),
       403,
       'forbidden',
     );
-    expect((err!.getResponse() as any).error.message).toContain('messages:send');
+    expect((err.getResponse() as any).error.message).toContain('messages:send');
   });
 
   it('passes with the right scope, attaches accountContext, and bumps last_used_at', async () => {
-    const { context, reflector, request } = makeContext(`Bearer ${VALID_KEY}`, 'contacts:read');
+    const { context, reflector, request } = makeContext(
+      `Bearer ${VALID_KEY}`,
+      'contacts:read',
+    );
 
     await expect(guardFor(reflector).canActivate(context)).resolves.toBe(true);
     expect(request.accountContext).toEqual({
@@ -178,7 +215,10 @@ describe('ApiKeyGuard', () => {
   });
 
   it('passes without a scope requirement on unscoped routes (e.g. /v1/me)', async () => {
-    const { context, reflector } = makeContext(`Bearer ${VALID_KEY}`, undefined);
+    const { context, reflector } = makeContext(
+      `Bearer ${VALID_KEY}`,
+      undefined,
+    );
     await expect(guardFor(reflector).canActivate(context)).resolves.toBe(true);
   });
 

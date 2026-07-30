@@ -121,12 +121,17 @@ export class WidgetKeyGuard implements CanActivate {
      */
     const isSameOrigin = fetchSite === 'same-origin';
     const crossSiteWithoutOrigin =
-      !rawOrigin && typeof fetchSite === 'string' && fetchSite !== 'same-origin';
+      !rawOrigin &&
+      typeof fetchSite === 'string' &&
+      fetchSite !== 'same-origin';
 
     if (!isSameOrigin) {
       // A browser that told us this is cross-site but sent no Origin is not a
       // shape `fetch()` produces — refuse rather than fall through.
-      if (crossSiteWithoutOrigin || (rawOrigin && !isOriginAllowed(rawOrigin, config.allowedOrigins))) {
+      if (
+        crossSiteWithoutOrigin ||
+        (rawOrigin && !isOriginAllowed(rawOrigin, config.allowedOrigins))
+      ) {
         this.logger.warn(
           `widget ${widgetKey.slice(0, 10)}… refused for origin ${String(rawOrigin)} (sec-fetch-site=${String(fetchSite)})`,
         );

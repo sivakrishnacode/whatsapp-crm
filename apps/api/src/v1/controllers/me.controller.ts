@@ -1,7 +1,10 @@
 import { Controller, Get, UseGuards, UseFilters } from '@nestjs/common';
 import { ApiKeyGuard } from '../../auth/guards/api-key.guard';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
-import type { AccountContext, ApiKeyAccountContext } from '../../auth/types/account-context.type';
+import type {
+  AccountContext,
+  ApiKeyAccountContext,
+} from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApiExceptionFilter } from '../utils/api-exception.filter';
 import { ok } from '../utils/respond.util';

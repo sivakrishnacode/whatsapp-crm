@@ -1,7 +1,11 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApiError } from './respond.util';
 import { sanitizePhoneForMeta, isValidE164 } from './phone.util';
-import { resolveAuditUserId, findExistingContact, isUniqueViolation } from './contacts.util';
+import {
+  resolveAuditUserId,
+  findExistingContact,
+  isUniqueViolation,
+} from './contacts.util';
 import { HttpStatus } from '@nestjs/common';
 
 export interface ResolvedConversation {
@@ -42,7 +46,11 @@ export async function resolveConversationByPhone(
   try {
     ownerUserId = await resolveAuditUserId(prisma, accountId);
   } catch (err: any) {
-    throw new ApiError('db_error', err.message || 'Failed to resolve account owner', HttpStatus.INTERNAL_SERVER_ERROR);
+    throw new ApiError(
+      'db_error',
+      err.message || 'Failed to resolve account owner',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
   }
 
   let contactId: string;
@@ -96,7 +104,11 @@ export async function resolveConversationByPhone(
           '[resolve-conversation] contact create error:',
           createErr,
         );
-        throw new ApiError('db_error', 'Failed to create contact', HttpStatus.INTERNAL_SERVER_ERROR);
+        throw new ApiError(
+          'db_error',
+          'Failed to create contact',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
       }
     }
   }

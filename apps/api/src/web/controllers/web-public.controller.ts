@@ -13,7 +13,10 @@ import {
 import type { Request } from 'express';
 
 import { RateLimitService } from '../../common/rate-limit/rate-limit.service';
-import { WidgetKeyGuard, type RequestWithWidget } from '../guards/widget-key.guard';
+import {
+  WidgetKeyGuard,
+  type RequestWithWidget,
+} from '../guards/widget-key.guard';
 import {
   VisitorSessionGuard,
   type RequestWithVisitor,
@@ -24,10 +27,7 @@ import { WebInboundService } from '../services/web-inbound.service';
 import { WebMediaService } from '../services/web-media.service';
 import { WebStreamService } from '../services/web-stream.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  isOpenAt,
-  parseBusinessHours,
-} from '../utils/business-hours.util';
+import { isOpenAt, parseBusinessHours } from '../utils/business-hours.util';
 import { StartSessionDto } from '../dto/start-session.dto';
 import { SendWebMessageDto } from '../dto/send-web-message.dto';
 import { UploadWebMediaDto } from '../dto/upload-web-media.dto';
@@ -294,7 +294,9 @@ export class WebPublicController {
     const hasText = Boolean(body.text?.trim());
     const hasMedia = Boolean(body.media_url);
     if (!hasText && !hasMedia && !body.reply_id) {
-      throw new BadRequestException('A message needs text, a file or a choice.');
+      throw new BadRequestException(
+        'A message needs text, a file or a choice.',
+      );
     }
 
     const result = await this.inbound.handle({

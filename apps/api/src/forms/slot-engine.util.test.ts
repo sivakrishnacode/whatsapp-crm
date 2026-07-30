@@ -130,7 +130,13 @@ describe('wallClockToInstant', () => {
 
   it('handles a zone with a half-hour offset', () => {
     expect(
-      wallClockToInstant(2026, 7, 29, 14 * 60 + 30, 'Asia/Kolkata').toISOString(),
+      wallClockToInstant(
+        2026,
+        7,
+        29,
+        14 * 60 + 30,
+        'Asia/Kolkata',
+      ).toISOString(),
     ).toBe('2026-07-29T09:00:00.000Z');
   });
 
@@ -138,13 +144,7 @@ describe('wallClockToInstant', () => {
     // 2026-10-25 is the UK's fall-back day: 02:00 BST → 01:00 GMT, so 01:30
     // occurs twice. Whichever is returned, it must be a real instant that
     // reads back as 01:30 local — never NaN and never off by a day.
-    const instant = wallClockToInstant(
-      2026,
-      10,
-      25,
-      60 + 30,
-      'Europe/London',
-    );
+    const instant = wallClockToInstant(2026, 10, 25, 60 + 30, 'Europe/London');
     expect(Number.isNaN(instant.getTime())).toBe(false);
     const back = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Europe/London',
@@ -359,7 +359,7 @@ describe('computeSlots — minimum notice', () => {
       // 09:00 local; 2h notice puts the first bookable slot at 11:00, which
       // is past the window's end.
       now: new Date('2026-07-29T09:00:00Z'),
-    booked: [],
+      booked: [],
     });
     expect(days).toEqual([]);
   });

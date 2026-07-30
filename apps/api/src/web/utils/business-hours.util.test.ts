@@ -99,10 +99,7 @@ describe('localParts', () => {
     // Some ICU versions render midnight as '24' under hour12: false.
     // Unnormalised, that lands outside every window and the business
     // looks closed for an hour a day.
-    const { minutes } = localParts(
-      new Date('2026-07-29T00:00:00Z'),
-      'UTC',
-    );
+    const { minutes } = localParts(new Date('2026-07-29T00:00:00Z'), 'UTC');
     expect(minutes).toBe(0);
   });
 
@@ -126,18 +123,18 @@ describe('isOpenAt', () => {
 
   it('opens and closes on the boundary the way a human expects', () => {
     // 09:00 IST = 03:30 UTC, 17:00 IST = 11:30 UTC, on a Wednesday.
-    expect(
-      isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T03:30:00Z')),
-    ).toBe(true); // exactly 09:00 — open
-    expect(
-      isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T03:29:00Z')),
-    ).toBe(false); // 08:59
-    expect(
-      isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T11:29:00Z')),
-    ).toBe(true); // 16:59
-    expect(
-      isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T11:30:00Z')),
-    ).toBe(false); // exactly 17:00 — closed
+    expect(isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T03:30:00Z'))).toBe(
+      true,
+    ); // exactly 09:00 — open
+    expect(isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T03:29:00Z'))).toBe(
+      false,
+    ); // 08:59
+    expect(isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T11:29:00Z'))).toBe(
+      true,
+    ); // 16:59
+    expect(isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T11:30:00Z'))).toBe(
+      false,
+    ); // exactly 17:00 — closed
   });
 
   it('evaluates in the business timezone, not UTC', () => {
@@ -145,16 +142,16 @@ describe('isOpenAt', () => {
     // Read as UTC it would be Tuesday 23:00, also closed, so use a time
     // where the two answers differ: 04:00 UTC Wednesday is 09:30 IST
     // (open) but 04:00 UTC alone is outside 09:00–17:00.
-    expect(
-      isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T04:00:00Z')),
-    ).toBe(true);
+    expect(isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-07-29T04:00:00Z'))).toBe(
+      true,
+    );
   });
 
   it('is closed on a day with no windows', () => {
     // 2026-08-01 is a Saturday.
-    expect(
-      isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-08-01T06:00:00Z')),
-    ).toBe(false);
+    expect(isOpenAt(KOLKATA_WEEKDAYS, new Date('2026-08-01T06:00:00Z'))).toBe(
+      false,
+    );
   });
 
   it('honours a lunch break', () => {

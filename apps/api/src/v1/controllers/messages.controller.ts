@@ -37,12 +37,20 @@ export class MessagesController {
     @Res({ passthrough: true }) res: Response,
   ) {
     if (!body || typeof body !== 'object') {
-      throw new ApiError('bad_request', 'Request body must be a JSON object', HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        'Request body must be a JSON object',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const to = typeof body.to === 'string' ? body.to.trim() : '';
     if (!to) {
-      throw new ApiError('bad_request', "'to' is required", HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        "'to' is required",
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const type = typeof body.type === 'string' ? body.type : 'text';

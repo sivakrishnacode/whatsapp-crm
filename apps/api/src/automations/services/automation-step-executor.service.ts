@@ -286,7 +286,8 @@ export class AutomationStepExecutorService {
           appointment_type_id?: string;
           message_text?: string;
         };
-        if (!args.contactId) throw new Error(`${step.stepType} needs a contact`);
+        if (!args.contactId)
+          throw new Error(`${step.stepType} needs a contact`);
 
         const targetId =
           step.stepType === 'send_form' ? cfg.form_id : cfg.appointment_type_id;
@@ -563,7 +564,8 @@ export class AutomationStepExecutorService {
     targetId: string,
   ): Promise<string | null> {
     const base =
-      process.env.PUBLIC_APP_URL?.replace(/\/+$/, '') ?? 'http://localhost:3000';
+      process.env.PUBLIC_APP_URL?.replace(/\/+$/, '') ??
+      'http://localhost:3000';
 
     if (stepType === 'send_form') {
       const form = await this.prisma.forms.findFirst({
@@ -577,13 +579,12 @@ export class AutomationStepExecutorService {
     // Until that schema is applied, the model does not exist on PrismaClient.
     // The `as any` cast is intentional and will be removed once the Prisma
     // client is regenerated after running 055.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const type = await (this.prisma as any).appointment_types?.findFirst({
       where: { id: targetId, account_id: accountId, is_active: true },
       select: { slug: true },
     });
     return type ? `${base}/book/${type.slug}` : null;
-
   }
 
   private async resolveConversationId(

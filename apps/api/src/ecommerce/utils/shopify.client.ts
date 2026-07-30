@@ -42,7 +42,12 @@ export class ShopifyClient {
   private apiPassword: string;
   private accessToken: string;
 
-  constructor(storeUrl: string, apiKey: string, apiPassword: string, accessToken?: string) {
+  constructor(
+    storeUrl: string,
+    apiKey: string,
+    apiPassword: string,
+    accessToken?: string,
+  ) {
     if (!storeUrl.startsWith('http://') && !storeUrl.startsWith('https://')) {
       storeUrl = `https://${storeUrl}`;
     }
@@ -59,7 +64,10 @@ export class ShopifyClient {
     return Buffer.from(`${this.apiKey}:${this.apiPassword}`).toString('base64');
   }
 
-  private async request(query: string, variables?: Record<string, any>): Promise<any> {
+  private async request(
+    query: string,
+    variables?: Record<string, any>,
+  ): Promise<any> {
     const url = `${this.storeUrl}/admin/api/2024-01/graphql.json`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -70,7 +78,10 @@ export class ShopifyClient {
       console.log('[Shopify] Using OAuth token');
     } else {
       headers['Authorization'] = `Basic ${this.authHeader}`;
-      console.log('[Shopify] Using Basic auth with key:', this.apiKey ? '***' : 'missing');
+      console.log(
+        '[Shopify] Using Basic auth with key:',
+        this.apiKey ? '***' : 'missing',
+      );
     }
 
     console.log('[Shopify] GraphQL Query:', query.substring(0, 100) + '...');
@@ -81,8 +92,14 @@ export class ShopifyClient {
     });
 
     if (!response.ok) {
-      console.error('[Shopify] Request failed:', response.status, response.statusText);
-      throw new Error(`Shopify API error: ${response.status} ${response.statusText}`);
+      console.error(
+        '[Shopify] Request failed:',
+        response.status,
+        response.statusText,
+      );
+      throw new Error(
+        `Shopify API error: ${response.status} ${response.statusText}`,
+      );
     }
 
     const data = await response.json();
@@ -151,11 +168,19 @@ export class ShopifyClient {
     `;
 
     const statusQuery = status === 'any' ? '' : `status:${status}`;
-    const data = await this.request(query, { first: limit, query: statusQuery });
+    const data = await this.request(query, {
+      first: limit,
+      query: statusQuery,
+    });
     return data?.orders?.nodes || [];
   }
 
-  async getCustomer(customerId: string): Promise<{ email?: string; phone?: string; firstName?: string; lastName?: string } | null> {
+  async getCustomer(customerId: string): Promise<{
+    email?: string;
+    phone?: string;
+    firstName?: string;
+    lastName?: string;
+  } | null> {
     const query = `
       query getCustomer($id: ID!) {
         customer(id: $id) {

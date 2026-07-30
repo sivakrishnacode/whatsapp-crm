@@ -93,7 +93,12 @@ describe('WhatsappShopController', () => {
 
     it('rejects an invalid status with the legacy 400 message', async () => {
       const res = makeRes();
-      await controller.updateOrder(account, 'order-1', { status: 'shipped' }, res);
+      await controller.updateOrder(
+        account,
+        'order-1',
+        { status: 'shipped' },
+        res,
+      );
 
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({ error: 'Invalid order status' });
@@ -104,7 +109,12 @@ describe('WhatsappShopController', () => {
       prisma.whatsapp_orders.updateMany.mockResolvedValueOnce({ count: 0 });
       const res = makeRes();
 
-      await controller.updateOrder(account, 'order-x', { status: 'confirmed' }, res);
+      await controller.updateOrder(
+        account,
+        'order-x',
+        { status: 'confirmed' },
+        res,
+      );
 
       expect(prisma.whatsapp_orders.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -121,7 +131,12 @@ describe('WhatsappShopController', () => {
       });
       const res = makeRes();
 
-      await controller.updateOrder(account, 'order-1', { status: 'confirmed' }, res);
+      await controller.updateOrder(
+        account,
+        'order-1',
+        { status: 'confirmed' },
+        res,
+      );
 
       expect(res.status).toHaveBeenCalledWith(200);
       const body = res.json.mock.calls[0][0] as { order: any };
@@ -205,7 +220,12 @@ describe('WhatsappShopController', () => {
       });
       const res = makeRes();
 
-      await controller.updateProduct(account, 'prod-1', { name: 'Renamed' }, res);
+      await controller.updateProduct(
+        account,
+        'prod-1',
+        { name: 'Renamed' },
+        res,
+      );
 
       const { data } = prisma.whatsapp_products.updateMany.mock.calls[0][0] as {
         data: Record<string, unknown>;
@@ -228,7 +248,9 @@ describe('WhatsappShopController', () => {
     });
 
     it('deletes an owned product and returns {success: true}', async () => {
-      prisma.whatsapp_products.findFirst.mockResolvedValueOnce({ retailer_id: 'SKU-1' });
+      prisma.whatsapp_products.findFirst.mockResolvedValueOnce({
+        retailer_id: 'SKU-1',
+      });
       const res = makeRes();
 
       await controller.deleteProduct(account, 'prod-1', res);

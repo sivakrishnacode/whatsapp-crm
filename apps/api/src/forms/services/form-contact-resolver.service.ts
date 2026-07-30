@@ -87,10 +87,7 @@ export class FormContactResolverService {
       // The submission names an established contact. If the submitter was
       // an anonymous widget visitor, fold their stub in; otherwise just
       // enrich and attach.
-      if (
-        input.existingContactId &&
-        input.existingContactId !== match.id
-      ) {
+      if (input.existingContactId && input.existingContactId !== match.id) {
         const merged = await this.mergeWebStubInto(
           input.accountId,
           input.existingContactId,
@@ -212,7 +209,12 @@ export class FormContactResolverService {
   private async enrich(
     accountId: string,
     contactId: string,
-    identity: { name?: string; email?: string; phone?: string; company?: string },
+    identity: {
+      name?: string;
+      email?: string;
+      phone?: string;
+      company?: string;
+    },
   ): Promise<void> {
     const current = await this.prisma.contacts.findFirst({
       where: { id: contactId, account_id: accountId },

@@ -1,6 +1,11 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
-import { normalizePhone, phonesMatch, isValidE164, sanitizePhoneForMeta } from './phone.util';
+import {
+  normalizePhone,
+  phonesMatch,
+  isValidE164,
+  sanitizePhoneForMeta,
+} from './phone.util';
 
 export interface ApiContact {
   id: string;
@@ -213,7 +218,7 @@ export async function setContactTags(
           },
           select: { id: true, name: true },
         });
-      })
+      }),
     );
     for (const tag of created) {
       tagIdByKey.set(tag.name.trim().toLowerCase(), tag.id);

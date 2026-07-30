@@ -103,9 +103,16 @@ export class ConnectAccountService {
       try {
         phoneInfo = await verifyPhoneNumber({ phoneNumberId, accessToken });
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown Meta API error';
-        this.logger.error(`Meta API verification failed during save: ${message}`);
-        return { ok: false, status: HttpStatus.BAD_REQUEST, error: `Meta API error: ${message}` };
+        const message =
+          err instanceof Error ? err.message : 'Unknown Meta API error';
+        this.logger.error(
+          `Meta API verification failed during save: ${message}`,
+        );
+        return {
+          ok: false,
+          status: HttpStatus.BAD_REQUEST,
+          error: `Meta API error: ${message}`,
+        };
       }
 
       // Encrypt sensitive tokens before storing.
@@ -115,7 +122,8 @@ export class ConnectAccountService {
         encryptedAccessToken = encrypt(accessToken);
         encryptedVerifyToken = verifyToken ? encrypt(verifyToken) : null;
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown encryption error';
+        const message =
+          err instanceof Error ? err.message : 'Unknown encryption error';
         this.logger.error(`Encryption failed: ${message}`);
         return {
           ok: false,
@@ -137,7 +145,8 @@ export class ConnectAccountService {
       });
 
       const sameNumber =
-        existing?.phone_number_id === phoneNumberId && existing?.registered_at != null;
+        existing?.phone_number_id === phoneNumberId &&
+        existing?.registered_at != null;
 
       // Step 1: register the phone number for inbound webhooks.
       let registeredAt: Date | null = existing?.registered_at ?? null;
@@ -149,7 +158,8 @@ export class ConnectAccountService {
         // Business App already owns.
         registrationSkipped = true;
       } else {
-        const needsRegistration = !sameNumber || (typeof pin === 'string' && pin.length > 0);
+        const needsRegistration =
+          !sameNumber || (typeof pin === 'string' && pin.length > 0);
         if (needsRegistration) {
           if (!pin) {
             registrationSkipped = true;
@@ -158,8 +168,11 @@ export class ConnectAccountService {
               await registerPhoneNumber({ phoneNumberId, accessToken, pin });
               registeredAt = new Date();
             } catch (err) {
-              registrationError = err instanceof Error ? err.message : 'Unknown Meta API error';
-              this.logger.error(`Phone number /register failed: ${registrationError}`);
+              registrationError =
+                err instanceof Error ? err.message : 'Unknown Meta API error';
+              this.logger.error(
+                `Phone number /register failed: ${registrationError}`,
+              );
             }
           }
         }
@@ -173,7 +186,9 @@ export class ConnectAccountService {
           subscribedAppsAt = new Date();
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          this.logger.warn(`WABA subscribed_apps failed (non-fatal): ${message}`);
+          this.logger.warn(
+            `WABA subscribed_apps failed (non-fatal): ${message}`,
+          );
         }
       }
 
@@ -224,7 +239,8 @@ export class ConnectAccountService {
       return {
         ok: false,
         status: HttpStatus.INTERNAL_SERVER_ERROR,
-        error: err instanceof Error ? err.message : 'Failed to save configuration',
+        error:
+          err instanceof Error ? err.message : 'Failed to save configuration',
       };
     }
   }

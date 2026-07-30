@@ -23,16 +23,21 @@ import {
 } from '../meta-api.util';
 import { decrypt } from '../../common/security/encryption.util';
 import {
+  resolveParameterFormat,
   validateTemplatePayload,
   type TemplatePayload,
 } from '../../v1/utils/template-validators.util';
 import { buildMetaTemplatePayload } from '../../v1/utils/template-components.util';
+import { resolveTemplateMediaHandles } from '../template-media-handle.util';
 import {
   normalizeCategory,
   normalizeQualityScore,
   parseTemplateButtons,
   extractTemplateSampleValues,
   normalizeTemplateStatus,
+  normalizeParameterFormat,
+  parseCarouselCards,
+  parseHeaderType,
   type MetaTemplateComponent,
 } from '../../v1/utils/template-sync.util';
 
@@ -48,6 +53,7 @@ interface MetaTemplate {
   category: string;
   components?: MetaTemplateComponent[];
   quality_score?: { score?: string } | string;
+  parameter_format?: string;
 }
 
 interface MetaPageBody {
@@ -79,6 +85,36 @@ function toJsonValue(
   v: Prisma.InputJsonValue | null | undefined,
 ): Prisma.NullableJsonNullValueInput | Prisma.InputJsonValue {
   return v === null || v === undefined ? Prisma.DbNull : v;
+}
+
+/**
+ * The editable half of a template row — everything the submit payload
+ * can set. Shared by both branches of the submit upsert and by the edit
+ * route so the local row always reflects what was last sent to Meta;
+ * writing it on `create` only would leave a resubmitted template
+ * showing its previous revision.
+ *
+ * `name` and `language` are deliberately absent: they form the unique
+ * key and Meta treats them as immutable once a template exists.
+ */
+function templateContentFields(body: TemplatePayload) {
+  return {
+    category: body.category,
+    header_type: body.header_type ?? null,
+    header_content: body.header_content ?? null,
+    header_media_url: body.header_media_url ?? null,
+    header_handle: body.header_handle ?? null,
+    body_text: body.body_text,
+    footer_text: body.footer_text ?? null,
+    buttons: toJsonValue(body.buttons as Prisma.InputJsonValue | null),
+    sample_values: toJsonValue(
+      body.sample_values as Prisma.InputJsonValue | null,
+    ),
+    parameter_format: resolveParameterFormat(body.parameter_format),
+    cards: toJsonValue(
+      (body.cards?.length ? body.cards : null) as Prisma.InputJsonValue | null,
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +166,7 @@ export class WhatsappTemplatesController {
 
     const metaTemplates: MetaTemplate[] = [];
     let nextUrl: string | null =
-      `${META_API_BASE}/${config.waba_id}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score`;
+      `${META_API_BASE}/${config.waba_id}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score,parameter_format`;
     let pageCount = 0;
 
     while (nextUrl && pageCount < PAGE_CAP) {
@@ -169,16 +205,14 @@ export class WhatsappTemplatesController {
         (c) => c.type === 'BUTTONS',
       );
 
+      const carouselComp = (t.components ?? []).find(
+        (c) => c.type === 'CAROUSEL',
+      );
+
       const parsedButtons = parseTemplateButtons(buttonsComp?.buttons);
       const sampleValues = extractTemplateSampleValues(bodyComp, headerComp);
-      const headerFormat = headerComp?.format?.toUpperCase();
-      const headerType =
-        headerFormat === 'TEXT' ||
-        headerFormat === 'IMAGE' ||
-        headerFormat === 'VIDEO' ||
-        headerFormat === 'DOCUMENT'
-          ? headerFormat.toLowerCase()
-          : null;
+      const headerType = parseHeaderType(headerComp);
+      const cards = parseCarouselCards(carouselComp);
 
       const rowData = {
         account_id: account.accountId,
@@ -198,6 +232,10 @@ export class WhatsappTemplatesController {
         ),
         sample_values: toJsonValue(
           sampleValues as Prisma.InputJsonValue | null,
+        ),
+        parameter_format: normalizeParameterFormat(t.parameter_format),
+        cards: toJsonValue(
+          cards.length ? (cards as Prisma.InputJsonValue) : null,
         ),
         status: normalizeTemplateStatus(t.status),
         meta_template_id: t.id,
@@ -296,6 +334,10 @@ export class WhatsappTemplatesController {
 
     let metaTemplateId: string;
     let metaStatus: string;
+    // The payload actually sent to Meta — same as `body` plus any media
+    // handles minted during submit. Persisted so a later edit or send
+    // reuses the handle instead of re-uploading the same file.
+    let resolved: TemplatePayload = body;
 
     if (isDryRun()) {
       metaTemplateId = `dry-run-${crypto.randomUUID()}`;
@@ -319,9 +361,13 @@ export class WhatsappTemplatesController {
       }
 
       const accessToken = decrypt(config.access_token ?? '');
-      const metaPayload = buildMetaTemplatePayload(body);
 
       try {
+        // Media samples have to reach Meta as Resumable-Upload handles;
+        // a public URL is rejected. This uploads the bytes and fills in
+        // header_handle (template header + every carousel card).
+        resolved = await resolveTemplateMediaHandles(body, accessToken);
+        const metaPayload = buildMetaTemplatePayload(resolved);
         const meta = await submitMessageTemplate({
           wabaId: config.waba_id,
           accessToken,
@@ -331,6 +377,7 @@ export class WhatsappTemplatesController {
         metaStatus = meta.status;
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Meta submit failed.';
+        this.logger.warn(`Template submit failed for ${body.name}: ${message}`);
         // Persist the failure as DRAFT so the user can see and retry
         await this.prisma.message_templates.upsert({
           where: {
@@ -344,22 +391,15 @@ export class WhatsappTemplatesController {
             account_id: account.accountId,
             user_id: account.userId,
             name: body.name,
-            category: body.category,
             language: body.language,
-            header_type: body.header_type ?? null,
-            header_content: body.header_content ?? null,
-            body_text: body.body_text,
-            footer_text: body.footer_text ?? null,
-            buttons: toJsonValue(body.buttons as Prisma.InputJsonValue | null),
-            sample_values: toJsonValue(
-              body.sample_values as Prisma.InputJsonValue | null,
-            ),
+            ...templateContentFields(body),
             status: 'DRAFT',
             meta_template_id: null,
             submission_error: message,
             last_submitted_at: new Date(),
           },
           update: {
+            ...templateContentFields(body),
             status: 'DRAFT',
             submission_error: message,
             last_submitted_at: new Date(),
@@ -387,22 +427,15 @@ export class WhatsappTemplatesController {
         account_id: account.accountId,
         user_id: account.userId,
         name: body.name,
-        category: body.category,
         language: body.language,
-        header_type: body.header_type ?? null,
-        header_content: body.header_content ?? null,
-        body_text: body.body_text,
-        footer_text: body.footer_text ?? null,
-        buttons: toJsonValue(body.buttons as Prisma.InputJsonValue | null),
-        sample_values: toJsonValue(
-          body.sample_values as Prisma.InputJsonValue | null,
-        ),
+        ...templateContentFields(resolved),
         status: normalizeTemplateStatus(metaStatus),
         meta_template_id: metaTemplateId,
         submission_error: null,
         last_submitted_at: new Date(),
       },
       update: {
+        ...templateContentFields(resolved),
         status: normalizeTemplateStatus(metaStatus),
         meta_template_id: metaTemplateId,
         submission_error: null,
@@ -472,6 +505,8 @@ export class WhatsappTemplatesController {
         .json({ error: e instanceof Error ? e.message : 'Validation failed.' });
     }
 
+    let resolved: TemplatePayload = body;
+
     if (!isDryRun()) {
       const config = await this.prisma.whatsapp_config.findUnique({
         where: { account_id: account.accountId },
@@ -484,9 +519,12 @@ export class WhatsappTemplatesController {
       }
 
       const accessToken = decrypt(config.access_token ?? '');
-      const metaPayload = buildMetaTemplatePayload(body);
 
       try {
+        // Same handle requirement as submit. A caller that re-sends the
+        // stored header_handle unchanged skips the re-upload.
+        resolved = await resolveTemplateMediaHandles(body, accessToken);
+        const metaPayload = buildMetaTemplatePayload(resolved);
         await editMessageTemplate({
           metaTemplateId: existing.meta_template_id,
           accessToken,
@@ -494,6 +532,9 @@ export class WhatsappTemplatesController {
         });
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Meta edit failed.';
+        this.logger.warn(
+          `Template edit failed for ${existing.name}: ${message}`,
+        );
         await this.prisma.message_templates.update({
           where: { id },
           data: { submission_error: message, last_submitted_at: new Date() },
@@ -505,15 +546,7 @@ export class WhatsappTemplatesController {
     const row = await this.prisma.message_templates.update({
       where: { id },
       data: {
-        category: body.category,
-        header_type: body.header_type ?? null,
-        header_content: body.header_content ?? null,
-        body_text: body.body_text,
-        footer_text: body.footer_text ?? null,
-        buttons: toJsonValue(body.buttons as Prisma.InputJsonValue | null),
-        sample_values: toJsonValue(
-          body.sample_values as Prisma.InputJsonValue | null,
-        ),
+        ...templateContentFields(resolved),
         status: 'PENDING',
         submission_error: null,
         rejection_reason: null,

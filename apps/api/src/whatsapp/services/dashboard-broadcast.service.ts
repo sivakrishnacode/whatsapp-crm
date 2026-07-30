@@ -29,7 +29,11 @@ export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 export interface AudienceConfig {
   type: 'all' | 'tags' | 'custom_field' | 'csv';
   tagIds?: string[];
-  customField?: { fieldId: string; operator: CustomFieldOperator; value: string };
+  customField?: {
+    fieldId: string;
+    operator: CustomFieldOperator;
+    value: string;
+  };
   csvContacts?: { phone: string; name?: string }[];
   excludeTagIds?: string[];
 }
@@ -70,10 +74,37 @@ function sleep(ms: number) {
 }
 
 /**
+ * Keys starting with "_" are reserved metadata (e.g. the header media
+ * URL), never placeholders.
+ */
+function placeholderKeys(variables: Record<string, VariableMapping>): string[] {
+  return Object.keys(variables).filter((k) => !k.startsWith('_'));
+}
+
+function resolveVariable(
+  v: VariableMapping | undefined,
+  contact: AudienceRow,
+  customValues?: Map<string, string>,
+): string {
+  if (!v || typeof v !== 'object') return '';
+  if (v.type === 'static') return v.value ?? '';
+  if (v.type === 'field') {
+    const fieldMap: Record<string, string | null | undefined> = {
+      name: contact.name,
+      phone: contact.phone,
+      email: contact.email,
+      company: contact.company,
+    };
+    return fieldMap[v.value] ?? '';
+  }
+  // custom_field — value holds the custom_fields.id
+  return customValues?.get(v.value) ?? '';
+}
+
+/**
  * Per-contact resolution of template placeholders — a 1:1 port of the
  * old client-side resolveVariables. Keys are typically "1","2",… —
- * numeric-aware sort keeps {{1}} before {{10}}. Keys starting with "_"
- * are reserved metadata (e.g. the header media URL), never placeholders.
+ * numeric-aware sort keeps {{1}} before {{10}}.
  */
 export function resolveBroadcastVariables(
   variables: Record<string, VariableMapping>,
@@ -83,31 +114,37 @@ export function resolveBroadcastVariables(
   contact: AudienceRow,
   customValues?: Map<string, string>,
 ): string[] {
-  const keys = Object.keys(variables)
-    .filter((k) => !k.startsWith('_'))
-    .sort((a, b) => {
-      const an = Number(a);
-      const bn = Number(b);
-      if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
-      return a.localeCompare(b);
-    });
-
-  return keys.map((key) => {
-    const v = variables[key];
-    if (!v || typeof v !== 'object') return '';
-    if (v.type === 'static') return v.value ?? '';
-    if (v.type === 'field') {
-      const fieldMap: Record<string, string | null | undefined> = {
-        name: contact.name,
-        phone: contact.phone,
-        email: contact.email,
-        company: contact.company,
-      };
-      return fieldMap[v.value] ?? '';
-    }
-    // custom_field — value holds the custom_fields.id
-    return customValues?.get(v.value) ?? '';
+  const keys = placeholderKeys(variables).sort((a, b) => {
+    const an = Number(a);
+    const bn = Number(b);
+    if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
+    return a.localeCompare(b);
   });
+
+  return keys.map((key) =>
+    resolveVariable(variables[key], contact, customValues),
+  );
+}
+
+/**
+ * Same resolution, keyed by variable name instead of flattened to an
+ * ordered array — for NAMED templates ({{customer_name}}).
+ *
+ * Ordering is the whole reason this exists: an array only lines up with
+ * a NAMED template if it is sorted by each name's first appearance in
+ * the body, which this service can't know. Meta matches named
+ * parameters by name, so handing over a map sidesteps the question.
+ */
+export function resolveBroadcastVariableMap(
+  variables: Record<string, VariableMapping>,
+  contact: AudienceRow,
+  customValues?: Map<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of placeholderKeys(variables)) {
+    out[key] = resolveVariable(variables[key], contact, customValues);
+  }
+  return out;
 }
 
 /**
@@ -405,10 +442,12 @@ export class DashboardBroadcastService {
     >;
     const headerMediaUrl =
       typeof rawVariables[HEADER_MEDIA_KEY] === 'string'
-        ? (rawVariables[HEADER_MEDIA_KEY] as string)
+        ? rawVariables[HEADER_MEDIA_KEY]
         : undefined;
     const variables = rawVariables as Record<string, VariableMapping>;
-    const messageParams = headerMediaUrl ? { headerMediaUrl } : undefined;
+    const isNamedTemplate =
+      (templateRow as { parameter_format?: string } | null)
+        ?.parameter_format === 'NAMED';
 
     const recipients = await this.prisma.broadcast_recipients.findMany({
       where: { broadcast_id: broadcastId, status: 'pending' },
@@ -451,7 +490,11 @@ export class DashboardBroadcastService {
     for (const recipient of recipients) {
       const contact = recipient.contacts;
       if (!contact?.phone) {
-        await this.markRecipient(recipient.id, null, 'No phone number on contact');
+        await this.markRecipient(
+          recipient.id,
+          null,
+          'No phone number on contact',
+        );
         continue;
       }
 
@@ -461,11 +504,24 @@ export class DashboardBroadcastService {
         continue;
       }
 
-      const params = resolveBroadcastVariables(
-        variables,
-        contact,
-        customValueIndex.get(contact.id),
-      );
+      const customValues = customValueIndex.get(contact.id);
+      // NAMED templates travel as a name → value map; positional ones
+      // keep the ordered array they have always used.
+      const params = isNamedTemplate
+        ? undefined
+        : resolveBroadcastVariables(variables, contact, customValues);
+      const messageParams = {
+        ...(headerMediaUrl ? { headerMediaUrl } : {}),
+        ...(isNamedTemplate
+          ? {
+              bodyNamed: resolveBroadcastVariableMap(
+                variables,
+                contact,
+                customValues,
+              ),
+            }
+          : {}),
+      };
 
       let sentMessageId: string | null = null;
       let lastError: string | null = null;
@@ -499,10 +555,7 @@ export class DashboardBroadcastService {
       );
 
       processed++;
-      if (
-        processed % SEND_BATCH_SIZE === 0 &&
-        processed < recipients.length
-      ) {
+      if (processed % SEND_BATCH_SIZE === 0 && processed < recipients.length) {
         await sleep(SEND_BATCH_DELAY_MS);
       }
     }

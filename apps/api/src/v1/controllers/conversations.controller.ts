@@ -14,8 +14,15 @@ import type { AccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApiExceptionFilter } from '../utils/api-exception.filter';
 import { ok, okList, ApiError } from '../utils/respond.util';
-import { parseListParams, getKeysetWhereClause, buildPage } from '../utils/pagination.util';
-import { serializeConversation, serializeMessage } from '../utils/conversations.util';
+import {
+  parseListParams,
+  getKeysetWhereClause,
+  buildPage,
+} from '../utils/pagination.util';
+import {
+  serializeConversation,
+  serializeMessage,
+} from '../utils/conversations.util';
 import { CHANNELS, isChannel } from '../../common/messaging/channel';
 import { Prisma } from '@prisma/client';
 
@@ -35,7 +42,10 @@ export class ConversationsController {
     @Query('contact_id') contactId?: string,
     @Query('channel') channel?: string,
   ) {
-    const { limit, cursor } = parseListParams({ limit: limitQuery, cursor: cursorQuery });
+    const { limit, cursor } = parseListParams({
+      limit: limitQuery,
+      cursor: cursorQuery,
+    });
 
     const whereClause: Prisma.conversationsWhereInput = {
       account_id: ctx.accountId,
@@ -80,10 +90,7 @@ export class ConversationsController {
           },
         },
       },
-      orderBy: [
-        { created_at: 'desc' },
-        { id: 'desc' },
-      ],
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       take: limit + 1,
     });
 
@@ -119,7 +126,11 @@ export class ConversationsController {
     });
 
     if (!conv) {
-      throw new ApiError('not_found', 'Conversation not found', HttpStatus.NOT_FOUND);
+      throw new ApiError(
+        'not_found',
+        'Conversation not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     return ok(serializeConversation(conv));
@@ -133,7 +144,10 @@ export class ConversationsController {
     @Query('limit') limitQuery?: string,
     @Query('cursor') cursorQuery?: string,
   ) {
-    const { limit, cursor } = parseListParams({ limit: limitQuery, cursor: cursorQuery });
+    const { limit, cursor } = parseListParams({
+      limit: limitQuery,
+      cursor: cursorQuery,
+    });
 
     // Gate on account ownership of the conversation first
     const conv = await this.prisma.conversations.findFirst({
@@ -145,7 +159,11 @@ export class ConversationsController {
     });
 
     if (!conv) {
-      throw new ApiError('not_found', 'Conversation not found', HttpStatus.NOT_FOUND);
+      throw new ApiError(
+        'not_found',
+        'Conversation not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     const whereClause: Prisma.messagesWhereInput = {
@@ -159,10 +177,7 @@ export class ConversationsController {
 
     const rows = await this.prisma.messages.findMany({
       where: whereClause,
-      orderBy: [
-        { created_at: 'desc' },
-        { id: 'desc' },
-      ],
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       take: limit + 1,
     });
 

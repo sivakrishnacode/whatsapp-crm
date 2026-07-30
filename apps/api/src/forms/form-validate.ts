@@ -79,7 +79,11 @@ export function validateFormDefinition(fields: unknown): DefinitionIssue[] {
     const field = raw as Partial<FormField>;
 
     if (!field.field_key || typeof field.field_key !== 'string') {
-      issues.push({ index, field_key: null, message: 'Field is missing a key.' });
+      issues.push({
+        index,
+        field_key: null,
+        message: 'Field is missing a key.',
+      });
     } else if (seenKeys.has(field.field_key)) {
       // A duplicate key means two fields write to one slot in
       // `submissions.data` and one answer silently disappears.
@@ -283,7 +287,11 @@ function coerceField(field: FormField, raw: unknown): CoerceResult {
     case 'checkbox':
     case 'consent': {
       const truthy =
-        raw === true || raw === 'true' || raw === 'on' || raw === 1 || raw === '1';
+        raw === true ||
+        raw === 'true' ||
+        raw === 'on' ||
+        raw === 1 ||
+        raw === '1';
       if (field.type === 'consent' && !truthy) {
         return { error: `Please agree to ${label}.` };
       }

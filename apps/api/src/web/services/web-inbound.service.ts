@@ -132,10 +132,13 @@ export class WebInboundService {
     // Deliberately not awaited: the visitor's HTTP response should not
     // wait on an LLM call or a webhook round trip. Their message is
     // already persisted, and every reply arrives over the stream.
-    void this.fanOut({ ...input, conversationId: conversation.id }, {
-      messageId: message.id,
-      isFirstInbound,
-    });
+    void this.fanOut(
+      { ...input, conversationId: conversation.id },
+      {
+        messageId: message.id,
+        isFirstInbound,
+      },
+    );
 
     return {
       messageId: message.id,

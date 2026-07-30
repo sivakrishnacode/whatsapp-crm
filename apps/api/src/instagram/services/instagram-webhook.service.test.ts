@@ -62,6 +62,13 @@ function makeService(prisma: ReturnType<typeof makePrismaMock>) {
       conversation: { id: CONVERSATION_ID, unread_count: 0 },
       created: false,
     }),
+    // Identity-resolved by default: the real one returns the contact
+    // unchanged unless its name is still the bare IGSID.
+    upgradePlaceholderName: vi
+      .fn()
+      .mockImplementation(({ contact }: { contact: unknown }) =>
+        Promise.resolve(contact),
+      ),
   };
   const mediaMirror = { mirror: vi.fn().mockResolvedValue(null) };
   const comments = {

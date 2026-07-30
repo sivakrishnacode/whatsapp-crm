@@ -104,7 +104,9 @@ export class WebMediaService {
 
     const contentType = args.contentType.split(';')[0].trim().toLowerCase();
     if (!ALLOWED_MIME.has(contentType)) {
-      throw new BadRequestException(`Files of type ${contentType} are not allowed.`);
+      throw new BadRequestException(
+        `Files of type ${contentType} are not allowed.`,
+      );
     }
 
     // Extension derived from the ORIGINAL filename but sanitised to a few
@@ -119,7 +121,10 @@ export class WebMediaService {
       .from(WEB_MEDIA_BUCKET)
       .upload(path, args.bytes, { contentType, upsert: false });
 
-    if (uploadRes.error && uploadRes.error.message.toLowerCase().includes('not found')) {
+    if (
+      uploadRes.error &&
+      uploadRes.error.message.toLowerCase().includes('not found')
+    ) {
       await client.storage
         .createBucket(WEB_MEDIA_BUCKET, { public: true })
         .catch(() => null);

@@ -30,14 +30,14 @@ describe('signVisitorToken / verifyVisitorToken', () => {
       { ...CLAIMS, verifiedIdentity: 'user_9000' },
       SECRET_A,
     );
-    expect((await verifyVisitorToken(withIdentity, SECRET_A)).verifiedIdentity).toBe(
-      'user_9000',
-    );
+    expect(
+      (await verifyVisitorToken(withIdentity, SECRET_A)).verifiedIdentity,
+    ).toBe('user_9000');
 
     const without = await signVisitorToken(CLAIMS, SECRET_A);
-    expect(
-      await verifyVisitorToken(without, SECRET_A),
-    ).not.toHaveProperty('verifiedIdentity');
+    expect(await verifyVisitorToken(without, SECRET_A)).not.toHaveProperty(
+      'verifiedIdentity',
+    );
   });
 
   it('REFUSES a token minted under another account’s secret', async () => {

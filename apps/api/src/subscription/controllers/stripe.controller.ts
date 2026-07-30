@@ -39,7 +39,10 @@ export class StripeController {
   ) {
     const { planName, billingCycle } = body;
     if (!planName || !billingCycle) {
-      throw new HttpException('Missing required fields', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'Missing required fields',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const validPlans = ['STARTER', 'GROWTH'];

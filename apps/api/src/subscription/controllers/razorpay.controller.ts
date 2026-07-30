@@ -48,7 +48,10 @@ export class RazorpayController {
   ) {
     const { planName, billingCycle } = body;
     if (!planName || !billingCycle) {
-      throw new HttpException('Missing required fields', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'Missing required fields',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const validPlans = ['STARTER', 'GROWTH'];
@@ -120,7 +123,10 @@ export class RazorpayController {
     const { planName, billingCycle, razorpayOrderId, razorpayPaymentId } = body;
 
     if (!planName || !billingCycle || !razorpayOrderId) {
-      throw new HttpException('Missing required fields', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'Missing required fields',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const validPlans = ['STARTER', 'GROWTH'];

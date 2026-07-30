@@ -88,7 +88,7 @@ function makePrisma(seed: {
           ...(data as Record<string, unknown>),
         };
         contacts.push(row as never);
-        return Promise.resolve({ id: row.id as string });
+        return Promise.resolve({ id: row.id });
       }),
       update: vi.fn(({ where, data }: never) => {
         const w = where as { id: string };
@@ -145,7 +145,7 @@ function makePrisma(seed: {
     },
     contact_custom_values: {
       upsert: vi.fn(({ create }: never) => {
-        customValues.push(create as never);
+        customValues.push(create);
         return Promise.resolve({});
       }),
     },

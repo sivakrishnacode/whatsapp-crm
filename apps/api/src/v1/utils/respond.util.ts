@@ -18,10 +18,7 @@ export class ApiError extends HttpException {
     status: number,
     headers?: Record<string, string>,
   ) {
-    super(
-      { error: { code, message } },
-      status,
-    );
+    super({ error: { code, message } }, status);
     this.code = code;
     this.headers = headers;
   }

@@ -91,7 +91,9 @@ export async function retrieveKnowledge(
   // 1. Semantic path
   if (config.embeddingsApiKey) {
     try {
-      const [queryEmbedding] = await embedTexts(config.embeddingsApiKey, [query]);
+      const [queryEmbedding] = await embedTexts(config.embeddingsApiKey, [
+        query,
+      ]);
       if (queryEmbedding) {
         const rows = await prisma.$queryRawUnsafe<MatchRow[]>(
           'SELECT id, content FROM match_ai_knowledge_semantic($1::uuid, $2, $3::integer)',
@@ -106,7 +108,10 @@ export async function retrieveKnowledge(
         }
       }
     } catch (err) {
-      console.error('[ai knowledge] semantic retrieval failed, falling back to FTS:', err);
+      console.error(
+        '[ai knowledge] semantic retrieval failed, falling back to FTS:',
+        err,
+      );
     }
   }
 

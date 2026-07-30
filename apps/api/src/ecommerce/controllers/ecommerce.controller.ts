@@ -132,18 +132,18 @@ export class EcommerceController {
       timingSafeEqual(hmacBuf, computedBuf);
 
     if (!valid) {
-      return res
-        .status(HttpStatus.BAD_REQUEST)
-        .json({ error: 'Invalid HMAC' });
+      return res.status(HttpStatus.BAD_REQUEST).json({ error: 'Invalid HMAC' });
     }
 
     let stateData: { integrationId?: string };
     try {
-      stateData = JSON.parse(
-        Buffer.from(state, 'base64').toString(),
-      ) as { integrationId?: string };
+      stateData = JSON.parse(Buffer.from(state, 'base64').toString()) as {
+        integrationId?: string;
+      };
     } catch {
-      return res.status(HttpStatus.BAD_REQUEST).json({ error: 'Invalid state' });
+      return res
+        .status(HttpStatus.BAD_REQUEST)
+        .json({ error: 'Invalid state' });
     }
 
     const { integrationId } = stateData;
@@ -151,14 +151,15 @@ export class EcommerceController {
     // Exchange code for access token
     let tokenData: { access_token?: string };
     try {
-      const tokenRes = await fetch(
-        `https://${shop}/admin/oauth/access_token`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
-        },
-      );
+      const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code,
+        }),
+      });
       tokenData = (await tokenRes.json()) as { access_token?: string };
       if (!tokenRes.ok) throw new Error('Token exchange failed');
     } catch (err) {
@@ -170,11 +171,14 @@ export class EcommerceController {
 
     await this.prisma.ecommerce_integrations.update({
       where: { id: integrationId },
-      data: { access_token: tokenData.access_token, status: 'connected', sync_error: null },
+      data: {
+        access_token: tokenData.access_token,
+        status: 'connected',
+        sync_error: null,
+      },
     });
 
-    const baseUrl =
-      process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
     return res.redirect(`${baseUrl}/ecommerce`);
   }
 
@@ -195,9 +199,13 @@ export class EcommerceController {
         .json({ error: 'Integration not found' });
     }
 
-    if (!integration.access_token && (!integration.api_key || !integration.api_secret)) {
+    if (
+      !integration.access_token &&
+      (!integration.api_key || !integration.api_secret)
+    ) {
       return res.status(HttpStatus.BAD_REQUEST).json({
-        error: 'Integration not configured. Please complete OAuth or enter API credentials.',
+        error:
+          'Integration not configured. Please complete OAuth or enter API credentials.',
       });
     }
 
@@ -223,7 +231,7 @@ export class EcommerceController {
     userId: string,
   ): Promise<void> {
     let productsSynced = 0;
-    let ordersSynced = 0;
+    const ordersSynced = 0;
 
     try {
       if (integration.platform === 'shopify') {
@@ -305,7 +313,11 @@ export class EcommerceController {
 
       await this.prisma.ecommerce_integrations.update({
         where: { id },
-        data: { status: 'connected', last_sync_at: new Date(), sync_error: null },
+        data: {
+          status: 'connected',
+          last_sync_at: new Date(),
+          sync_error: null,
+        },
       });
 
       this.logger.log(

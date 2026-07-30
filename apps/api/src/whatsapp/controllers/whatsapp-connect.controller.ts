@@ -21,7 +21,11 @@ import {
   verifyPhoneNumber,
   getSubscribedApps,
 } from '../meta-api.util';
-import { decrypt, encrypt, isLegacyFormat } from '../../common/security/encryption.util';
+import {
+  decrypt,
+  encrypt,
+  isLegacyFormat,
+} from '../../common/security/encryption.util';
 
 @Controller('whatsapp')
 @UseGuards(SupabaseAuthGuard)
@@ -148,7 +152,7 @@ export class WhatsappConnectController {
 
     let accessToken: string;
     try {
-      accessToken = decrypt(config.access_token!);
+      accessToken = decrypt(config.access_token);
     } catch {
       return res.status(HttpStatus.OK).json({
         connected: false,
@@ -169,7 +173,7 @@ export class WhatsappConnectController {
       const tokenExpiresAt = config.token_expires_at?.toISOString() ?? null;
       const tokenExpiringSoon = Boolean(
         tokenExpiresAt &&
-          new Date(tokenExpiresAt).getTime() - Date.now() < SEVEN_DAYS_MS,
+        new Date(tokenExpiresAt).getTime() - Date.now() < SEVEN_DAYS_MS,
       );
 
       return res.status(HttpStatus.OK).json({
@@ -201,8 +205,14 @@ export class WhatsappConnectController {
     @Body() body: any,
     @Res() res: Response,
   ) {
-    const { phone_number_id, waba_id, access_token, verify_token, pin, catalog_id } =
-      body;
+    const {
+      phone_number_id,
+      waba_id,
+      access_token,
+      verify_token,
+      pin,
+      catalog_id,
+    } = body;
 
     if (!access_token || !phone_number_id) {
       return res.status(HttpStatus.BAD_REQUEST).json({
@@ -227,7 +237,8 @@ export class WhatsappConnectController {
       verifyToken: verify_token || null,
       pin: pin || null,
       connectionMethod: 'manual',
-      catalogId: catalog_id === undefined ? undefined : String(catalog_id).trim(),
+      catalogId:
+        catalog_id === undefined ? undefined : String(catalog_id).trim(),
     });
 
     if (!result.ok) {
@@ -281,8 +292,7 @@ export class WhatsappConnectController {
     });
     if (count === 0) {
       return res.status(HttpStatus.BAD_REQUEST).json({
-        error:
-          'Connect your WhatsApp account before setting a catalog id.',
+        error: 'Connect your WhatsApp account before setting a catalog id.',
       });
     }
 
@@ -333,7 +343,7 @@ export class WhatsappConnectController {
 
     let accessToken: string;
     try {
-      accessToken = decrypt(config.access_token!);
+      accessToken = decrypt(config.access_token);
     } catch {
       return res.status(HttpStatus.OK).json({
         live: false,
@@ -344,7 +354,7 @@ export class WhatsappConnectController {
     }
 
     // Upgrade CBC → GCM if needed
-    if (isLegacyFormat(config.access_token!)) {
+    if (isLegacyFormat(config.access_token)) {
       try {
         await this.prisma.whatsapp_config.update({
           where: { id: config.id },

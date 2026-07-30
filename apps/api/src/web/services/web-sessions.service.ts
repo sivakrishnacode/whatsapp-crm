@@ -63,7 +63,10 @@ export class WebSessionsService {
     options: { days?: number; limit?: number } = {},
   ): Promise<WebSessionRow[]> {
     const rows = await this.prisma.web_sessions.findMany({
-      where: { account_id: accountId, started_at: { gte: this.since(options.days ?? 30) } },
+      where: {
+        account_id: accountId,
+        started_at: { gte: this.since(options.days ?? 30) },
+      },
       orderBy: { started_at: 'desc' },
       take: Math.min(Math.max(options.limit ?? 100, 1), 500),
       select: {
@@ -105,42 +108,41 @@ export class WebSessionsService {
     }));
   }
 
-  async summary(
-    accountId: string,
-    days = 30,
-  ): Promise<WebSessionsSummary> {
+  async summary(accountId: string, days = 30): Promise<WebSessionsSummary> {
     const since = this.since(days);
     const where = { account_id: accountId, started_at: { gte: since } };
 
     // Counted in the database rather than by loading rows: a busy account's
     // 30-day window is thousands of sessions, and the dashboard needs five
     // numbers, not the rows.
-    const [sessions, engaged, identified, referrers, pages] = await Promise.all([
-      this.prisma.web_sessions.count({ where }),
-      this.prisma.web_sessions.count({
-        where: {
-          ...where,
-          conversations: { last_inbound_at: { not: null } },
-        },
-      }),
-      this.prisma.web_sessions.count({
-        where: { ...where, contact_id: { not: null } },
-      }),
-      this.prisma.web_sessions.groupBy({
-        by: ['referrer'],
-        where: { ...where, referrer: { not: null } },
-        _count: { referrer: true },
-        orderBy: { _count: { referrer: 'desc' } },
-        take: 8,
-      }),
-      this.prisma.web_sessions.groupBy({
-        by: ['page_url'],
-        where: { ...where, page_url: { not: null } },
-        _count: { page_url: true },
-        orderBy: { _count: { page_url: 'desc' } },
-        take: 8,
-      }),
-    ]);
+    const [sessions, engaged, identified, referrers, pages] = await Promise.all(
+      [
+        this.prisma.web_sessions.count({ where }),
+        this.prisma.web_sessions.count({
+          where: {
+            ...where,
+            conversations: { last_inbound_at: { not: null } },
+          },
+        }),
+        this.prisma.web_sessions.count({
+          where: { ...where, contact_id: { not: null } },
+        }),
+        this.prisma.web_sessions.groupBy({
+          by: ['referrer'],
+          where: { ...where, referrer: { not: null } },
+          _count: { referrer: true },
+          orderBy: { _count: { referrer: 'desc' } },
+          take: 8,
+        }),
+        this.prisma.web_sessions.groupBy({
+          by: ['page_url'],
+          where: { ...where, page_url: { not: null } },
+          _count: { page_url: true },
+          orderBy: { _count: { page_url: 'desc' } },
+          take: 8,
+        }),
+      ],
+    );
 
     return {
       sessions,

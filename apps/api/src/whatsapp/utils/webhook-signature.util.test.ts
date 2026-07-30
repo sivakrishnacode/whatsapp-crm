@@ -45,10 +45,7 @@ describe('verifyMetaWebhookSignature', () => {
 
   it('rejects a header without the sha256= prefix', () => {
     const body = '{}';
-    const hex = crypto
-      .createHmac('sha256', SECRET)
-      .update(body)
-      .digest('hex');
+    const hex = crypto.createHmac('sha256', SECRET).update(body).digest('hex');
     expect(verifyMetaWebhookSignature(body, hex)).toBe(false);
     expect(verifyMetaWebhookSignature(body, `sha512=${hex}`)).toBe(false);
   });

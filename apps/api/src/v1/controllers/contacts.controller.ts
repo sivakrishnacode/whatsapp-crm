@@ -19,7 +19,11 @@ import type { AccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApiExceptionFilter } from '../utils/api-exception.filter';
 import { ok, okList, ApiError } from '../utils/respond.util';
-import { parseListParams, getKeysetWhereClause, buildPage } from '../utils/pagination.util';
+import {
+  parseListParams,
+  getKeysetWhereClause,
+  buildPage,
+} from '../utils/pagination.util';
 import {
   serializeContact,
   findOrCreateContact,
@@ -51,7 +55,10 @@ export class ContactsController {
     @Query('search') searchQuery?: string,
     @Query('tag') tagQuery?: string,
   ) {
-    const { limit, cursor } = parseListParams({ limit: limitQuery, cursor: cursorQuery });
+    const { limit, cursor } = parseListParams({
+      limit: limitQuery,
+      cursor: cursorQuery,
+    });
     const search = searchQuery ? sanitizeSearch(searchQuery) : '';
 
     const whereClause: Prisma.contactsWhereInput = {
@@ -87,10 +94,7 @@ export class ContactsController {
           },
         },
       },
-      orderBy: [
-        { created_at: 'desc' },
-        { id: 'desc' },
-      ],
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       take: limit + 1,
     });
 
@@ -109,12 +113,20 @@ export class ContactsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     if (!body || typeof body !== 'object') {
-      throw new ApiError('bad_request', 'Request body must be a JSON object', HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        'Request body must be a JSON object',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
     if (!phone) {
-      throw new ApiError('bad_request', "'phone' is required", HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        "'phone' is required",
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const auditUserId = await resolveAuditUserId(this.prisma, ctx.accountId);
@@ -157,7 +169,11 @@ export class ContactsController {
     });
 
     if (!contact) {
-      throw new ApiError('internal', 'Failed to retrieve created contact', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new ApiError(
+        'internal',
+        'Failed to retrieve created contact',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
     res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
@@ -185,7 +201,11 @@ export class ContactsController {
     });
 
     if (!contact) {
-      throw new ApiError('not_found', 'Contact not found', HttpStatus.NOT_FOUND);
+      throw new ApiError(
+        'not_found',
+        'Contact not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     return ok(serializeContact(contact));
@@ -199,7 +219,11 @@ export class ContactsController {
     @Body() body: any,
   ) {
     if (!body || typeof body !== 'object') {
-      throw new ApiError('bad_request', 'Request body must be a JSON object', HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        'Request body must be a JSON object',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     // Verify contact exists in this account
@@ -210,7 +234,11 @@ export class ContactsController {
       },
     });
     if (!existing) {
-      throw new ApiError('not_found', 'Contact not found', HttpStatus.NOT_FOUND);
+      throw new ApiError(
+        'not_found',
+        'Contact not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     const updates: Record<string, any> = {};
@@ -220,7 +248,11 @@ export class ContactsController {
       if (value === null || typeof value === 'string') {
         updates[field] = value;
       } else {
-        throw new ApiError('bad_request', `'${field}' must be a string or null`, HttpStatus.BAD_REQUEST);
+        throw new ApiError(
+          'bad_request',
+          `'${field}' must be a string or null`,
+          HttpStatus.BAD_REQUEST,
+        );
       }
     }
 

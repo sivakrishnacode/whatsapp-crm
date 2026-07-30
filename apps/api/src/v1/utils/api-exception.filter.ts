@@ -1,4 +1,10 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { ApiError } from './respond.util';
 
@@ -22,7 +28,8 @@ export class ApiExceptionFilter implements ExceptionFilter {
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const res = exception.getResponse() as any;
-      message = typeof res === 'string' ? res : (res.message || exception.message);
+      message =
+        typeof res === 'string' ? res : res.message || exception.message;
       if (Array.isArray(message)) {
         message = message.join(', ');
       }

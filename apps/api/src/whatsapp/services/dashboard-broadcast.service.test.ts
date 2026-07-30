@@ -6,6 +6,7 @@ import type { Queue } from 'bullmq';
 import {
   DashboardBroadcastService,
   resolveBroadcastVariables,
+  resolveBroadcastVariableMap,
   type VariableMapping,
 } from './dashboard-broadcast.service';
 import type { PrismaService } from '../../prisma/prisma.service';
@@ -101,6 +102,39 @@ describe('resolveBroadcastVariables', () => {
   });
 });
 
+describe('resolveBroadcastVariableMap', () => {
+  it('keys resolved values by variable name for NAMED templates', () => {
+    const variables: Record<string, VariableMapping> = {
+      customer_name: { type: 'field', value: 'name' },
+      tier: { type: 'custom_field', value: 'cf-1' },
+      promo: { type: 'static', value: 'SAVE20' },
+    };
+    // Named parameters are matched by name, so no ordering is implied —
+    // which is exactly why the array form can't be used here.
+    expect(
+      resolveBroadcastVariableMap(
+        variables,
+        CONTACT,
+        new Map([['cf-1', 'Gold']]),
+      ),
+    ).toEqual({
+      customer_name: 'Asha',
+      tier: 'Gold',
+      promo: 'SAVE20',
+    });
+  });
+
+  it('skips reserved "_"-prefixed metadata keys', () => {
+    const variables = {
+      first_name: { type: 'static', value: 'hi' },
+      _headerMediaUrl: { type: 'static', value: 'https://x.test/img.png' },
+    } as unknown as Record<string, VariableMapping>;
+    expect(resolveBroadcastVariableMap(variables, CONTACT)).toEqual({
+      first_name: 'hi',
+    });
+  });
+});
+
 describe('DashboardBroadcastService.createAndQueue', () => {
   let prisma: ReturnType<typeof makePrismaMock>;
   let queue: { add: ReturnType<typeof vi.fn> };
@@ -118,11 +152,18 @@ describe('DashboardBroadcastService.createAndQueue', () => {
 
   it('rejects missing template name / broadcast name / audience', async () => {
     await expect(
-      service.createAndQueue('acc-1', 'u-1', { ...basePayload, templateName: '' }),
-    ).rejects.toMatchObject({ response: { error: 'template_name is required' } });
+      service.createAndQueue('acc-1', 'u-1', {
+        ...basePayload,
+        templateName: '',
+      }),
+    ).rejects.toMatchObject({
+      response: { error: 'template_name is required' },
+    });
     await expect(
       service.createAndQueue('acc-1', 'u-1', { ...basePayload, name: '  ' }),
-    ).rejects.toMatchObject({ response: { error: 'Broadcast name is required' } });
+    ).rejects.toMatchObject({
+      response: { error: 'Broadcast name is required' },
+    });
     await expect(
       service.createAndQueue('acc-1', 'u-1', {
         ...basePayload,
@@ -294,7 +335,9 @@ describe('DashboardBroadcastService.deliver', () => {
       data: { status: 'failed', error_message: 'WhatsApp not configured' },
     });
     expect(prisma.broadcasts.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'failed' }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'failed' }),
+      }),
     );
   });
 
@@ -302,7 +345,15 @@ describe('DashboardBroadcastService.deliver', () => {
     prisma.broadcasts.findUnique.mockResolvedValueOnce(BROADCAST_ROW);
     prisma.broadcast_recipients.findMany.mockResolvedValueOnce([
       { id: 'r-1', contacts: CONTACT },
-      { id: 'r-2', contacts: { ...CONTACT, id: 'c-2', phone: '+919999999999', name: 'Vik' } },
+      {
+        id: 'r-2',
+        contacts: {
+          ...CONTACT,
+          id: 'c-2',
+          phone: '+919999999999',
+          name: 'Vik',
+        },
+      },
     ]);
     sendMock
       .mockResolvedValueOnce({ messageId: 'wamid-1' } as never)
@@ -324,17 +375,25 @@ describe('DashboardBroadcastService.deliver', () => {
     expect(prisma.broadcast_recipients.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'r-1' },
-        data: expect.objectContaining({ status: 'sent', whatsapp_message_id: 'wamid-1' }),
+        data: expect.objectContaining({
+          status: 'sent',
+          whatsapp_message_id: 'wamid-1',
+        }),
       }),
     );
     expect(prisma.broadcast_recipients.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'r-2' },
-        data: expect.objectContaining({ status: 'failed', error_message: 'Meta said no' }),
+        data: expect.objectContaining({
+          status: 'failed',
+          error_message: 'Meta said no',
+        }),
       }),
     );
     expect(prisma.broadcasts.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'sent' }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'sent' }),
+      }),
     );
   });
 
@@ -357,7 +416,9 @@ describe('DashboardBroadcastService.deliver', () => {
     );
     // Nothing went out → the broadcast lands on failed
     expect(prisma.broadcasts.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'failed' }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'failed' }),
+      }),
     );
   });
 });

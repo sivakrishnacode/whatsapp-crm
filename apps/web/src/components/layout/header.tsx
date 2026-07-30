@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
+import { AlertSettingsMenu } from "@/components/layout/alert-settings-menu";
 
 interface HeaderProps {
   /** Wired to the shell's drawer state. Used only on mobile — the
@@ -98,6 +99,10 @@ export function Header({ onOpenSidebar, title, breadcrumb }: HeaderProps) {
             </span>
           ) : null}
         </Link>
+
+        {/* Also where the app-wide new-message alert subscription is
+            mounted — the header is on every dashboard route. */}
+        <AlertSettingsMenu />
 
         <ModeToggle />
 

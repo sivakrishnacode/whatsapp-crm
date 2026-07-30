@@ -23,7 +23,9 @@ const VALID_ROLES = ['owner', 'admin', 'agent', 'viewer'] as const;
 type AccountRole = (typeof VALID_ROLES)[number];
 
 function isAccountRole(v: unknown): v is AccountRole {
-  return typeof v === 'string' && (VALID_ROLES as readonly string[]).includes(v);
+  return (
+    typeof v === 'string' && (VALID_ROLES as readonly string[]).includes(v)
+  );
 }
 
 /** Map Postgres SQLSTATEs from the RPCs back to HTTP statuses. */

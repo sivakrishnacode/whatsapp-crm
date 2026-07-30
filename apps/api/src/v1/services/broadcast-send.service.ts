@@ -71,7 +71,11 @@ export class BroadcastSendService {
     const templateLanguage = params.templateLanguage || 'en_US';
 
     if (!templateName) {
-      throw new ApiError('bad_request', "'template_name' is required", HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        "'template_name' is required",
+        HttpStatus.BAD_REQUEST,
+      );
     }
     if (!Array.isArray(recipients) || recipients.length === 0) {
       throw new ApiError(
@@ -115,10 +119,13 @@ export class BroadcastSendService {
       );
     }
 
-    const resolved: { contactId: string; phone: string; params: string[] }[] = [];
+    const resolved: { contactId: string; phone: string; params: string[] }[] =
+      [];
     let rejected = 0;
     for (const r of recipients) {
-      const sanitized = sanitizePhoneForMeta(typeof r.to === 'string' ? r.to : '');
+      const sanitized = sanitizePhoneForMeta(
+        typeof r.to === 'string' ? r.to : '',
+      );
       if (!isValidE164(sanitized)) {
         rejected++;
         continue;
@@ -222,7 +229,8 @@ export class BroadcastSendService {
           lastError = null;
           break;
         } catch (error: any) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
+          const message =
+            error instanceof Error ? error.message : 'Unknown error';
           lastError = message;
           if (!isRecipientNotAllowedError(message)) break;
         }

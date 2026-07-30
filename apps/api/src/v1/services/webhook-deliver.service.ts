@@ -63,9 +63,7 @@ export class WebhookDeliverService {
       const tsSeconds = Math.floor(Date.now() / 1000);
 
       await Promise.allSettled(
-        rows.map((row) =>
-          this.deliverOne(row, event, payload, tsSeconds),
-        ),
+        rows.map((row) => this.deliverOne(row, event, payload, tsSeconds)),
       );
     } catch (err) {
       this.logger.error(`[webhooks] dispatch failed:`, err);
@@ -79,7 +77,9 @@ export class WebhookDeliverService {
     tsSeconds: number,
   ): Promise<void> {
     if (!(await isDeliverableUrl(row.url))) {
-      this.logger.warn(`[webhooks] refusing non-public delivery target for ${row.id}`);
+      this.logger.warn(
+        `[webhooks] refusing non-public delivery target for ${row.id}`,
+      );
       await this.recordFailure(row);
       return;
     }
@@ -100,7 +100,11 @@ export class WebhookDeliverService {
           'Content-Type': 'application/json',
           'X-Converse360-Event': event,
           'X-Converse360-Webhook-Id': row.id,
-          'X-Converse360-Signature': buildSignatureHeader(payload, secret, tsSeconds),
+          'X-Converse360-Signature': buildSignatureHeader(
+            payload,
+            secret,
+            tsSeconds,
+          ),
         },
         body: payload,
         redirect: 'manual',
@@ -154,7 +158,10 @@ export class WebhookDeliverService {
     try {
       secret = decrypt(row.secret);
     } catch {
-      return { ok: false, error: 'Could not decrypt this endpoint’s signing secret' };
+      return {
+        ok: false,
+        error: 'Could not decrypt this endpoint’s signing secret',
+      };
     }
 
     const payload = JSON.stringify({
@@ -162,7 +169,10 @@ export class WebhookDeliverService {
       event: 'zapier.test',
       occurred_at: new Date().toISOString(),
       account_id: accountId,
-      data: { message: 'This is a test event sent from your CRM’s Zapier integration.' },
+      data: {
+        message:
+          'This is a test event sent from your CRM’s Zapier integration.',
+      },
     });
     const tsSeconds = Math.floor(Date.now() / 1000);
 
@@ -173,7 +183,11 @@ export class WebhookDeliverService {
           'Content-Type': 'application/json',
           'X-Converse360-Event': 'zapier.test',
           'X-Converse360-Webhook-Id': row.id,
-          'X-Converse360-Signature': buildSignatureHeader(payload, secret, tsSeconds),
+          'X-Converse360-Signature': buildSignatureHeader(
+            payload,
+            secret,
+            tsSeconds,
+          ),
         },
         body: payload,
         redirect: 'manual',
@@ -181,7 +195,11 @@ export class WebhookDeliverService {
       });
 
       if (!res.ok) {
-        return { ok: false, status: res.status, error: `Endpoint responded ${res.status}` };
+        return {
+          ok: false,
+          status: res.status,
+          error: `Endpoint responded ${res.status}`,
+        };
       }
       return { ok: true, status: res.status };
     } catch (err: any) {
@@ -198,7 +216,10 @@ export class WebhookDeliverService {
         SELECT public.record_webhook_failure(${row.id}::uuid, ${MAX_CONSECUTIVE_FAILURES}::int);
       `;
     } catch (err) {
-      this.logger.error(`[webhooks] record_webhook_failure failed for ${row.id}:`, err);
+      this.logger.error(
+        `[webhooks] record_webhook_failure failed for ${row.id}:`,
+        err,
+      );
     }
   }
 }

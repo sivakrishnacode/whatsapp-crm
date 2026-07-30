@@ -58,7 +58,9 @@ export class FormsController {
   constructor(private readonly forms: FormsService) {}
 
   @Get()
-  async list(@CurrentAccount() account: SupabaseAccountContext): Promise<FormJson[]> {
+  async list(
+    @CurrentAccount() account: SupabaseAccountContext,
+  ): Promise<FormJson[]> {
     return this.forms.list(account.accountId);
   }
 

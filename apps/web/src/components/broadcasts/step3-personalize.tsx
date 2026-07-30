@@ -130,10 +130,14 @@ export function Step3Personalize({
     };
   }, []);
 
+  // Matches both parameter schemes — {{1}} and {{customer_name}} — and
+  // keeps first-appearance order, which is the order the placeholders
+  // read in the body. (Sorting them alphabetically also put {{10}}
+  // before {{2}}.)
   const placeholders = useMemo(() => {
-    const matches = template.body_text.match(/\{\{(\d+)\}\}/g);
+    const matches = template.body_text.match(/\{\{\s*[^{}]+?\s*\}\}/g);
     if (!matches) return [];
-    return [...new Set(matches)].sort();
+    return [...new Set(matches)];
   }, [template.body_text]);
 
   // Templates with an IMAGE/VIDEO/DOCUMENT header need a media URL at

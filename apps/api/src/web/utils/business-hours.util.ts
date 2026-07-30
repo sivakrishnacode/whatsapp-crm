@@ -129,10 +129,7 @@ export function localParts(
  * is treated as spanning midnight (22:00–02:00), because that is the only
  * thing a user can mean by it.
  */
-export function isOpenAt(
-  hours: BusinessHours | null,
-  instant: Date,
-): boolean {
+export function isOpenAt(hours: BusinessHours | null, instant: Date): boolean {
   if (!hours) return true;
 
   const { weekday, minutes } = localParts(instant, hours.timezone);

@@ -308,15 +308,16 @@ export class FlowDispatchService {
     node: FlowNode,
   ): Promise<void> {
     const cfg = node.config as unknown as SendButtonsNodeConfig;
-    const { messageId: whatsapp_message_id } = await this.channelSender.sendButtons({
-      accountId: run.accountId,
-      conversationId: run.conversationId!,
-      contactId: run.contactId!,
-      bodyText: cfg.text,
-      headerText: cfg.header_text,
-      footerText: cfg.footer_text,
-      buttons: cfg.buttons.map((b) => ({ id: b.reply_id, title: b.title })),
-    });
+    const { messageId: whatsapp_message_id } =
+      await this.channelSender.sendButtons({
+        accountId: run.accountId,
+        conversationId: run.conversationId!,
+        contactId: run.contactId!,
+        bodyText: cfg.text,
+        headerText: cfg.header_text,
+        footerText: cfg.footer_text,
+        buttons: cfg.buttons.map((b) => ({ id: b.reply_id, title: b.title })),
+      });
     await this.logEvent(run.id, 'message_sent', node.nodeKey, {
       node_type: 'send_buttons',
       whatsapp_message_id,
@@ -549,12 +550,13 @@ export class FlowDispatchService {
       if (node.nodeType === 'send_message') {
         const cfg = node.config as unknown as SendMessageNodeConfig;
         try {
-          const { messageId: whatsapp_message_id } = await this.channelSender.sendText({
-            accountId: run.accountId,
-            conversationId: run.conversationId!,
-            contactId: run.contactId!,
-            text: interpolateVars(cfg.text, vars),
-          });
+          const { messageId: whatsapp_message_id } =
+            await this.channelSender.sendText({
+              accountId: run.accountId,
+              conversationId: run.conversationId!,
+              contactId: run.contactId!,
+              text: interpolateVars(cfg.text, vars),
+            });
           await this.logEvent(run.id, 'message_sent', node.nodeKey, {
             node_type: 'send_message',
             whatsapp_message_id,
@@ -573,17 +575,18 @@ export class FlowDispatchService {
       if (node.nodeType === 'send_media') {
         const cfg = node.config as unknown as SendMediaNodeConfig;
         try {
-          const { messageId: whatsapp_message_id } = await this.channelSender.sendMedia({
-            accountId: run.accountId,
-            conversationId: run.conversationId!,
-            contactId: run.contactId!,
-            kind: cfg.media_type,
-            link: cfg.media_url,
-            caption: cfg.caption
-              ? interpolateVars(cfg.caption, vars)
-              : undefined,
-            filename: cfg.filename,
-          });
+          const { messageId: whatsapp_message_id } =
+            await this.channelSender.sendMedia({
+              accountId: run.accountId,
+              conversationId: run.conversationId!,
+              contactId: run.contactId!,
+              kind: cfg.media_type,
+              link: cfg.media_url,
+              caption: cfg.caption
+                ? interpolateVars(cfg.caption, vars)
+                : undefined,
+              filename: cfg.filename,
+            });
           await this.logEvent(run.id, 'message_sent', node.nodeKey, {
             node_type: 'send_media',
             media_type: cfg.media_type,
@@ -605,12 +608,13 @@ export class FlowDispatchService {
         // wake us up via handleReplyForActiveRun's collect_input branch.
         const cfg = node.config as unknown as CollectInputNodeConfig;
         try {
-          const { messageId: whatsapp_message_id } = await this.channelSender.sendText({
-            accountId: run.accountId,
-            conversationId: run.conversationId!,
-            contactId: run.contactId!,
-            text: interpolateVars(cfg.prompt_text, vars),
-          });
+          const { messageId: whatsapp_message_id } =
+            await this.channelSender.sendText({
+              accountId: run.accountId,
+              conversationId: run.conversationId!,
+              contactId: run.contactId!,
+              text: interpolateVars(cfg.prompt_text, vars),
+            });
           await this.logEvent(run.id, 'message_sent', node.nodeKey, {
             node_type: 'collect_input',
             whatsapp_message_id,

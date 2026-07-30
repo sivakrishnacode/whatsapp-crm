@@ -368,7 +368,9 @@ export function computeSlots(input: ComputeSlotsInput): SlotDay[] {
           continue;
         }
 
-        const clashes = blockers.some((b) => startMs < b.end && endMs > b.start);
+        const clashes = blockers.some(
+          (b) => startMs < b.end && endMs > b.start,
+        );
         if (clashes) continue;
 
         slots.push({

@@ -8,21 +8,18 @@ import {
   Loader2,
   RefreshCw,
   AlertCircle,
-  X,
   Pencil,
   RotateCcw,
   Upload,
+  X,
+  Code2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import {
-  uploadAccountMedia,
-  MEDIA_MAX_BYTES_BY_KIND,
-} from '@/lib/storage/upload-media';
 import { useAuth } from '@/hooks/use-auth';
+import { useObjectUrl } from '@/hooks/use-object-url';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { SettingsPanelHead } from './settings-panel-head';
@@ -41,53 +38,44 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type {
-  MessageTemplate,
-  TemplateButton,
-  TemplateSampleValues,
-} from '@/types';
+import type { MessageTemplate, TemplateParameterFormat } from '@/types';
 import { templateStatusConfig } from '@/lib/template-status';
+import { TEMPLATE_LIMITS } from '@/lib/whatsapp/template-validators';
 import {
-  extractVariableIndices,
-  TEMPLATE_LIMITS,
-} from '@/lib/whatsapp/template-validators';
+  buildTemplateSubmitPayload,
+  emptyCard,
+  emptyTemplateForm,
+  formFromTemplate,
+  resizeSamples,
+  templateTypeFromRow,
+  typeNeedsMedia,
+  variableTokens,
+  TEMPLATE_TYPE_OPTIONS,
+  type TemplateFormData,
+  type TemplateTypeOption,
+} from '@/lib/whatsapp/template-form';
+import {
+  mediaFormatForType,
+  rollbackTemplateMedia,
+  uploadPendingTemplateMedia,
+  validateTemplateMediaFile,
+  TEMPLATE_MEDIA_RULES,
+} from '@/lib/whatsapp/template-media';
+import { templateWarnings } from '@/lib/whatsapp/template-warnings';
+import { TemplateApiDialog } from './template-api-dialog';
+import { TemplateBodyEditor } from './template-body-editor';
+import { TemplateButtonsEditor } from './template-buttons-editor';
+import { TemplateCardsEditor } from './template-cards-editor';
+import { TemplateGallery } from './template-gallery';
+import { TemplatePreview } from './template-preview';
+import { TemplateSourceChooser } from './template-source-chooser';
 
 const CATEGORIES = ['Marketing', 'Utility', 'Authentication'] as const;
-type HeaderFormat = 'none' | 'text' | 'image' | 'video' | 'document';
-const HEADER_FORMATS: HeaderFormat[] = ['none', 'text', 'image', 'video', 'document'];
 
 const categoryColors: Record<string, string> = {
   Marketing: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
   Utility: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
   Authentication: 'bg-amber-600/20 text-amber-400 border-amber-600/30',
-};
-
-interface TemplateFormData {
-  name: string;
-  category: MessageTemplate['category'];
-  language: string;
-  header_format: HeaderFormat;
-  header_content: string;
-  header_media_url: string;
-  header_sample: string;
-  body_text: string;
-  body_samples: string[];
-  footer_text: string;
-  buttons: TemplateButton[];
-}
-
-const emptyForm: TemplateFormData = {
-  name: '',
-  category: 'Marketing',
-  language: 'en_US',
-  header_format: 'none',
-  header_content: '',
-  header_media_url: '',
-  header_sample: '',
-  body_text: '',
-  body_samples: [],
-  footer_text: '',
-  buttons: [],
 };
 
 const COMMON_LANGUAGE_CODES = [
@@ -110,19 +98,6 @@ const COMMON_LANGUAGE_CODES = [
   'lt',
 ];
 
-function emptyButton(type: TemplateButton['type']): TemplateButton {
-  switch (type) {
-    case 'QUICK_REPLY':
-      return { type: 'QUICK_REPLY', text: '' };
-    case 'URL':
-      return { type: 'URL', text: '', url: '' };
-    case 'PHONE_NUMBER':
-      return { type: 'PHONE_NUMBER', text: '', phone_number: '' };
-    case 'COPY_CODE':
-      return { type: 'COPY_CODE', text: '', example: '' };
-  }
-}
-
 export function TemplateManager() {
   const supabase = createClient();
   const { user, loading: authLoading } = useAuth();
@@ -132,7 +107,7 @@ export function TemplateManager() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [form, setForm] = useState<TemplateFormData>(emptyForm);
+  const [form, setForm] = useState<TemplateFormData>(emptyTemplateForm);
   // Non-null when the dialog is editing an existing row — switches the
   // submit handler from POST /submit to PATCH /[id] and changes the
   // dialog title + CTA. Set to the template id to pre-fill from a row.
@@ -143,37 +118,49 @@ export function TemplateManager() {
   // doesn't take the template off Meta as well as locally.
   const [templateToDelete, setTemplateToDelete] =
     useState<MessageTemplate | null>(null);
-  // Header-image upload (issue #230). Uploads to the account-scoped
-  // chat-media bucket and stores the public URL in header_media_url; the
-  // submit route turns that into a Meta Resumable-Upload handle.
-  const [uploadingHeader, setUploadingHeader] = useState(false);
+  // Template whose API send-example is on screen.
+  const [apiExampleFor, setApiExampleFor] = useState<MessageTemplate | null>(
+    null,
+  );
+  // "New Template" opens the source chooser first: blank editor, or a
+  // pre-built starter from the gallery.
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const headerFileRef = useRef<HTMLInputElement>(null);
 
-  // Body variable indices — `[1, 2, 3]` for "{{1}} {{2}} {{3}}". We
-  // re-run the extractor on every render to keep the sample-value rows
-  // in sync with what the user typed.
-  const bodyVarCount = useMemo(
-    () => extractVariableIndices(form.body_text).length,
-    [form.body_text],
+  // A picked-but-not-uploaded header file is previewed from a blob URL.
+  // Nothing touches storage until handleSubmit runs — that is what stops
+  // a closed dialog from leaving an orphan in the bucket.
+  const headerBlobUrl = useObjectUrl(form.header_media_file);
+
+  // Advisory only — things that make a Meta rejection likely but that we
+  // won't block on (see template-warnings.ts for why each is a warning).
+  const warnings = useMemo(() => templateWarnings(form), [form]);
+
+  const isCarousel = form.template_type === 'CAROUSEL';
+
+  // Placeholder tokens drive the sample-value rows. Positional templates
+  // yield ['1','2']; named ones yield ['first_name','order_id'] — the UI
+  // treats both the same way from here on.
+  const bodyTokens = useMemo(
+    () => variableTokens(form.body_text, form.parameter_format),
+    [form.body_text, form.parameter_format],
   );
-  const headerVarCount = useMemo(
+  const headerTokens = useMemo(
     () =>
-      form.header_format === 'text'
-        ? extractVariableIndices(form.header_content).length
-        : 0,
-    [form.header_format, form.header_content],
+      form.template_type === 'TEXT'
+        ? variableTokens(form.header_content, form.parameter_format)
+        : [],
+    [form.template_type, form.header_content, form.parameter_format],
   );
 
-  // Resize body_samples so it always has exactly bodyVarCount entries.
-  // (We mutate via setForm in an effect so React owns the state.)
+  // Keep body_samples exactly as long as the placeholder list.
   useEffect(() => {
     setForm((prev) => {
-      if (prev.body_samples.length === bodyVarCount) return prev;
-      const next = prev.body_samples.slice(0, bodyVarCount);
-      while (next.length < bodyVarCount) next.push('');
-      return { ...prev, body_samples: next };
+      const next = resizeSamples(prev.body_samples, bodyTokens.length);
+      return next === prev.body_samples ? prev : { ...prev, body_samples: next };
     });
-  }, [bodyVarCount]);
+  }, [bodyTokens.length]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -203,72 +190,74 @@ export function TemplateManager() {
     }
   }
 
-  function buildSubmitPayload() {
-    const sample_values: TemplateSampleValues = {};
-    if (form.body_samples.some((v) => v.trim())) {
-      sample_values.body = form.body_samples.map((v) => v.trim());
-    }
-    if (form.header_format === 'text' && form.header_sample.trim()) {
-      sample_values.header = [form.header_sample.trim()];
-    }
-
-    return {
-      name: form.name.trim(),
-      category: form.category,
-      language: form.language.trim() || 'en_US',
-      header_type: form.header_format === 'none' ? undefined : form.header_format,
-      header_content:
-        form.header_format === 'text' ? form.header_content.trim() : undefined,
-      header_media_url:
-        form.header_format !== 'none' && form.header_format !== 'text'
-          ? form.header_media_url.trim() || undefined
-          : undefined,
-      body_text: form.body_text.trim(),
-      footer_text: form.footer_text.trim() || undefined,
-      buttons: form.buttons.length > 0 ? form.buttons : undefined,
-      sample_values:
-        Object.keys(sample_values).length > 0 ? sample_values : undefined,
-    };
-  }
-
   function openEdit(template: MessageTemplate) {
     setEditingId(template.id);
-    setForm({
-      name: template.name,
-      category: template.category,
-      language: template.language || 'en_US',
-      header_format: (template.header_type ?? 'none') as HeaderFormat,
-      header_content: template.header_content ?? '',
-      header_media_url: template.header_media_url ?? '',
-      header_sample: template.sample_values?.header?.[0] ?? '',
-      body_text: template.body_text,
-      body_samples: template.sample_values?.body ?? [],
-      footer_text: template.footer_text ?? '',
-      buttons: template.buttons ?? [],
-    });
+    setForm(formFromTemplate(template));
     setDialogOpen(true);
   }
 
   function openCreate() {
+    setChooserOpen(true);
+  }
+
+  function startFromScratch() {
+    setChooserOpen(false);
     setEditingId(null);
-    setForm(emptyForm);
+    setForm(emptyTemplateForm);
     setDialogOpen(true);
+  }
+
+  /**
+   * Fill the editor from a library starter — explicitly WITHOUT
+   * submitting. The user reviews and edits, then submits themselves.
+   */
+  function startFromLibrary(libraryForm: TemplateFormData) {
+    setEditingId(null);
+    setForm(libraryForm);
+    setDialogOpen(true);
+    toast.success('Template loaded — edit it, then submit for approval.');
+  }
+
+  function changeTemplateType(value: TemplateTypeOption) {
+    setForm((prev) => ({
+      ...prev,
+      template_type: value,
+      // A carousel needs at least one card to be editable at all; seed
+      // one on the switch rather than showing an empty editor.
+      cards:
+        value === 'CAROUSEL' && prev.cards.length === 0
+          ? [emptyCard()]
+          : prev.cards,
+    }));
   }
 
   async function handleSubmit() {
     // AUTHENTICATION is blocked by the persistent banner + disabled
     // submit button; this is a defensive second line of defense.
     if (form.category === 'Authentication') return;
+
+    // Storage paths written during this submit. If the Meta call fails we
+    // remove them again, so a rejected template doesn't leave media
+    // behind — the whole point of deferring the upload to here.
+    let uploadedPaths: string[] = [];
+
     try {
       setSubmitting(true);
       const isEdit = editingId !== null;
+
+      const { form: resolvedForm, paths } = await uploadPendingTemplateMedia(form);
+      uploadedPaths = paths;
+      // Keep the resolved URLs in state so a retry after a failed submit
+      // doesn't upload the same file twice.
+      if (paths.length > 0) setForm(resolvedForm);
+
       const url = isEdit
         ? `/api/whatsapp/templates/${editingId}`
         : '/api/whatsapp/templates/submit';
       const res = await fetch(url, {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildSubmitPayload()),
+        body: JSON.stringify(buildTemplateSubmitPayload(resolvedForm)),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -276,6 +265,7 @@ export function TemplateManager() {
           data?.error || `${isEdit ? 'Edit' : 'Submit'} failed (HTTP ${res.status})`,
         );
       }
+      uploadedPaths = [];
       // Refresh first, then close — re-opening the dialog
       // immediately should not show a stale list.
       if (user) await fetchTemplates(user.id);
@@ -289,10 +279,13 @@ export function TemplateManager() {
             : 'Submitted to Meta — typical review time is 24 hours. Status updates automatically.',
       );
       setDialogOpen(false);
-      setForm(emptyForm);
+      setForm(emptyTemplateForm);
       setEditingId(null);
     } catch (err) {
       console.error('Submit error:', err);
+      // Fire-and-forget: the user needs to see why the submit failed, not
+      // a second error about storage cleanup.
+      void rollbackTemplateMedia(uploadedPaths);
       toast.error(err instanceof Error ? err.message : 'Failed to submit');
     } finally {
       setSubmitting(false);
@@ -370,82 +363,22 @@ export function TemplateManager() {
     }
   }
 
-  // The patch type unions every field across button variants. The
-  // conditional rendering below ensures only fields valid for the
-  // current button's `type` reach this function, so the runtime
-  // assertion + per-type spread preserves discriminated-union
-  // invariants without forcing every call site to thread the type
-  // through generics (which TS can't infer from a partial literal).
-  type ButtonPatch = {
-    text?: string;
-    url?: string;
-    phone_number?: string;
-    example?: string;
-  };
-  function updateButton(index: number, patch: ButtonPatch) {
-    setForm((prev) => {
-      const current = prev.buttons[index];
-      if (!current) return prev;
-      const next = [...prev.buttons];
-      // Per-variant spread keeps the discriminant pinned. Switch
-      // exhaustiveness is enforced by TypeScript.
-      switch (current.type) {
-        case 'QUICK_REPLY':
-          next[index] = {
-            ...current,
-            ...(patch.text !== undefined && { text: patch.text }),
-          };
-          break;
-        case 'URL':
-          next[index] = {
-            ...current,
-            ...(patch.text !== undefined && { text: patch.text }),
-            ...(patch.url !== undefined && { url: patch.url }),
-            ...(patch.example !== undefined && { example: patch.example }),
-          };
-          break;
-        case 'PHONE_NUMBER':
-          next[index] = {
-            ...current,
-            ...(patch.text !== undefined && { text: patch.text }),
-            ...(patch.phone_number !== undefined && {
-              phone_number: patch.phone_number,
-            }),
-          };
-          break;
-        case 'COPY_CODE':
-          next[index] = {
-            ...current,
-            ...(patch.text !== undefined && { text: patch.text }),
-            ...(patch.example !== undefined && { example: patch.example }),
-          };
-          break;
-      }
-      return { ...prev, buttons: next };
-    });
-  }
-
-  function changeButtonType(index: number, type: TemplateButton['type']) {
-    setForm((prev) => {
-      const next = [...prev.buttons];
-      next[index] = emptyButton(type);
-      return { ...prev, buttons: next };
-    });
-  }
-
-  function removeButton(index: number) {
-    setForm((prev) => ({
-      ...prev,
-      buttons: prev.buttons.filter((_, i) => i !== index),
-    }));
-  }
-
-  function addButton() {
-    if (form.buttons.length >= TEMPLATE_LIMITS.maxButtonsTotal) return;
-    setForm((prev) => ({
-      ...prev,
-      buttons: [...prev.buttons, emptyButton('QUICK_REPLY')],
-    }));
+  /**
+   * Validate and stage a header file — no upload. The bytes stay in the
+   * browser until submit, so closing the dialog costs nothing and leaves
+   * nothing in storage.
+   */
+  function stageHeaderMediaFile(file: File) {
+    const format = mediaFormatForType(form.template_type);
+    if (!format) return;
+    const problem = validateTemplateMediaFile(format, file);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
+    // Picking a file supersedes any pasted URL — otherwise the payload
+    // builder would have two sources of truth for the same header.
+    setForm((f) => ({ ...f, header_media_file: file, header_media_url: '' }));
   }
 
   if (loading) {
@@ -456,31 +389,9 @@ export function TemplateManager() {
     );
   }
 
-  const headerNeedsMedia =
-    form.header_format !== 'none' && form.header_format !== 'text';
-
-  async function handleHeaderImageFile(file: File) {
-    if (!['image/jpeg', 'image/png'].includes(file.type)) {
-      toast.error('Header image must be a JPEG or PNG.');
-      return;
-    }
-    if (file.size > MEDIA_MAX_BYTES_BY_KIND.image) {
-      toast.error(
-        `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — Meta's limit is 5 MB.`,
-      );
-      return;
-    }
-    setUploadingHeader(true);
-    try {
-      const { publicUrl } = await uploadAccountMedia('chat-media', file);
-      setForm((f) => ({ ...f, header_media_url: publicUrl }));
-      toast.success('Image uploaded.');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Upload failed.');
-    } finally {
-      setUploadingHeader(false);
-    }
-  }
+  const headerNeedsMedia = typeNeedsMedia(form.template_type);
+  const mediaFormat = mediaFormatForType(form.template_type);
+  const mediaRules = mediaFormat ? TEMPLATE_MEDIA_RULES[mediaFormat] : null;
 
   return (
     <section className="animate-in fade-in-50 space-y-4 duration-200">
@@ -522,6 +433,7 @@ export function TemplateManager() {
           {templates.map((template) => {
             const statusKey = template.status || 'DRAFT';
             const status = templateStatusConfig[statusKey];
+            const typeLabel = templateTypeFromRow(template);
             return (
               <Card key={template.id}>
                 <CardContent className="flex items-start justify-between pt-4">
@@ -536,6 +448,14 @@ export function TemplateManager() {
                       <Badge className={`text-xs border ${status.classes}`}>
                         {status.label}
                       </Badge>
+                      {typeLabel !== 'NONE' && (
+                        <span
+                          className="text-[10px] uppercase tracking-wide text-muted-foreground"
+                          title="Template type"
+                        >
+                          {typeLabel}
+                        </span>
+                      )}
                       {template.language && (
                         <span className="text-xs text-muted-foreground uppercase">
                           {template.language}
@@ -574,6 +494,16 @@ export function TemplateManager() {
                     )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0 ml-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setApiExampleFor(template)}
+                      aria-label="Show API send example"
+                      title="Show the API request that sends this template"
+                      className="h-8 w-8 text-muted-foreground hover:bg-muted hover:text-primary"
+                    >
+                      <Code2 className="size-4" />
+                    </Button>
                     {statusKey === 'APPROVED' && (
                       <Button
                         variant="ghost"
@@ -631,17 +561,42 @@ export function TemplateManager() {
         </div>
       )}
 
+      <TemplateApiDialog
+        template={apiExampleFor}
+        onOpenChange={(open) => {
+          if (!open) setApiExampleFor(null);
+        }}
+      />
+
+      <TemplateSourceChooser
+        open={chooserOpen}
+        onOpenChange={setChooserOpen}
+        onScratch={startFromScratch}
+        onLibrary={() => {
+          setChooserOpen(false);
+          setGalleryOpen(true);
+        }}
+      />
+
+      <TemplateGallery
+        open={galleryOpen}
+        onOpenChange={setGalleryOpen}
+        onUse={startFromLibrary}
+      />
+
       <Dialog
         open={dialogOpen}
         onOpenChange={(open) => {
           setDialogOpen(open);
           if (!open) {
+            // Any staged file is dropped here with nothing to clean up in
+            // storage — it was never uploaded.
             setEditingId(null);
-            setForm(emptyForm);
+            setForm(emptyTemplateForm);
           }
         }}
       >
-        <DialogContent className="bg-popover border-border sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="bg-popover border-border sm:max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-popover-foreground">
               {editingId ? 'Edit Message Template' : 'New Message Template'}
@@ -665,123 +620,166 @@ export function TemplateManager() {
             </div>
           )}
 
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Template Name</Label>
-              <Input
-                placeholder="e.g. order_confirmation"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                disabled={editingId !== null}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground disabled:opacity-60 disabled:cursor-not-allowed"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                {editingId
-                  ? 'Name is fixed once a template exists on Meta — create a new template to change it.'
-                  : 'Lowercase letters, digits, and underscores only.'}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+          {/* Form on the left, live preview pinned on the right — the
+              preview is the only way to judge sample values before Meta's
+              reviewer does. */}
+          <div className="grid gap-6 py-2 lg:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="space-y-4">
               <div className="space-y-2">
-                <Label className="text-muted-foreground">Category</Label>
-                <Select
-                  value={form.category}
-                  onValueChange={(val) =>
-                    setForm({
-                      ...form,
-                      category: val as MessageTemplate['category'],
-                    })
-                  }
-                >
-                  <SelectTrigger className="w-full bg-muted border-border text-foreground">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover border-border">
-                    {CATEGORIES.map((cat) => (
-                      <SelectItem
-                        key={cat}
-                        value={cat}
-                        className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
-                      >
-                        {cat}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Language</Label>
+                <Label className="text-muted-foreground">Template Name</Label>
                 <Input
-                  list="template-language-codes"
-                  placeholder="en_US"
-                  value={form.language}
-                  onChange={(e) =>
-                    setForm({ ...form, language: e.target.value })
-                  }
+                  placeholder="e.g. order_confirmation"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
                   disabled={editingId !== null}
                   className="bg-muted border-border text-foreground placeholder:text-muted-foreground disabled:opacity-60 disabled:cursor-not-allowed"
                 />
-                <datalist id="template-language-codes">
-                  {COMMON_LANGUAGE_CODES.map((code) => (
-                    <option key={code} value={code} />
-                  ))}
-                </datalist>
                 <p className="text-[11px] text-muted-foreground">
                   {editingId
-                    ? 'Language is fixed once a template exists on Meta.'
-                    : (
-                        <>
-                          Must match the exact code on Meta — <code>en_US</code>{' '}
-                          and <code>en</code> are distinct.
-                        </>
-                      )}
+                    ? 'Name is fixed once a template exists on Meta — create a new template to change it.'
+                    : 'Lowercase letters, digits, and underscores only.'}
                 </p>
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Header</Label>
-              <Select
-                value={form.header_format}
-                onValueChange={(val) =>
-                  // Preserve header_content, header_media_url, and
-                  // header_sample across format switches. The submit
-                  // payload builder only reads the field that matches
-                  // the active format, so an orphan value on a hidden
-                  // field is harmless — and keeping it lets the user
-                  // switch formats to compare without losing typing.
-                  setForm({
-                    ...form,
-                    header_format: (val || 'none') as HeaderFormat,
-                  })
-                }
-              >
-                <SelectTrigger className="w-full bg-muted border-border text-foreground">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border">
-                  {HEADER_FORMATS.map((type) => (
-                    <SelectItem
-                      key={type}
-                      value={type}
-                      className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
-                    >
-                      {type === 'none'
-                        ? 'None'
-                        : type.charAt(0).toUpperCase() + type.slice(1)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Category</Label>
+                  <Select
+                    value={form.category}
+                    onValueChange={(val) =>
+                      setForm({
+                        ...form,
+                        category: val as MessageTemplate['category'],
+                      })
+                    }
+                  >
+                    <SelectTrigger className="w-full bg-muted border-border text-foreground">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover border-border">
+                      {CATEGORIES.map((cat) => (
+                        <SelectItem
+                          key={cat}
+                          value={cat}
+                          className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
+                        >
+                          {cat}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              {form.header_format === 'text' && (
-                <div className="space-y-2 mt-2">
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Language</Label>
+                  <Input
+                    list="template-language-codes"
+                    placeholder="en_US"
+                    value={form.language}
+                    onChange={(e) =>
+                      setForm({ ...form, language: e.target.value })
+                    }
+                    disabled={editingId !== null}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground disabled:opacity-60 disabled:cursor-not-allowed"
+                  />
+                  <datalist id="template-language-codes">
+                    {COMMON_LANGUAGE_CODES.map((code) => (
+                      <option key={code} value={code} />
+                    ))}
+                  </datalist>
+                  <p className="text-[11px] text-muted-foreground">
+                    {editingId
+                      ? 'Language is fixed once a template exists on Meta.'
+                      : (
+                          <>
+                            Must match the exact code on Meta — <code>en_US</code>{' '}
+                            and <code>en</code> are distinct.
+                          </>
+                        )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Template Type</Label>
+                  <Select
+                    value={form.template_type}
+                    onValueChange={(val) => {
+                      if (!val) return;
+                      changeTemplateType(val as TemplateTypeOption);
+                    }}
+                  >
+                    <SelectTrigger className="w-full bg-muted border-border text-foreground">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover border-border">
+                      {TEMPLATE_TYPE_OPTIONS.map((opt) => (
+                        <SelectItem
+                          key={opt.value}
+                          value={opt.value}
+                          className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
+                        >
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    {
+                      TEMPLATE_TYPE_OPTIONS.find(
+                        (o) => o.value === form.template_type,
+                      )?.hint
+                    }
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Variables</Label>
+                  <Select
+                    value={form.parameter_format}
+                    onValueChange={(val) => {
+                      if (!val) return;
+                      setForm({
+                        ...form,
+                        parameter_format: val as TemplateParameterFormat,
+                      });
+                    }}
+                    disabled={editingId !== null}
+                  >
+                    <SelectTrigger className="w-full bg-muted border-border text-foreground">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover border-border">
+                      <SelectItem
+                        value="POSITIONAL"
+                        className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
+                      >
+                        Numbered — {'{{1}}'}
+                      </SelectItem>
+                      <SelectItem
+                        value="NAMED"
+                        className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
+                      >
+                        Named — {'{{customer_name}}'}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    {editingId
+                      ? 'Fixed once a template exists on Meta.'
+                      : 'A template uses one scheme throughout — Meta rejects a mix, so switching means rewriting existing placeholders.'}
+                  </p>
+                </div>
+              </div>
+
+              {form.template_type === 'TEXT' && (
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Header text</Label>
                   <Input
                     id="template-header-text"
                     aria-label="Header text"
-                    placeholder="Header text (max 60 chars, optional {{1}})"
+                    placeholder={`Header text (max ${TEMPLATE_LIMITS.headerTextMaxLength} chars, one optional variable)`}
                     value={form.header_content}
                     onChange={(e) =>
                       setForm({ ...form, header_content: e.target.value })
@@ -789,11 +787,11 @@ export function TemplateManager() {
                     maxLength={TEMPLATE_LIMITS.headerTextMaxLength}
                     className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                   />
-                  {headerVarCount > 0 && (
+                  {headerTokens.length > 0 && (
                     <Input
                       id="template-header-sample"
-                      aria-label="Sample value for header variable"
-                      placeholder="Sample value for {{1}} (required for Meta review)"
+                      aria-label="Sample value for the header variable"
+                      placeholder={`Sample value for {{${headerTokens[0]}}} (required for Meta review)`}
                       value={form.header_sample}
                       onChange={(e) =>
                         setForm({ ...form, header_sample: e.target.value })
@@ -804,100 +802,115 @@ export function TemplateManager() {
                 </div>
               )}
 
-              {headerNeedsMedia && (
-                <div className="space-y-2 mt-2">
-                  {form.header_format === 'image' && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        ref={headerFileRef}
-                        type="file"
-                        accept="image/jpeg,image/png"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) void handleHeaderImageFile(f);
-                          e.target.value = '';
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={uploadingHeader}
-                        onClick={() => headerFileRef.current?.click()}
-                      >
-                        {uploadingHeader ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Upload className="h-3.5 w-3.5" />
-                        )}
-                        Upload image
-                      </Button>
-                      <span className="text-[11px] text-muted-foreground">
-                        JPEG or PNG, ≤5 MB
+              {form.template_type === 'LOCATION' && (
+                <p className="rounded border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+                  Location headers carry no sample. Meta takes the latitude,
+                  longitude, name, and address at send time, so each message can
+                  point at a different place.
+                </p>
+              )}
+
+              {headerNeedsMedia && mediaRules && (
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Header media</Label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={headerFileRef}
+                      type="file"
+                      accept={mediaRules.accept}
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) stageHeaderMediaFile(f);
+                        e.target.value = '';
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => headerFileRef.current?.click()}
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      Choose file
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground">
+                      {mediaRules.hint}
+                    </span>
+                  </div>
+
+                  {form.header_media_file ? (
+                    <div className="flex items-center justify-between gap-2 rounded border border-border bg-muted/40 px-2 py-1.5">
+                      <span className="truncate text-xs text-foreground">
+                        {form.header_media_file.name}
                       </span>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          uploads on submit
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Remove selected file"
+                          onClick={() =>
+                            setForm({ ...form, header_media_file: null })
+                          }
+                          className="size-6 text-muted-foreground hover:bg-red-950/30 hover:text-red-400"
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      </div>
                     </div>
-                  )}
-                  <Input
-                    placeholder={`https://… (or paste a public ${form.header_format} link)`}
-                    value={form.header_media_url}
-                    onChange={(e) =>
-                      setForm({ ...form, header_media_url: e.target.value })
-                    }
-                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-                  />
-                  {form.header_format === 'image' && form.header_media_url && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={form.header_media_url}
-                      alt="Header sample"
-                      className="max-h-28 rounded-md border border-border object-contain"
+                  ) : (
+                    <Input
+                      placeholder="https://… (or paste a public link)"
+                      value={form.header_media_url}
+                      onChange={(e) =>
+                        setForm({ ...form, header_media_url: e.target.value })
+                      }
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                     />
                   )}
+
                   <p className="text-[11px] text-muted-foreground leading-relaxed">
-                    {form.header_format === 'image'
-                      ? 'Upload a JPEG/PNG (≤5 MB, ≥800×418 px recommended) or paste a public HTTPS link — we upload it to Meta for review automatically.'
-                      : 'Must be a publicly accessible HTTPS link. Meta fetches it once during review, so it needs to stay live for ~24 hrs.'}
-                    {form.header_format === 'video' &&
-                      ' Recommended: MP4 / 3GPP, ≤16 MB, ≤60 seconds.'}
-                    {form.header_format === 'document' &&
-                      ' Recommended: PDF, ≤100 MB.'}
+                    {form.header_media_file
+                      ? 'Nothing is uploaded until you submit — close this dialog and the file is simply discarded.'
+                      : 'Meta fetches this once during review, so the link needs to stay live for ~24 hrs.'}
                   </p>
                 </div>
               )}
-            </div>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Body Text</Label>
-              <Textarea
-                placeholder="Hello {{1}}, your order {{2}} is confirmed."
-                value={form.body_text}
-                onChange={(e) =>
-                  setForm({ ...form, body_text: e.target.value })
-                }
-                rows={4}
-                maxLength={TEMPLATE_LIMITS.bodyMaxLength}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground resize-none"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Use {`{{1}}`}, {`{{2}}`} for variables (must be contiguous
-                starting at {`{{1}}`}).
-              </p>
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">
+                  {isCarousel ? 'Message body (above the cards)' : 'Body Text'}
+                </Label>
+                <TemplateBodyEditor
+                  value={form.body_text}
+                  onChange={(text) => setForm({ ...form, body_text: text })}
+                  parameterFormat={form.parameter_format}
+                  maxLength={TEMPLATE_LIMITS.bodyMaxLength}
+                  placeholder={
+                    form.parameter_format === 'NAMED'
+                      ? 'Hello {{customer_name}}, your order {{order_id}} is confirmed.'
+                      : 'Hello {{1}}, your order {{2}} is confirmed.'
+                  }
+                  textareaId="template-body-text"
+                  ariaLabel="Body text"
+                />
 
-              {bodyVarCount > 0 && (
-                <div className="space-y-1.5 pt-1">
-                  <Label className="text-[11px] text-muted-foreground">
-                    Sample values (Meta uses these to review your template)
-                  </Label>
-                  {form.body_samples.map((val, i) => {
-                    const inputId = `template-body-sample-${i}`;
-                    return (
+                {bodyTokens.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Sample values (Meta uses these to review your template)
+                    </Label>
+                    {bodyTokens.map((token, i) => (
                       <Input
-                        key={i}
-                        id={inputId}
-                        aria-label={`Sample value for body variable {{${i + 1}}}`}
-                        placeholder={`Sample for {{${i + 1}}}`}
-                        value={val}
+                        key={token}
+                        id={`template-body-sample-${i}`}
+                        aria-label={`Sample value for body variable {{${token}}}`}
+                        placeholder={`Sample for {{${token}}}`}
+                        value={form.body_samples[i] ?? ''}
                         onChange={(e) => {
                           const next = [...form.body_samples];
                           next[i] = e.target.value;
@@ -905,160 +918,61 @@ export function TemplateManager() {
                         }}
                         className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       />
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Footer (optional)</Label>
-              <Input
-                placeholder="Optional footer text (max 60 chars)"
-                value={form.footer_text}
-                onChange={(e) =>
-                  setForm({ ...form, footer_text: e.target.value })
-                }
-                maxLength={TEMPLATE_LIMITS.footerMaxLength}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-muted-foreground">Buttons (optional)</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={addButton}
-                  disabled={form.buttons.length >= TEMPLATE_LIMITS.maxButtonsTotal}
-                  className="border-border bg-transparent text-muted-foreground hover:bg-muted h-7 text-xs"
-                >
-                  <Plus className="size-3" />
-                  Add Button
-                </Button>
+                    ))}
+                  </div>
+                )}
               </div>
-              {form.buttons.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">
-                  Up to {TEMPLATE_LIMITS.maxButtonsTotal} buttons. QUICK_REPLY
-                  buttons must come before URL / phone / copy-code buttons.
-                </p>
+
+              {isCarousel ? (
+                <TemplateCardsEditor
+                  cards={form.cards}
+                  onChange={(cards) => setForm({ ...form, cards })}
+                  parameterFormat={form.parameter_format}
+                />
               ) : (
-                <div className="space-y-2">
-                  {form.buttons.map((btn, i) => (
-                    <div
-                      key={i}
-                      className="space-y-2 rounded border border-border bg-muted/50 p-2"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Select
-                          value={btn.type}
-                          onValueChange={(val) => {
-                            // Same null guard as the Header Select
-                            // (per PR 148): @base-ui Select fires
-                            // onValueChange(null) on deselect.
-                            if (!val) return;
-                            changeButtonType(i, val as TemplateButton['type']);
-                          }}
-                        >
-                          <SelectTrigger className="w-40 bg-muted border-border text-foreground h-8 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="bg-popover border-border">
-                            <SelectItem
-                              value="QUICK_REPLY"
-                              className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
-                            >
-                              Quick Reply
-                            </SelectItem>
-                            <SelectItem
-                              value="URL"
-                              className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
-                            >
-                              URL
-                            </SelectItem>
-                            <SelectItem
-                              value="PHONE_NUMBER"
-                              className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
-                            >
-                              Phone
-                            </SelectItem>
-                            <SelectItem
-                              value="COPY_CODE"
-                              className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
-                            >
-                              Copy Code
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Input
-                          placeholder="Button label"
-                          value={btn.text}
-                          maxLength={TEMPLATE_LIMITS.buttonTextMaxLength}
-                          onChange={(e) =>
-                            updateButton(i, { text: e.target.value })
-                          }
-                          className="flex-1 bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeButton(i)}
-                          className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 size-7"
-                        >
-                          <X className="size-3.5" />
-                        </Button>
-                      </div>
-                      {btn.type === 'URL' && (
-                        <div className="space-y-1 pl-1">
-                          <Input
-                            placeholder="https://example.com/path or with {{1}} suffix"
-                            value={btn.url}
-                            onChange={(e) =>
-                              updateButton(i, { url: e.target.value })
-                            }
-                            className="bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
-                          />
-                          {extractVariableIndices(btn.url).length > 0 && (
-                            <Input
-                              placeholder="Example value for {{1}} (required when URL has a variable)"
-                              value={btn.example ?? ''}
-                              onChange={(e) =>
-                                updateButton(i, { example: e.target.value })
-                              }
-                              className="bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
-                            />
-                          )}
-                        </div>
-                      )}
-                      {btn.type === 'PHONE_NUMBER' && (
-                        <Input
-                          placeholder="+15551234567"
-                          value={btn.phone_number}
-                          onChange={(e) =>
-                            updateButton(i, { phone_number: e.target.value })
-                          }
-                          className="bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
-                        />
-                      )}
-                      {btn.type === 'COPY_CODE' && (
-                        <Input
-                          placeholder="Example code (e.g. SUMMER20)"
-                          value={btn.example}
-                          onChange={(e) =>
-                            updateButton(i, { example: e.target.value })
-                          }
-                          className="bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
+                <>
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">
+                      Footer (optional)
+                    </Label>
+                    <Input
+                      placeholder={`Optional footer text (max ${TEMPLATE_LIMITS.footerMaxLength} chars)`}
+                      value={form.footer_text}
+                      onChange={(e) =>
+                        setForm({ ...form, footer_text: e.target.value })
+                      }
+                      maxLength={TEMPLATE_LIMITS.footerMaxLength}
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                    />
+                  </div>
+
+                  <TemplateButtonsEditor
+                    buttons={form.buttons}
+                    onChange={(buttons) => setForm({ ...form, buttons })}
+                    parameterFormat={form.parameter_format}
+                  />
+                </>
               )}
+            </div>
+
+            <div className="lg:sticky lg:top-0 lg:self-start">
+              <TemplatePreview form={form} headerBlobUrl={headerBlobUrl} />
             </div>
           </div>
+
+          {warnings.length > 0 && (
+            <div className="space-y-1.5">
+              {warnings.map((w) => (
+                <div
+                  key={`${w.code}-${w.message}`}
+                  className="flex items-start gap-2 rounded border border-amber-700/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-300"
+                >
+                  <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                  <p>{w.message}</p>
+                </div>
+              ))}
+            </div>
+          )}
 
           <DialogFooter className="bg-popover border-border">
             <Button

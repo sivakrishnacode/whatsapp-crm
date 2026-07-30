@@ -6,7 +6,7 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import type { conversations, Prisma } from '@prisma/client';
+import type { contacts, conversations, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { decrypt } from '../../common/security/encryption.util';
 import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
@@ -386,6 +386,16 @@ export class InstagramWebhookService {
     // the CRM answering itself.
     if (isEcho) return;
 
+    // A contact first seen through an echo of our own outbound DM had no
+    // resolvable profile when it was created, so it is sitting in the
+    // inbox named by its IGSID. This reply is the earliest moment Meta
+    // will answer for it — retry before the contact.created payload below
+    // carries the name outward.
+    const namedContact = await this.identity.upgradePlaceholderName({
+      contact,
+      accessToken: ctx.accessToken,
+    });
+
     if (conversationCreated) {
       void this.webhookDeliver.dispatchWebhookEvent(
         ctx.accountId,
@@ -398,10 +408,10 @@ export class InstagramWebhookService {
         ctx.accountId,
         'contact.created',
         {
-          contact_id: contact.id,
+          contact_id: namedContact.id,
           phone: null,
-          instagram_username: contact.ig_username,
-          name: contact.name,
+          instagram_username: namedContact.ig_username,
+          name: namedContact.name,
         },
       );
     }
@@ -418,7 +428,7 @@ export class InstagramWebhookService {
       contentType: parsed.contentType,
       // Story replies get their own trigger type so automations can
       // distinguish a story reply from an ordinary DM.
-      isStoryReply: !!(parsed.metadata as Record<string, unknown> | null)?.ig_reply_to_story,
+      isStoryReply: !!parsed.metadata?.ig_reply_to_story,
     });
   }
 
@@ -811,7 +821,9 @@ export class InstagramWebhookService {
     ctx: IgContext,
     customerIgsid: string,
   ): Promise<{
-    contact: { id: string; name: string | null; ig_username: string | null };
+    // The full row, not a projection: identity resolution
+    // (upgradePlaceholderName) reads ig_scoped_id and avatar_url too.
+    contact: contacts;
     conversation: conversations;
     contactCreated: boolean;
     conversationCreated: boolean;

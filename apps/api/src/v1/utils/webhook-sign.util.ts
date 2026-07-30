@@ -26,7 +26,8 @@ export function verifySignatureHeader(
       }),
     );
     const t = Number(parts.t);
-    const v1 = typeof parts.v1 === 'string' ? parts.v1.trim().toLowerCase() : '';
+    const v1 =
+      typeof parts.v1 === 'string' ? parts.v1.trim().toLowerCase() : '';
     if (!Number.isFinite(t) || !v1) return false;
     if (Math.abs(nowSeconds - t) > toleranceSeconds) return false;
 

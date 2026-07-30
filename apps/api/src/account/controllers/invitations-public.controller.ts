@@ -59,10 +59,9 @@ export class InvitationsPublicController {
     this.logger.debug(`[peek] token from IP ${ip}`);
 
     try {
-      const result = await this.prisma.$queryRawUnsafe<Record<string, unknown>[]>(
-        `SELECT peek_invitation($1)`,
-        hashInviteToken(token),
-      );
+      const result = await this.prisma.$queryRawUnsafe<
+        Record<string, unknown>[]
+      >(`SELECT peek_invitation($1)`, hashInviteToken(token));
       // The RPC returns a single json column named after the function
       const data =
         result[0]?.['peek_invitation'] ??
@@ -99,14 +98,15 @@ export class InvitationsPublicController {
 
     const authHeader = req.headers.authorization ?? '';
     if (!authHeader.startsWith('Bearer ')) {
-      return res.status(HttpStatus.UNAUTHORIZED).json({ error: 'Unauthorized' });
+      return res
+        .status(HttpStatus.UNAUTHORIZED)
+        .json({ error: 'Unauthorized' });
     }
 
     try {
-      const result = await this.prisma.$queryRawUnsafe<{ redeem_invitation: string }[]>(
-        `SELECT redeem_invitation($1)`,
-        hashInviteToken(token),
-      );
+      const result = await this.prisma.$queryRawUnsafe<
+        { redeem_invitation: string }[]
+      >(`SELECT redeem_invitation($1)`, hashInviteToken(token));
       const accountId = result[0]?.redeem_invitation ?? null;
       return res.status(HttpStatus.OK).json({ ok: true, accountId });
     } catch (err: unknown) {

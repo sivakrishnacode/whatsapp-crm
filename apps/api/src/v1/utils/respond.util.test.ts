@@ -89,7 +89,11 @@ describe('rateLimited', () => {
   });
 
   it('clamps Retry-After to at least 1s when the window already reset', () => {
-    const err = rateLimited({ limit: 120, remaining: 0, reset: Date.now() - 5000 });
+    const err = rateLimited({
+      limit: 120,
+      remaining: 0,
+      reset: Date.now() - 5000,
+    });
     expect(err.headers!['Retry-After']).toBe('1');
   });
 });

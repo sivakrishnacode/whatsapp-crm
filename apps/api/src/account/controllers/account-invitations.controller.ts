@@ -29,7 +29,9 @@ const VALID_ROLES = ['admin', 'agent', 'viewer'] as const;
 type InviteRole = (typeof VALID_ROLES)[number];
 
 function isInviteRole(v: unknown): v is InviteRole {
-  return typeof v === 'string' && (VALID_ROLES as readonly string[]).includes(v);
+  return (
+    typeof v === 'string' && (VALID_ROLES as readonly string[]).includes(v)
+  );
 }
 
 /** Resolve the base URL for invite links, honouring the same priority chain as the legacy route. */
@@ -111,9 +113,7 @@ export class AccountInvitationsController {
     }
 
     const expiresInDays =
-      typeof body?.expiresInDays === 'number'
-        ? body.expiresInDays
-        : undefined;
+      typeof body?.expiresInDays === 'number' ? body.expiresInDays : undefined;
     const expiryDays = clampExpiryDays(expiresInDays);
     const expiresAt = inviteExpiresAt(expiryDays);
 
@@ -139,7 +139,13 @@ export class AccountInvitationsController {
         label,
         expires_at: expiresAt,
       },
-      select: { id: true, role: true, label: true, expires_at: true, created_at: true },
+      select: {
+        id: true,
+        role: true,
+        label: true,
+        expires_at: true,
+        created_at: true,
+      },
     });
 
     return res.status(HttpStatus.CREATED).json({

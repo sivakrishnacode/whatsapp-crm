@@ -206,7 +206,8 @@ export class WhatsappShopController {
       }
       return res.status(HttpStatus.OK).json({ synced: products.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Catalog sync failed';
+      const message =
+        err instanceof Error ? err.message : 'Catalog sync failed';
       this.logger.error(`[WhatsApp catalog sync] ${message}`);
       return res
         .status(HttpStatus.BAD_GATEWAY)
@@ -354,16 +355,23 @@ export class WhatsappShopController {
     @Body() body: Record<string, unknown>,
     @Res() res: Response,
   ) {
-    const { retailer_id, name, description, price, currency, image_url, is_active } =
-      (body ?? {}) as {
-        retailer_id?: string;
-        name?: string;
-        description?: string;
-        price?: string | number;
-        currency?: string;
-        image_url?: string;
-        is_active?: boolean;
-      };
+    const {
+      retailer_id,
+      name,
+      description,
+      price,
+      currency,
+      image_url,
+      is_active,
+    } = (body ?? {}) as {
+      retailer_id?: string;
+      name?: string;
+      description?: string;
+      price?: string | number;
+      currency?: string;
+      image_url?: string;
+      is_active?: boolean;
+    };
 
     if (!retailer_id || !name || price === undefined) {
       return res
@@ -411,16 +419,23 @@ export class WhatsappShopController {
     @Body() body: Record<string, unknown>,
     @Res() res: Response,
   ) {
-    const { retailer_id, name, description, price, currency, image_url, is_active } =
-      (body ?? {}) as {
-        retailer_id?: string;
-        name?: string;
-        description?: string;
-        price?: string | number;
-        currency?: string;
-        image_url?: string;
-        is_active?: boolean;
-      };
+    const {
+      retailer_id,
+      name,
+      description,
+      price,
+      currency,
+      image_url,
+      is_active,
+    } = (body ?? {}) as {
+      retailer_id?: string;
+      name?: string;
+      description?: string;
+      price?: string | number;
+      currency?: string;
+      image_url?: string;
+      is_active?: boolean;
+    };
 
     const data: Prisma.whatsapp_productsUpdateManyMutationInput = {
       updated_at: new Date(),
@@ -519,7 +534,8 @@ export class WhatsappShopController {
     if (!config) {
       return {
         status: HttpStatus.BAD_REQUEST,
-        error: 'WhatsApp is not connected. Connect it before syncing the catalog.',
+        error:
+          'WhatsApp is not connected. Connect it before syncing the catalog.',
       };
     }
     if (!config.catalog_id) {

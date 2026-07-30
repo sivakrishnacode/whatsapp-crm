@@ -83,7 +83,10 @@ export class WebStreamController {
       // Our own socket accepted the frame, so "delivered" here is a fact
       // rather than a third party's opinion — this is the only channel
       // where that is true. See CHANNEL_CAPABILITIES.web.deliveryReceipts.
-      if (event.type === 'message' && event.message.sender_type !== 'customer') {
+      if (
+        event.type === 'message' &&
+        event.message.sender_type !== 'customer'
+      ) {
         void this.send.markDelivered([event.message.id]);
       }
     });

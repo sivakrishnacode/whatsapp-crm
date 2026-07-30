@@ -32,10 +32,7 @@ describe('exchangeCodeForToken — large-id precision', () => {
   it('preserves an account id wider than 2^53', async () => {
     // Note the id is an unquoted JSON *number*, exactly as Meta sends it.
     const raw = `{"access_token":"IGAA...","user_id":${APP_SCOPED_ID},"permissions":"instagram_business_basic"}`;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(mockJsonResponse(raw)),
-    );
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockJsonResponse(raw)));
 
     const result = await exchangeCodeForToken({
       code: 'code',

@@ -65,7 +65,10 @@ export class AiReplyService {
       if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return;
 
       // 4. Build message transcript context
-      const messages = await buildConversationContext(this.prisma, conversationId);
+      const messages = await buildConversationContext(
+        this.prisma,
+        conversationId,
+      );
       if (messages.length === 0) return;
 
       // 5. Retrieve grounding knowledge from the KB (hybrid search)
@@ -99,7 +102,9 @@ export class AiReplyService {
       }
 
       // 8. Atomically claim reply slot to prevent concurrency race
-      const claimResult = await this.prisma.$queryRawUnsafe<{ claim_ai_reply_slot: boolean }[]>(
+      const claimResult = await this.prisma.$queryRawUnsafe<
+        { claim_ai_reply_slot: boolean }[]
+      >(
         'SELECT claim_ai_reply_slot($1::uuid, $2::integer) as claim_ai_reply_slot',
         conversationId,
         config.autoReplyMaxPerConversation,

@@ -53,7 +53,9 @@ async function bootstrap() {
   });
 
   app.use(json({ limit: MAX_BODY, verify: captureRawBody }));
-  app.use(urlencoded({ extended: true, limit: MAX_BODY, verify: captureRawBody }));
+  app.use(
+    urlencoded({ extended: true, limit: MAX_BODY, verify: captureRawBody }),
+  );
 
   app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

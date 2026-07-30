@@ -54,7 +54,9 @@ export class VisitorSessionGuard implements CanActivate {
       throw new UnauthorizedException('No chat session.');
     }
 
-    const secret = await this.config.loadSigningSecret(request.widget.accountId);
+    const secret = await this.config.loadSigningSecret(
+      request.widget.accountId,
+    );
 
     let claims: VisitorTokenClaims;
     try {
@@ -73,7 +75,9 @@ export class VisitorSessionGuard implements CanActivate {
     }
 
     if (claims.accountId !== request.widget.accountId) {
-      throw new UnauthorizedException('Session does not belong to this widget.');
+      throw new UnauthorizedException(
+        'Session does not belong to this widget.',
+      );
     }
 
     request.visitor = claims;

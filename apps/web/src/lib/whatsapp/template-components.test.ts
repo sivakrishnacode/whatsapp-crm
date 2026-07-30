@@ -47,17 +47,19 @@ describe('buildMetaTemplatePayload', () => {
     });
   });
 
-  it('uses header_url for media headers when no handle is set', () => {
-    const payload = buildMetaTemplatePayload({
-      ...base,
-      header_type: 'image',
-      header_media_url: 'https://example.com/img.jpg',
-    });
-    expect(payload.components[0]).toEqual({
-      type: 'HEADER',
-      format: 'IMAGE',
-      example: { header_url: ['https://example.com/img.jpg'] },
-    });
+  it('refuses to build a media header from a URL alone', () => {
+    // This used to emit example.header_url. The live Graph API rejects
+    // that with "Missing sample parameter for title type" — a media
+    // sample must be a Resumable-Upload handle — so every IMAGE / VIDEO /
+    // DOCUMENT template silently failed at submit. Failing here instead
+    // makes the missing upload step impossible to skip.
+    expect(() =>
+      buildMetaTemplatePayload({
+        ...base,
+        header_type: 'image',
+        header_media_url: 'https://example.com/img.jpg',
+      }),
+    ).toThrow(/no uploaded Meta handle/);
   });
 
   it('prefers header_handle over header_media_url', () => {

@@ -11,7 +11,10 @@ export interface ListParams {
   cursor: Cursor | null;
 }
 
-export function parseListParams(query: { limit?: unknown; cursor?: unknown }): ListParams {
+export function parseListParams(query: {
+  limit?: unknown;
+  cursor?: unknown;
+}): ListParams {
   const rawLimit = Number(query.limit);
   const limit =
     Number.isFinite(rawLimit) && rawLimit > 0
@@ -22,9 +25,17 @@ export function parseListParams(query: { limit?: unknown; cursor?: unknown }): L
   return { limit, cursor: decodeCursor(rawCursor) };
 }
 
-export function encodeCursor(row: { created_at: Date | string | null; id: string }): string {
-  const dateVal = row.created_at instanceof Date ? row.created_at : new Date(row.created_at ?? Date.now());
-  return Buffer.from(`${dateVal.toISOString()}|${row.id}`, 'utf8').toString('base64url');
+export function encodeCursor(row: {
+  created_at: Date | string | null;
+  id: string;
+}): string {
+  const dateVal =
+    row.created_at instanceof Date
+      ? row.created_at
+      : new Date(row.created_at ?? Date.now());
+  return Buffer.from(`${dateVal.toISOString()}|${row.id}`, 'utf8').toString(
+    'base64url',
+  );
 }
 
 const UUID_RE =
@@ -66,10 +77,9 @@ export function getKeysetWhereClause(cursor: Cursor | null) {
   };
 }
 
-export function buildPage<T extends { created_at: Date | string | null; id: string }>(
-  rows: T[],
-  limit: number,
-): { items: T[]; nextCursor: string | null } {
+export function buildPage<
+  T extends { created_at: Date | string | null; id: string },
+>(rows: T[], limit: number): { items: T[]; nextCursor: string | null } {
   if (rows.length <= limit) {
     return { items: rows, nextCursor: null };
   }

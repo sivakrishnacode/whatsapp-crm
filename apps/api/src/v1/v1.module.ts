@@ -25,15 +25,7 @@ import { BroadcastSendService } from './services/broadcast-send.service';
     BroadcastsController,
     WebhooksController,
   ],
-  providers: [
-    WebhookDeliverService,
-    MessageSendService,
-    BroadcastSendService,
-  ],
-  exports: [
-    WebhookDeliverService,
-    MessageSendService,
-    BroadcastSendService,
-  ],
+  providers: [WebhookDeliverService, MessageSendService, BroadcastSendService],
+  exports: [WebhookDeliverService, MessageSendService, BroadcastSendService],
 })
 export class V1Module {}

@@ -17,7 +17,8 @@ export interface SubmitFormInput {
   fields: FormField[];
   settings: FormSettings;
   answers: Record<string, unknown>;
-  source: 'hosted' | 'embed' | 'widget' | 'whatsapp_flow' | 'api' | 'automation';
+  source:
+    'hosted' | 'embed' | 'widget' | 'whatsapp_flow' | 'api' | 'automation';
   /** Widget submissions carry these, so a reply lands in the live thread. */
   contactId?: string | null;
   conversationId?: string | null;
@@ -287,7 +288,6 @@ export class FormSubmitService {
           // follow-up message can quote what the person actually said.
           form: data,
         },
-
       });
     } catch (err) {
       this.logger.error(

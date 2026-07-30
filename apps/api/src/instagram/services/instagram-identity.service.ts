@@ -41,6 +41,18 @@ export interface IgConversationOutcome {
 export class InstagramIdentityService {
   private readonly logger = new Logger(InstagramIdentityService.name);
 
+  /**
+   * IGSID → time of the last profile lookup that came back with nothing.
+   *
+   * Without it, a contact whose profile is permanently unresolvable would
+   * spend a Graph call on every inbound message. Deliberately in-process
+   * and lost on restart: this only paces a best-effort upgrade, so the
+   * cost of forgetting is one extra call.
+   */
+  private readonly lastEmptyProfileLookup = new Map<string, number>();
+  private static readonly PROFILE_RETRY_COOLDOWN_MS = 15 * 60 * 1000;
+  private static readonly MAX_TRACKED_LOOKUPS = 5_000;
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -49,8 +61,9 @@ export class InstagramIdentityService {
    * The profile lookup (name, @handle, avatar) is best-effort and only
    * happens on first sight — it costs a Graph round trip, and a
    * failure must never cost us the message. An unresolvable profile
-   * leaves the contact named by its IGSID, which the UI renders and a
-   * later message can upgrade.
+   * leaves the contact named by its IGSID, which the UI renders until
+   * `upgradePlaceholderName` gets a second chance on a later inbound
+   * message.
    */
   async findOrCreateContact(args: {
     accountId: string;
@@ -123,17 +136,95 @@ export class InstagramIdentityService {
     }
   }
 
+  /**
+   * Second (and later) chance at a real name for a contact still wearing
+   * its IGSID as a display name.
+   *
+   * The profile API answers only for users who have a messaging
+   * relationship with the business, so a contact first seen through the
+   * echo of an outbound DM *we* sent cannot be resolved at creation time
+   * — that is where the bare numbers in the inbox come from. Their first
+   * reply is the moment the lookup starts working, so callers run this on
+   * inbound messages.
+   *
+   * A name that is no longer the IGSID is left untouched: it was either
+   * resolved already or renamed by an agent, and neither should be
+   * clobbered. Returns the contact to use — upgraded, or the original.
+   */
+  async upgradePlaceholderName(args: {
+    contact: contacts;
+    accessToken: string;
+  }): Promise<contacts> {
+    const { contact, accessToken } = args;
+    const igsid = contact.ig_scoped_id;
+    if (!igsid || contact.name !== igsid) return contact;
+    if (this.inLookupCooldown(igsid)) return contact;
+
+    const profile = await this.fetchProfileQuietly(igsid, accessToken);
+    const username = profile?.username ?? contact.ig_username ?? null;
+    const displayName = profile?.name || (username ? `@${username}` : null);
+    if (!displayName) {
+      // The call succeeded but carried no name — same practical outcome
+      // as a failure, so pace the next attempt the same way.
+      this.noteEmptyLookup(igsid);
+      return contact;
+    }
+
+    try {
+      return await this.prisma.contacts.update({
+        where: { id: contact.id },
+        data: {
+          name: displayName,
+          ig_username: username,
+          // Never trade an avatar we already have for nothing.
+          avatar_url: profile?.profilePictureUrl ?? contact.avatar_url,
+          updated_at: new Date(),
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Could not upgrade IGSID-named contact ${contact.id}: ${String(err)}`,
+      );
+      return contact;
+    }
+  }
+
   private async fetchProfileQuietly(igsid: string, accessToken: string) {
     try {
-      return await getUserProfile({ igsid, accessToken });
+      const profile = await getUserProfile({ igsid, accessToken });
+      this.lastEmptyProfileLookup.delete(igsid);
+      return profile;
     } catch (err) {
       // Expected in development mode (profiles only resolve for users
       // who have messaged the business) and whenever Meta rate-limits.
+      this.noteEmptyLookup(igsid);
       this.logger.debug(
         `Instagram profile lookup failed for ${igsid}: ${String(err)}`,
       );
       return null;
     }
+  }
+
+  private inLookupCooldown(igsid: string): boolean {
+    const last = this.lastEmptyProfileLookup.get(igsid);
+    if (last === undefined) return false;
+    return (
+      Date.now() - last < InstagramIdentityService.PROFILE_RETRY_COOLDOWN_MS
+    );
+  }
+
+  private noteEmptyLookup(igsid: string): void {
+    // Bound the map by evicting the oldest entry. Reaching the cap means
+    // thousands of distinct users are unresolvable, and the penalty for
+    // forgetting one is a single extra Graph call.
+    if (
+      this.lastEmptyProfileLookup.size >=
+      InstagramIdentityService.MAX_TRACKED_LOOKUPS
+    ) {
+      const oldest = this.lastEmptyProfileLookup.keys().next().value;
+      if (oldest !== undefined) this.lastEmptyProfileLookup.delete(oldest);
+    }
+    this.lastEmptyProfileLookup.set(igsid, Date.now());
   }
 
   /**

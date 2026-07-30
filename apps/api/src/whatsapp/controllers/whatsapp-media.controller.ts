@@ -54,7 +54,7 @@ export class WhatsappMediaController {
 
     let accessToken: string;
     try {
-      accessToken = decrypt(config.access_token!);
+      accessToken = decrypt(config.access_token);
     } catch {
       return res
         .status(HttpStatus.INTERNAL_SERVER_ERROR)

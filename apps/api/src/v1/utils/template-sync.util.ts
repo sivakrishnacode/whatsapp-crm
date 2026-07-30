@@ -11,15 +11,25 @@ export interface MetaButton {
   example?: string[] | string;
 }
 
+interface MetaNamedParamExample {
+  param_name?: string;
+  example?: string;
+}
+
 export interface MetaTemplateComponent {
   type: string;
   text?: string;
   format?: string;
   buttons?: MetaButton[];
+  /** Present on the CAROUSEL component only. */
+  cards?: { components?: MetaTemplateComponent[] }[];
   example?: {
     header_text?: string[];
+    header_text_named_params?: MetaNamedParamExample[];
     header_handle?: string[];
+    header_url?: string[];
     body_text?: string[][];
+    body_text_named_params?: MetaNamedParamExample[];
   };
 }
 
@@ -40,7 +50,7 @@ export function normalizeQualityScore(
   if (!score) return null;
   const upper = score.toUpperCase();
   return upper === 'GREEN' || upper === 'YELLOW' || upper === 'RED'
-    ? (upper as 'GREEN' | 'YELLOW' | 'RED')
+    ? upper
     : null;
 }
 
@@ -74,8 +84,8 @@ export function parseTemplateButtons(
           type: 'COPY_CODE',
           text: b.text,
           example: Array.isArray(b.example)
-            ? b.example[0] ?? ''
-            : b.example ?? '',
+            ? (b.example[0] ?? '')
+            : (b.example ?? ''),
         });
         break;
     }
@@ -83,17 +93,93 @@ export function parseTemplateButtons(
   return out;
 }
 
+/**
+ * NAMED templates return their examples as {param_name, example} pairs.
+ * We store only the ordered values — the names live in the template text
+ * and are re-derived from it — so both shapes collapse to one array.
+ */
+function namedExamplesToValues(
+  named: MetaNamedParamExample[] | undefined,
+): string[] {
+  if (!named?.length) return [];
+  return named.map((p) => p.example ?? '');
+}
+
 export function extractTemplateSampleValues(
   body: MetaTemplateComponent | undefined,
   header: MetaTemplateComponent | undefined,
 ): Record<string, any> | null {
-  const bodySample = body?.example?.body_text?.[0];
-  const headerSample = header?.example?.header_text;
+  const bodySample =
+    body?.example?.body_text?.[0] ??
+    namedExamplesToValues(body?.example?.body_text_named_params);
+  const headerSample =
+    header?.example?.header_text ??
+    namedExamplesToValues(header?.example?.header_text_named_params);
   if (!bodySample?.length && !headerSample?.length) return null;
   const sv: Record<string, any> = {};
   if (bodySample?.length) sv.body = bodySample;
   if (headerSample?.length) sv.header = headerSample;
   return sv;
+}
+
+/** Meta header formats we can round-trip into `header_type`. */
+const HEADER_FORMATS = new Set([
+  'TEXT',
+  'IMAGE',
+  'VIDEO',
+  'DOCUMENT',
+  'LOCATION',
+]);
+
+export function parseHeaderType(
+  header: MetaTemplateComponent | undefined,
+): string | null {
+  const format = header?.format?.toUpperCase();
+  return format && HEADER_FORMATS.has(format) ? format.toLowerCase() : null;
+}
+
+export function normalizeParameterFormat(
+  raw: string | null | undefined,
+): 'POSITIONAL' | 'NAMED' {
+  return raw?.toUpperCase() === 'NAMED' ? 'NAMED' : 'POSITIONAL';
+}
+
+/**
+ * Flatten Meta's CAROUSEL component into our `cards` JSONB shape.
+ *
+ * Cards whose header format isn't image or video are dropped rather
+ * than stored: Meta only creates those two, so anything else means a
+ * shape we can't render or re-submit, and a half-parsed card would fail
+ * validation later with a confusing message.
+ */
+export function parseCarouselCards(
+  carousel: MetaTemplateComponent | undefined,
+): Array<Record<string, any>> {
+  if (!carousel?.cards?.length) return [];
+  const out: Array<Record<string, any>> = [];
+  for (const card of carousel.cards) {
+    const components = card.components ?? [];
+    const header = components.find((c) => c.type?.toUpperCase() === 'HEADER');
+    const body = components.find((c) => c.type?.toUpperCase() === 'BODY');
+    const buttons = components.find((c) => c.type?.toUpperCase() === 'BUTTONS');
+
+    const format = header?.format?.toUpperCase();
+    if (format !== 'IMAGE' && format !== 'VIDEO') continue;
+
+    const samples =
+      body?.example?.body_text?.[0] ??
+      namedExamplesToValues(body?.example?.body_text_named_params);
+
+    out.push({
+      header_format: format.toLowerCase(),
+      header_handle: header?.example?.header_handle?.[0] ?? null,
+      header_media_url: header?.example?.header_url?.[0] ?? null,
+      body_text: body?.text ?? '',
+      body_samples: samples.length ? samples : [],
+      buttons: parseTemplateButtons(buttons?.buttons),
+    });
+  }
+  return out;
 }
 
 const STATUS_MAP: Record<string, string> = {

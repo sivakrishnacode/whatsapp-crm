@@ -209,12 +209,20 @@ export class WebConfigService {
     // tenant's form ids.
     if (input.prechat_form_id !== undefined) {
       data.prechat_form = input.prechat_form_id
-        ? { connect: { id: await this.ownFormId(accountId, input.prechat_form_id) } }
+        ? {
+            connect: {
+              id: await this.ownFormId(accountId, input.prechat_form_id),
+            },
+          }
         : { disconnect: true };
     }
     if (input.offline_form_id !== undefined) {
       data.offline_form = input.offline_form_id
-        ? { connect: { id: await this.ownFormId(accountId, input.offline_form_id) } }
+        ? {
+            connect: {
+              id: await this.ownFormId(accountId, input.offline_form_id),
+            },
+          }
         : { disconnect: true };
     }
 

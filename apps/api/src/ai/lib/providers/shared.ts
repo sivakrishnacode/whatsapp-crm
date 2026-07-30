@@ -34,7 +34,7 @@ export async function providerHttpError(
     detail =
       typeof body?.error === 'string'
         ? body.error
-        : body?.error?.message ?? '';
+        : (body?.error?.message ?? '');
   } catch {
     // Non-JSON error body
   }

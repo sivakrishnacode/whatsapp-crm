@@ -21,7 +21,8 @@ import {
   LayoutTemplate,
   Loader2,
 } from "lucide-react";
-import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
+import { variableTokens } from "@/lib/whatsapp/template-form";
+import { renderTemplateBody } from "@/lib/whatsapp/template-send-builder";
 
 export interface TemplateSendValues {
   body: string[];
@@ -35,40 +36,39 @@ interface TemplatePickerProps {
   onSelect: (template: MessageTemplate, values: TemplateSendValues) => void;
 }
 
-function renderBodyPreview(body: string, params: string[]): string {
-  return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
-    const idx = Number(raw) - 1;
-    const value = params[idx];
-    return value && value.trim().length > 0 ? value : `{{${raw}}}`;
-  });
-}
-
 interface UrlButtonSlot {
   index: number;
   text: string;
   url: string;
+  token: string;
 }
 
 /**
  * Templates may need values for: body variables, a text-header
  * variable, and per-URL-button suffixes. Collect them all so the
  * send-message path doesn't 400 on missing parameters.
+ *
+ * Variables are collected as TOKENS, not indices, so a NAMED template
+ * ({{customer_name}}) is filled in the same way a positional one is.
+ * Values still travel as an ordered array — the send builder zips them
+ * back onto the names by order of first appearance.
  */
 function collectVariableSlots(template: MessageTemplate): {
-  bodyVars: number[];
+  bodyVars: string[];
   headerVarCount: number;
   urlButtonSlots: UrlButtonSlot[];
 } {
-  const bodyVars = extractVariableIndices(template.body_text);
+  const format = template.parameter_format === "NAMED" ? "NAMED" : "POSITIONAL";
+  const bodyVars = variableTokens(template.body_text, format);
   const headerVarCount =
     template.header_type === "text" && template.header_content
-      ? extractVariableIndices(template.header_content).length
+      ? variableTokens(template.header_content, format).length
       : 0;
   const urlButtonSlots: UrlButtonSlot[] = [];
   (template.buttons ?? []).forEach((b, i) => {
-    if (b.type === "URL" && extractVariableIndices(b.url).length > 0) {
-      urlButtonSlots.push({ index: i, text: b.text, url: b.url });
-    }
+    if (b.type !== "URL") return;
+    const token = variableTokens(b.url, format)[0];
+    if (token) urlButtonSlots.push({ index: i, text: b.text, url: b.url, token });
   });
   return { bodyVars, headerVarCount, urlButtonSlots };
 }
@@ -251,7 +251,7 @@ export function TemplatePicker({
             <div className="rounded-md border border-border bg-background/50 p-3">
               <p className="mb-1 text-xs text-muted-foreground">Preview</p>
               <p className="whitespace-pre-wrap text-sm text-popover-foreground">
-                {renderBodyPreview(selected.body_text, params)}
+                {renderTemplateBody(selected.body_text, { body: params })}
               </p>
               {selected.footer_text && (
                 <p className="mt-2 text-xs italic text-muted-foreground">
@@ -262,7 +262,7 @@ export function TemplatePicker({
             {slots && slots.headerVarCount > 0 && (
               <div className="space-y-1">
                 <Label className="text-xs text-popover-foreground">
-                  {`Header {{1}}`}
+                  Header variable
                 </Label>
                 <Input
                   value={headerText}
@@ -290,7 +290,7 @@ export function TemplatePicker({
             {slots?.urlButtonSlots.map((slot) => (
               <div key={slot.index} className="space-y-1">
                 <Label className="text-xs text-popover-foreground">
-                  {`URL button "${slot.text}" — value for `}{`{{1}}`}
+                  {`URL button "${slot.text}" — value for {{${slot.token}}}`}
                 </Label>
                 <Input
                   value={buttonParams[slot.index] ?? ""}
@@ -304,7 +304,11 @@ export function TemplatePicker({
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
                 <p className="text-[10px] text-muted-foreground break-all">
-                  Final URL: {slot.url.replace(/\{\{1\}\}/g, buttonParams[slot.index] || "{{1}}")}
+                  Final URL:{" "}
+                  {slot.url.replace(
+                    `{{${slot.token}}}`,
+                    buttonParams[slot.index] || `{{${slot.token}}}`,
+                  )}
                 </p>
               </div>
             ))}

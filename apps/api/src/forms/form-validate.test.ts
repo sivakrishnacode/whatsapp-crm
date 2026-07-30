@@ -38,7 +38,9 @@ describe('validateFormDefinition', () => {
   });
 
   it('rejects an unknown field type', () => {
-    const issues = validateFormDefinition([field({ type: 'quantum' as never })]);
+    const issues = validateFormDefinition([
+      field({ type: 'quantum' as never }),
+    ]);
     expect(issues[0].message).toContain('Unknown field type');
   });
 
@@ -53,9 +55,9 @@ describe('validateFormDefinition', () => {
     // Renders as an empty dropdown; if required, the form is unsubmittable.
     for (const type of ['select', 'multiselect', 'radio'] as const) {
       const issues = validateFormDefinition([field({ type, options: [] })]);
-      expect(issues.some((i) => i.message.includes('at least one option'))).toBe(
-        true,
-      );
+      expect(
+        issues.some((i) => i.message.includes('at least one option')),
+      ).toBe(true);
     }
   });
 });
@@ -68,7 +70,9 @@ describe('validateSubmission — required', () => {
   });
 
   it('treats whitespace as missing', () => {
-    const result = validateSubmission([field({ required: true })], { f1: '   ' });
+    const result = validateSubmission([field({ required: true })], {
+      f1: '   ',
+    });
     expect(result.ok).toBe(false);
   });
 
@@ -246,7 +250,8 @@ describe('validateSubmission — file', () => {
 describe('validateSubmission — text length caps', () => {
   it('caps short text and long text differently', () => {
     expect(
-      validateSubmission([field({ field_key: 't' })], { t: 'a'.repeat(501) }).ok,
+      validateSubmission([field({ field_key: 't' })], { t: 'a'.repeat(501) })
+        .ok,
     ).toBe(false);
     expect(
       validateSubmission([field({ field_key: 't', type: 'textarea' })], {

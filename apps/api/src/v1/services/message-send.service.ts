@@ -1,4 +1,10 @@
-import { Injectable, Logger, HttpStatus, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  HttpStatus,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   InstagramSendService,
@@ -13,7 +19,11 @@ import {
   sendProductListMessage,
   MediaKind,
 } from '../../whatsapp/meta-api.util';
-import { decrypt, encrypt, isLegacyFormat } from '../../common/security/encryption.util';
+import {
+  decrypt,
+  encrypt,
+  isLegacyFormat,
+} from '../../common/security/encryption.util';
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -92,10 +102,16 @@ export class MessageSendService {
     const { messageType, contentText, mediaUrl, templateName } = params;
 
     if (!messageType) {
-      throw new ApiError('bad_request', 'message_type is required', HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        'message_type is required',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
-    const isMediaKind = (MEDIA_KINDS as readonly string[]).includes(messageType);
+    const isMediaKind = (MEDIA_KINDS as readonly string[]).includes(
+      messageType,
+    );
 
     if (!(VALID_MESSAGE_TYPES as readonly string[]).includes(messageType)) {
       throw new ApiError(
@@ -169,9 +185,16 @@ export class MessageSendService {
       );
     }
 
-    this.validateSendMessageParams({ messageType, contentText, mediaUrl, templateName });
+    this.validateSendMessageParams({
+      messageType,
+      contentText,
+      mediaUrl,
+      templateName,
+    });
 
-    const isMediaKind = (MEDIA_KINDS as readonly string[]).includes(messageType);
+    const isMediaKind = (MEDIA_KINDS as readonly string[]).includes(
+      messageType,
+    );
 
     const conversation = await this.prisma.conversations.findFirst({
       where: {
@@ -184,7 +207,11 @@ export class MessageSendService {
     });
 
     if (!conversation) {
-      throw new ApiError('not_found', 'Conversation not found', HttpStatus.NOT_FOUND);
+      throw new ApiError(
+        'not_found',
+        'Conversation not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     // Everything below this point speaks the WhatsApp Cloud API —
@@ -308,7 +335,10 @@ export class MessageSendService {
         );
       }
     }
-    if (messageType === 'product' && !interactiveProductParams?.productRetailerId) {
+    if (
+      messageType === 'product' &&
+      !interactiveProductParams?.productRetailerId
+    ) {
       throw new ApiError(
         'bad_request',
         'product_retailer_id is required to send a product message.',
@@ -351,7 +381,8 @@ export class MessageSendService {
           to: phone,
           catalogId: resolvedCatalogId,
           productRetailerId: interactiveProductParams?.productRetailerId || '',
-          bodyText: interactiveProductParams?.bodyText || contentText || undefined,
+          bodyText:
+            interactiveProductParams?.bodyText || contentText || undefined,
           footerText: interactiveProductParams?.footerText || undefined,
           contextMessageId,
         });
@@ -364,7 +395,8 @@ export class MessageSendService {
           to: phone,
           catalogId: resolvedCatalogId,
           headerText: interactiveProductParams?.headerText || 'Catalogue',
-          bodyText: interactiveProductParams?.bodyText || 'Check out our products!',
+          bodyText:
+            interactiveProductParams?.bodyText || 'Check out our products!',
           footerText: interactiveProductParams?.footerText || undefined,
           sections: interactiveProductParams?.sections || [],
           contextMessageId,
@@ -420,12 +452,20 @@ export class MessageSendService {
 
       if (lastError) throw lastError;
     } catch (err: any) {
-      const message = err instanceof Error ? err.message : 'Unknown Meta API error';
-      this.logger.error(`[send-message] Meta send failed for all variants: ${message}`);
-      const hint = /132000/.test(message) || /parameter.*match/.test(message)
-        ? ' The template may be out of sync with Meta. Try syncing templates from Settings → Templates and retry.'
-        : '';
-      throw new ApiError('meta_error', `Meta API error: ${message}${hint}`, HttpStatus.BAD_GATEWAY);
+      const message =
+        err instanceof Error ? err.message : 'Unknown Meta API error';
+      this.logger.error(
+        `[send-message] Meta send failed for all variants: ${message}`,
+      );
+      const hint =
+        /132000/.test(message) || /parameter.*match/.test(message)
+          ? ' The template may be out of sync with Meta. Try syncing templates from Settings → Templates and retry.'
+          : '';
+      throw new ApiError(
+        'meta_error',
+        `Meta API error: ${message}${hint}`,
+        HttpStatus.BAD_GATEWAY,
+      );
     }
 
     if (workingPhone !== sanitizedPhone) {
@@ -456,7 +496,10 @@ export class MessageSendService {
         previewText = finalContentText;
       }
     }
-    if (messageType === 'product' && interactiveProductParams?.productRetailerId) {
+    if (
+      messageType === 'product' &&
+      interactiveProductParams?.productRetailerId
+    ) {
       finalContentText = JSON.stringify({
         type: 'product',
         retailer_id: interactiveProductParams.productRetailerId,
@@ -464,7 +507,10 @@ export class MessageSendService {
         price: interactiveProductParams.footerText || '',
       });
       previewText = `🛍️ Product: ${interactiveProductParams.productRetailerId}`;
-    } else if (messageType === 'product_list' && interactiveProductParams?.sections) {
+    } else if (
+      messageType === 'product_list' &&
+      interactiveProductParams?.sections
+    ) {
       finalContentText = JSON.stringify({
         type: 'product_list',
         title: interactiveProductParams.headerText || 'Product List',
@@ -477,7 +523,10 @@ export class MessageSendService {
       data: {
         conversation_id: conversationId,
         sender_type: 'agent',
-        content_type: messageType === 'product' || messageType === 'product_list' ? 'interactive' : messageType,
+        content_type:
+          messageType === 'product' || messageType === 'product_list'
+            ? 'interactive'
+            : messageType,
         content_text: finalContentText,
         media_url: mediaUrl || null,
         template_name: templateName || null,
@@ -510,7 +559,9 @@ export class MessageSendService {
         },
       });
     } catch (err: any) {
-      this.logger.error(`[flows] pause-on-agent-send failed: ${err?.message || err}`);
+      this.logger.error(
+        `[flows] pause-on-agent-send failed: ${err?.message || err}`,
+      );
     }
 
     return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
@@ -586,7 +637,8 @@ export class MessageSendService {
         accountId: args.accountId,
         conversationId: args.conversationId,
         // 'document' is WhatsApp's name for it; Instagram calls it 'file'.
-        mediaType: args.messageType === 'document' ? 'file' : (args.messageType as any),
+        mediaType:
+          args.messageType === 'document' ? 'file' : (args.messageType as any),
         mediaUrl: args.mediaUrl,
         caption: args.contentText ?? undefined,
       });

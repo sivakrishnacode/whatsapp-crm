@@ -37,26 +37,35 @@ export class BroadcastsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     if (!body || typeof body !== 'object') {
-      throw new ApiError('bad_request', 'Request body must be a JSON object', HttpStatus.BAD_REQUEST);
+      throw new ApiError(
+        'bad_request',
+        'Request body must be a JSON object',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
-    const templateName = typeof body.template_name === 'string' ? body.template_name : '';
+    const templateName =
+      typeof body.template_name === 'string' ? body.template_name : '';
     const recipients = Array.isArray(body.recipients) ? body.recipients : [];
 
     const auditUserId = await resolveAuditUserId(this.prisma, ctx.accountId);
 
-    const plan = await this.broadcastSendService.createBroadcast(ctx.accountId, auditUserId, {
-      name: typeof body.name === 'string' ? body.name : null,
-      templateName,
-      templateLanguage:
-        typeof body.template_language === 'string'
-          ? body.template_language
-          : null,
-      recipients: recipients.map((r: any) => ({
-        to: typeof r?.to === 'string' ? r.to : '',
-        params: Array.isArray(r?.params) ? r.params : undefined,
-      })),
-    });
+    const plan = await this.broadcastSendService.createBroadcast(
+      ctx.accountId,
+      auditUserId,
+      {
+        name: typeof body.name === 'string' ? body.name : null,
+        templateName,
+        templateLanguage:
+          typeof body.template_language === 'string'
+            ? body.template_language
+            : null,
+        recipients: recipients.map((r: any) => ({
+          to: typeof r?.to === 'string' ? r.to : '',
+          params: Array.isArray(r?.params) ? r.params : undefined,
+        })),
+      },
+    );
 
     // Asynchronous background delivery (returns 202 immediately)
     void this.broadcastSendService.deliverBroadcast(plan);
@@ -100,7 +109,11 @@ export class BroadcastsController {
     });
 
     if (!broadcast) {
-      throw new ApiError('not_found', 'Broadcast not found', HttpStatus.NOT_FOUND);
+      throw new ApiError(
+        'not_found',
+        'Broadcast not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     return ok({

@@ -140,8 +140,8 @@ export class FormsService {
     // on a URL the customer may already have shared, so it must work.
     const nextStatus = input.status ?? existing.status;
     if (nextStatus === 'published') {
-      const fields = (input.fields ??
-        (existing.fields as unknown as FormField[])) as FormField[];
+      const fields =
+        input.fields ?? (existing.fields as unknown as FormField[]);
       const answerable = fields.filter(
         (f) => f.type !== 'heading' && f.type !== 'paragraph',
       );
@@ -549,14 +549,16 @@ export function publicBaseUrl(): string {
  * copy-paste in several chat clients.
  */
 export function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFKD')
-    // Strip combining marks so "café" becomes "cafe" rather than "caf".
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
+  return (
+    value
+      .toLowerCase()
+      .normalize('NFKD')
+      // Strip combining marks so "café" becomes "cafe" rather than "caf".
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60)
+  );
 }
 
 /**

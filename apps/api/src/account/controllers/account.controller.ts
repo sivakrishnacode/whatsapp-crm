@@ -79,7 +79,9 @@ export class AccountController {
     });
 
     if (!canManageMembers(profile?.accountRole ?? '')) {
-      return res.status(HttpStatus.FORBIDDEN).json({ error: 'Admin+ required' });
+      return res
+        .status(HttpStatus.FORBIDDEN)
+        .json({ error: 'Admin+ required' });
     }
 
     const rawName = body?.name;

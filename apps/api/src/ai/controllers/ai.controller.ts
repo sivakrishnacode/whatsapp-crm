@@ -121,7 +121,10 @@ export class AiController {
 
     const provider = body.provider;
     if (provider !== 'openai' && provider !== 'anthropic') {
-      throw new HttpException('provider must be "openai" or "anthropic"', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'provider must be "openai" or "anthropic"',
+        HttpStatus.BAD_REQUEST,
+      );
     }
     const model = typeof body.model === 'string' ? body.model.trim() : '';
     if (!model) {
@@ -210,7 +213,10 @@ export class AiController {
             HttpStatus.BAD_REQUEST,
           );
         }
-        throw new HttpException('Could not validate the embeddings key.', HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          'Could not validate the embeddings key.',
+          HttpStatus.BAD_REQUEST,
+        );
       }
     }
 
@@ -287,7 +293,10 @@ export class AiController {
 
     const provider = body.provider;
     if (provider !== 'openai' && provider !== 'anthropic') {
-      throw new HttpException('provider must be "openai" or "anthropic"', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'provider must be "openai" or "anthropic"',
+        HttpStatus.BAD_REQUEST,
+      );
     }
     const model = typeof body.model === 'string' ? body.model.trim() : '';
     if (!model) {
@@ -302,7 +311,10 @@ export class AiController {
         select: { api_key: true },
       });
       if (!existing?.api_key) {
-        throw new HttpException('Enter an API key to test.', HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          'Enter an API key to test.',
+          HttpStatus.BAD_REQUEST,
+        );
       }
       try {
         apiKeyPlain = decrypt(existing.api_key);
@@ -332,7 +344,10 @@ export class AiController {
           HttpStatus.BAD_REQUEST,
         );
       }
-      throw new HttpException('Could not validate the API key.', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'Could not validate the API key.',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     return { ok: true };
@@ -352,7 +367,10 @@ export class AiController {
 
     const conversationId = body?.conversation_id;
     if (!conversationId) {
-      throw new HttpException('conversation_id is required', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'conversation_id is required',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const conversation = await this.prisma.conversations.findFirst({
@@ -366,24 +384,33 @@ export class AiController {
       throw new HttpException('Conversation not found', HttpStatus.NOT_FOUND);
     }
 
-    const config = await loadAiConfig(this.prisma, account.accountId).catch((err) => {
-      throw new HttpException(
-        { error: 'Stored API key could not be decrypted.', code: 'key_decrypt_failed' },
-        HttpStatus.BAD_REQUEST,
-      );
-    });
+    const config = await loadAiConfig(this.prisma, account.accountId).catch(
+      (err) => {
+        throw new HttpException(
+          {
+            error: 'Stored API key could not be decrypted.',
+            code: 'key_decrypt_failed',
+          },
+          HttpStatus.BAD_REQUEST,
+        );
+      },
+    );
 
     if (!config) {
       throw new HttpException(
         {
-          error: 'AI assistant is not set up. Enable it in Settings → AI Assistant.',
+          error:
+            'AI assistant is not set up. Enable it in Settings → AI Assistant.',
           code: 'ai_not_configured',
         },
         HttpStatus.BAD_REQUEST,
       );
     }
 
-    const messages = await buildConversationContext(this.prisma, conversationId);
+    const messages = await buildConversationContext(
+      this.prisma,
+      conversationId,
+    );
     if (messages.length === 0) {
       throw new HttpException(
         { error: 'No messages to draft from yet.', code: 'no_messages' },
@@ -437,14 +464,20 @@ export class AiController {
       .slice(-20);
 
     if (messages.length === 0) {
-      throw new HttpException('Send a message to test the agent.', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'Send a message to test the agent.',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const config = await loadAiConfig(this.prisma, account.accountId, {
       requireActive: false,
     }).catch((err) => {
       throw new HttpException(
-        { error: 'Stored API key could not be decrypted.', code: 'key_decrypt_failed' },
+        {
+          error: 'Stored API key could not be decrypted.',
+          code: 'key_decrypt_failed',
+        },
         HttpStatus.BAD_REQUEST,
       );
     });
@@ -472,7 +505,11 @@ export class AiController {
       knowledge,
     });
 
-    const { text, handoff } = await generateReply({ config, systemPrompt, messages });
+    const { text, handoff } = await generateReply({
+      config,
+      systemPrompt,
+      messages,
+    });
     return { reply: text, handoff };
   }
 
@@ -491,7 +528,10 @@ export class AiController {
       });
       return { documents };
     } catch (err) {
-      throw new HttpException('Failed to load knowledge base', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException(
+        'Failed to load knowledge base',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 
@@ -508,9 +548,13 @@ export class AiController {
     await this.verifyAdmin(account.userId);
 
     const title = typeof body?.title === 'string' ? body.title.trim() : '';
-    const content = typeof body?.content === 'string' ? body.content.trim() : '';
+    const content =
+      typeof body?.content === 'string' ? body.content.trim() : '';
     if (!title || !content) {
-      throw new HttpException('title and content are required', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'title and content are required',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const doc = await this.prisma.ai_knowledge_documents.create({
@@ -595,8 +639,10 @@ export class AiController {
   ) {
     await this.verifyAdmin(account.userId);
 
-    const title = typeof body?.title === 'string' ? body.title.trim() : undefined;
-    const content = typeof body?.content === 'string' ? body.content.trim() : undefined;
+    const title =
+      typeof body?.title === 'string' ? body.title.trim() : undefined;
+    const content =
+      typeof body?.content === 'string' ? body.content.trim() : undefined;
 
     if (title === undefined && content === undefined) {
       throw new HttpException('Nothing to update', HttpStatus.BAD_REQUEST);
@@ -605,7 +651,10 @@ export class AiController {
       throw new HttpException('title cannot be empty', HttpStatus.BAD_REQUEST);
     }
     if (content !== undefined && !content) {
-      throw new HttpException('content cannot be empty', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'content cannot be empty',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const update: any = {};
@@ -634,9 +683,16 @@ export class AiController {
         account.accountId,
       );
       try {
-        await ingestDocument(this.prisma, account.accountId, { embeddingsApiKey }, id, content);
+        await ingestDocument(
+          this.prisma,
+          account.accountId,
+          { embeddingsApiKey },
+          id,
+          content,
+        );
       } catch (err) {
-        const message = err instanceof AiError ? err.message : 'indexing failed';
+        const message =
+          err instanceof AiError ? err.message : 'indexing failed';
         return {
           success: true,
           warning: `Updated, but semantic indexing failed (${message}). Lexical search still works; use Reindex to retry.`,
@@ -683,7 +739,10 @@ export class AiController {
       });
       return { success: true };
     } catch (err) {
-      throw new HttpException('Failed to delete document', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException(
+        'Failed to delete document',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 
@@ -693,7 +752,9 @@ export class AiController {
    */
   @Post('knowledge/reindex')
   @UseGuards(SupabaseAuthGuard)
-  async reindexKnowledgeBase(@CurrentAccount() account: SupabaseAccountContext) {
+  async reindexKnowledgeBase(
+    @CurrentAccount() account: SupabaseAccountContext,
+  ) {
     await this.verifyAdmin(account.userId);
 
     const docs = await this.prisma.ai_knowledge_documents.findMany({
@@ -755,7 +816,10 @@ export class AiController {
 
     const { accountId, conversationId, contactId, configOwnerUserId } = body;
     if (!accountId || !conversationId || !contactId || !configOwnerUserId) {
-      throw new HttpException('Missing required fields', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'Missing required fields',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     // Process completely asynchronously, letting webhook return 200 immediately

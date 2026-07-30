@@ -1,4 +1,10 @@
-import { Controller, Get, HttpStatus, HttpException, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpStatus,
+  HttpException,
+  UseGuards,
+} from '@nestjs/common';
 import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
@@ -16,7 +22,9 @@ export class SubscriptionController {
   @Get()
   async getSubscription(@CurrentAccount() account: SupabaseAccountContext) {
     try {
-      const subscription = await this.subscriptionService.getUserSubscription(account.userId);
+      const subscription = await this.subscriptionService.getUserSubscription(
+        account.userId,
+      );
       return { subscription };
     } catch (error) {
       throw new HttpException(

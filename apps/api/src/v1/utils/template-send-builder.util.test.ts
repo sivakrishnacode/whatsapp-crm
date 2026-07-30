@@ -32,8 +32,8 @@ describe('renderTemplateBody', () => {
   });
 
   it('ignores surplus values', () => {
-    expect(
-      renderTemplateBody('Hi {{1}}', { body: ['Siva', 'unused'] }),
-    ).toBe('Hi Siva');
+    expect(renderTemplateBody('Hi {{1}}', { body: ['Siva', 'unused'] })).toBe(
+      'Hi Siva',
+    );
   });
 });

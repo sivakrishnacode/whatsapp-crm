@@ -66,10 +66,16 @@ export async function handleTemplateWebhookChange(
 ): Promise<void> {
   switch (change.field) {
     case 'message_template_status_update':
-      await handleStatusUpdate(change.value as TemplateStatusUpdateValue, prisma);
+      await handleStatusUpdate(
+        change.value as TemplateStatusUpdateValue,
+        prisma,
+      );
       return;
     case 'message_template_quality_update':
-      await handleQualityUpdate(change.value as TemplateQualityUpdateValue, prisma);
+      await handleQualityUpdate(
+        change.value as TemplateQualityUpdateValue,
+        prisma,
+      );
       return;
     case 'message_template_components_update':
       handleComponentsUpdate(change.value as TemplateComponentsUpdateValue);
@@ -82,7 +88,9 @@ async function handleStatusUpdate(
   prisma: PrismaService,
 ): Promise<void> {
   const metaTemplateId =
-    value.message_template_id !== undefined ? String(value.message_template_id) : null;
+    value.message_template_id !== undefined
+      ? String(value.message_template_id)
+      : null;
   if (!metaTemplateId || !value.event) {
     console.warn(
       '[template-webhook] status update missing message_template_id or event:',
@@ -95,7 +103,8 @@ async function handleStatusUpdate(
 
   const update = {
     status,
-    rejection_reason: status === 'REJECTED' ? value.reason ?? 'Rejected by Meta' : null,
+    rejection_reason:
+      status === 'REJECTED' ? (value.reason ?? 'Rejected by Meta') : null,
     submission_error: null,
   };
 
@@ -132,9 +141,14 @@ async function handleQualityUpdate(
   prisma: PrismaService,
 ): Promise<void> {
   const metaTemplateId =
-    value.message_template_id !== undefined ? String(value.message_template_id) : null;
+    value.message_template_id !== undefined
+      ? String(value.message_template_id)
+      : null;
   if (!metaTemplateId) {
-    console.warn('[template-webhook] quality update missing message_template_id:', value);
+    console.warn(
+      '[template-webhook] quality update missing message_template_id:',
+      value,
+    );
     return;
   }
 

@@ -67,11 +67,21 @@ export class FacebookController {
       });
 
       for (const mock of [
-        { id: 'page_mock_1', name: 'Acme Corp Leads Sandbox', token: 'mock_page_token_1' },
-        { id: 'page_mock_2', name: 'Instagram Growth Sandbox', token: 'mock_page_token_2' },
+        {
+          id: 'page_mock_1',
+          name: 'Acme Corp Leads Sandbox',
+          token: 'mock_page_token_1',
+        },
+        {
+          id: 'page_mock_2',
+          name: 'Instagram Growth Sandbox',
+          token: 'mock_page_token_2',
+        },
       ]) {
         await this.prisma.facebook_pages.upsert({
-          where: { user_id_page_id: { user_id: account.userId, page_id: mock.id } },
+          where: {
+            user_id_page_id: { user_id: account.userId, page_id: mock.id },
+          },
           create: {
             connection_id: conn.id,
             user_id: account.userId,
@@ -88,12 +98,14 @@ export class FacebookController {
     }
 
     // Real OAuth flow
-    const appId = process.env.META_APP_ID ?? process.env.NEXT_PUBLIC_FACEBOOK_APP_ID;
+    const appId =
+      process.env.META_APP_ID ?? process.env.NEXT_PUBLIC_FACEBOOK_APP_ID;
     const appSecret = process.env.META_APP_SECRET;
 
     if (!appId || !appSecret) {
       return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
-        error: 'Meta Developer App credentials are not configured on the server.',
+        error:
+          'Meta Developer App credentials are not configured on the server.',
       });
     }
 
@@ -107,7 +119,9 @@ export class FacebookController {
 
     if (!tokenRes.ok || tokenData.error) {
       return res.status(HttpStatus.BAD_REQUEST).json({
-        error: tokenData.error?.message ?? 'Failed to exchange long-lived access token',
+        error:
+          tokenData.error?.message ??
+          'Failed to exchange long-lived access token',
       });
     }
 
@@ -167,7 +181,9 @@ export class FacebookController {
     // 5. Upsert pages
     for (const page of pagesData.data ?? []) {
       await this.prisma.facebook_pages.upsert({
-        where: { user_id_page_id: { user_id: account.userId, page_id: page.id } },
+        where: {
+          user_id_page_id: { user_id: account.userId, page_id: page.id },
+        },
         create: {
           connection_id: conn.id,
           user_id: account.userId,
@@ -321,7 +337,9 @@ export class FacebookLeadsWebhookController {
     };
 
     if (body.object !== 'page') {
-      return res.status(200).json({ success: true, ignored: 'not page object' });
+      return res
+        .status(200)
+        .json({ success: true, ignored: 'not page object' });
     }
 
     // Process leads fire-and-forget
@@ -356,7 +374,9 @@ export class FacebookLeadsWebhookController {
     });
 
     if (!profile) {
-      this.logger.warn(`No Profile/Account found for Facebook Page user: ${page.user_id}`);
+      this.logger.warn(
+        `No Profile/Account found for Facebook Page user: ${page.user_id}`,
+      );
       return;
     }
 
@@ -383,7 +403,10 @@ export class FacebookLeadsWebhookController {
       };
 
       if (!leadRes.ok || leadData.error) {
-        this.logger.error(`Meta Graph API error for lead ${leadgenId}`, leadData.error);
+        this.logger.error(
+          `Meta Graph API error for lead ${leadgenId}`,
+          leadData.error,
+        );
         return;
       }
 
@@ -391,8 +414,10 @@ export class FacebookLeadsWebhookController {
         const val = field.values?.[0] ?? '';
         if (field.name === 'full_name' || field.name === 'name') name = val;
         else if (field.name === 'email') email = val;
-        else if (field.name === 'phone_number' || field.name === 'phone') phone = val;
-        else if (field.name === 'company' || field.name === 'company_name') company = val;
+        else if (field.name === 'phone_number' || field.name === 'phone')
+          phone = val;
+        else if (field.name === 'company' || field.name === 'company_name')
+          company = val;
       }
     }
 
@@ -415,19 +440,28 @@ export class FacebookLeadsWebhookController {
           source: 'facebook_lead',
         },
       });
-      this.logger.log(`Created contact ${contact.id} from FB lead ${leadgenId}`);
+      this.logger.log(
+        `Created contact ${contact.id} from FB lead ${leadgenId}`,
+      );
 
-      await this.webhookDeliver.dispatchWebhookEvent(accountId, 'contact.created', {
-        contact_id: contact.id,
-        phone: cleanPhone,
-        name: contact.name,
-      });
+      await this.webhookDeliver.dispatchWebhookEvent(
+        accountId,
+        'contact.created',
+        {
+          contact_id: contact.id,
+          phone: cleanPhone,
+          name: contact.name,
+        },
+      );
     } else {
       const updates: Record<string, unknown> = {};
       if (!contact.name && name) updates.name = name;
       if (!contact.email && email) updates.email = email;
       if (Object.keys(updates).length > 0) {
-        await this.prisma.contacts.update({ where: { id: contact.id }, data: updates });
+        await this.prisma.contacts.update({
+          where: { id: contact.id },
+          data: updates,
+        });
       }
     }
 

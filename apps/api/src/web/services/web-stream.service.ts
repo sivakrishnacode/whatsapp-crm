@@ -116,10 +116,7 @@ export class WebStreamService implements OnModuleInit, OnModuleDestroy {
    * the visitor sees it on their next poll or reload rather than
    * instantly.
    */
-  async publish(
-    conversationId: string,
-    event: WebStreamEvent,
-  ): Promise<void> {
+  async publish(conversationId: string, event: WebStreamEvent): Promise<void> {
     try {
       await this.redis.publish(
         `${CHANNEL_PREFIX}${conversationId}`,

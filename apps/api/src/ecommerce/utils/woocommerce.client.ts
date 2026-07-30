@@ -40,28 +40,37 @@ export class WooCommerceClient {
     this.consumerSecret = consumerSecret;
   }
 
-  private async request(endpoint: string, options?: RequestInit): Promise<Response> {
+  private async request(
+    endpoint: string,
+    options?: RequestInit,
+  ): Promise<Response> {
     const url = `${this.storeUrl}/wp-json/wc/v3${endpoint}`;
-    const auth = Buffer.from(`${this.consumerKey}:${this.consumerSecret}`).toString('base64');
-    
+    const auth = Buffer.from(
+      `${this.consumerKey}:${this.consumerSecret}`,
+    ).toString('base64');
+
     const response = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Basic ${auth}`,
+        Authorization: `Basic ${auth}`,
         ...options?.headers,
       },
     });
 
     if (!response.ok) {
-      throw new Error(`WooCommerce API error: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `WooCommerce API error: ${response.status} ${response.statusText}`,
+      );
     }
 
     return response;
   }
 
   async getProducts(perPage = 100, page = 1): Promise<WooCommerceProduct[]> {
-    const response = await this.request(`/products?per_page=${perPage}&page=${page}`);
+    const response = await this.request(
+      `/products?per_page=${perPage}&page=${page}`,
+    );
     return response.json();
   }
 
@@ -84,7 +93,9 @@ export class WooCommerceClient {
   }
 
   async getOrders(perPage = 100, page = 1): Promise<WooCommerceOrder[]> {
-    const response = await this.request(`/orders?per_page=${perPage}&page=${page}`);
+    const response = await this.request(
+      `/orders?per_page=${perPage}&page=${page}`,
+    );
     return response.json();
   }
 

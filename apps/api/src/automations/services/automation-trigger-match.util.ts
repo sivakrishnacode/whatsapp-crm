@@ -49,9 +49,8 @@ export function triggerMatches(
     triggerType === 'appointment_cancelled' ||
     triggerType === 'appointment_rescheduled'
   ) {
-    const wanted = (
-      triggerConfig as { appointment_type_id?: string } | null
-    )?.appointment_type_id;
+    const wanted = (triggerConfig as { appointment_type_id?: string } | null)
+      ?.appointment_type_id;
     if (!wanted) return true;
     return ctx?.appointment_type_id === wanted;
   }

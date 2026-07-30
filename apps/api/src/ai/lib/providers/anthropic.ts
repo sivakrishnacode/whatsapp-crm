@@ -20,7 +20,9 @@ function normalizeForAnthropic(messages: ChatMessage[]): ChatMessage[] {
     merged.shift();
   }
   if (merged.length === 0) {
-    return [{ role: 'user', content: '(The customer has not sent a message yet.)' }];
+    return [
+      { role: 'user', content: '(The customer has not sent a message yet.)' },
+    ];
   }
   return merged;
 }
