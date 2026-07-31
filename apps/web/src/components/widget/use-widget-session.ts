@@ -35,6 +35,12 @@ export function useWidgetSession(widgetKey: string) {
   const [connected, setConnected] = useState(false);
   const [agentTyping, setAgentTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from `error` on purpose. `error` renders the terminal
+  // "Chat unavailable" panel, which is right for a dead widget key or
+  // an unreachable API but wrong for "your phone number needs a
+  // country code" — that is a typo the visitor can fix, and hiding the
+  // form they would fix it in strands them.
+  const [startError, setStartError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
   const tokenKey = `${TOKEN_KEY_PREFIX}${widgetKey}`;
@@ -212,6 +218,7 @@ export function useWidgetSession(widgetKey: string) {
     async (profile?: { name?: string; email?: string; phone?: string }) => {
       if (starting) return;
       setStarting(true);
+      setStartError(null);
       try {
         const stored = readStoredToken();
         const res = await api('/session', {
@@ -223,7 +230,22 @@ export function useWidgetSession(widgetKey: string) {
             profile,
           }),
         });
-        if (!res.ok) throw new Error('Could not start the chat.');
+        if (!res.ok) {
+          // A 400 is the API rejecting what the visitor typed — most
+          // often a phone number it cannot resolve to E.164. Show its
+          // message inline and leave the form standing.
+          if (res.status === 400) {
+            const detail = (await res.json().catch(() => null)) as {
+              message?: string | string[];
+            } | null;
+            const message = Array.isArray(detail?.message)
+              ? detail.message[0]
+              : detail?.message;
+            setStartError(message || 'Please check your details and try again.');
+            return;
+          }
+          throw new Error('Could not start the chat.');
+        }
 
         const body = (await res.json()) as {
           session_token: string;
@@ -379,6 +401,8 @@ export function useWidgetSession(widgetKey: string) {
     connected,
     agentTyping,
     error,
+    /** Recoverable pre-chat validation message; the form stays open. */
+    startError,
     hasSession: sessionToken !== null,
     /**
      * Exposed so in-widget forms can post to the session-authenticated

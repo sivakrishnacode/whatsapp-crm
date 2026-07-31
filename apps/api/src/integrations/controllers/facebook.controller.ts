@@ -18,6 +18,8 @@ import { CurrentAccount } from '../../auth/decorators/current-account.decorator'
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service.js';
+import { toE164 } from '../../common/phone/phone.util';
+import { resolveAccountCountry } from '../../common/phone/account-country.util';
 
 @Controller('integrations/facebook')
 export class FacebookController {
@@ -421,11 +423,28 @@ export class FacebookLeadsWebhookController {
       }
     }
 
-    const cleanPhone = (phone || '+0000000000').replace(/[^\d+]/g, '');
+    // Lead-gen forms let the advertiser choose which fields to ask
+    // for, so a lead can arrive with no phone at all. The previous
+    // `phone || '+0000000000'` placeholder minted a contact nobody can
+    // ever be messaged on, one per phone-less lead, all colliding on
+    // the same number. There is no salvaging that: `contacts` requires
+    // a phone, an IGSID, or a web visitor id (contacts_identity_chk)
+    // and a lead has none of the other two.
+    const canonicalPhone = toE164(
+      phone,
+      await resolveAccountCountry(this.prisma, accountId),
+    );
+    if (!canonicalPhone) {
+      this.logger.warn(
+        `Facebook lead ${leadgenId} has no usable phone number — skipping. ` +
+          'Add a phone field to the lead form to capture these.',
+      );
+      return;
+    }
 
     // Upsert contact
     let contact = await this.prisma.contacts.findFirst({
-      where: { account_id: accountId, phone: cleanPhone },
+      where: { account_id: accountId, phone: canonicalPhone },
     });
 
     if (!contact) {
@@ -433,7 +452,7 @@ export class FacebookLeadsWebhookController {
         data: {
           account_id: accountId,
           user_id: page.user_id,
-          phone: cleanPhone,
+          phone: canonicalPhone,
           name: name || 'Facebook Lead',
           email: email || null,
           company: company || null,
@@ -449,7 +468,7 @@ export class FacebookLeadsWebhookController {
         'contact.created',
         {
           contact_id: contact.id,
-          phone: cleanPhone,
+          phone: canonicalPhone,
           name: contact.name,
         },
       );

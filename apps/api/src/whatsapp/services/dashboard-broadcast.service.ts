@@ -9,7 +9,9 @@ import {
   isValidE164,
   phoneVariants,
   isRecipientNotAllowedError,
+  toE164,
 } from '../../v1/utils/phone.util';
+import { resolveAccountCountry } from '../../common/phone/account-country.util';
 
 export const BROADCASTS_QUEUE = 'broadcasts-send';
 
@@ -341,10 +343,28 @@ export class DashboardBroadcastService {
     userId: string,
     csvRows: { phone: string; name?: string }[],
   ): Promise<AudienceContact[]> {
+    // Canonicalize before anything else. The map key doubles as the
+    // `phone: { in: phones }` lookup below, which is an exact string
+    // match — so an uploaded "9791766444" used to miss the existing
+    // "+919791766444" contact and then create a second row for the
+    // same person, which the unique index on phone_normalized would
+    // reject anyway. One conversion fixes the lookup and the insert.
+    const country = await resolveAccountCountry(this.prisma, accountId);
     const uniqueByPhone = new Map<string, { phone: string; name?: string }>();
+    let unparseable = 0;
     for (const row of csvRows) {
-      const phone = typeof row?.phone === 'string' ? row.phone.trim() : '';
-      if (phone) uniqueByPhone.set(phone, { phone, name: row.name });
+      const canonical =
+        typeof row?.phone === 'string' ? toE164(row.phone, country) : null;
+      if (!canonical) {
+        unparseable++;
+        continue;
+      }
+      uniqueByPhone.set(canonical, { phone: canonical, name: row.name });
+    }
+    if (unparseable > 0) {
+      this.logger.warn(
+        `Broadcast CSV: skipped ${unparseable} row(s) with an unusable phone number.`,
+      );
     }
     const phones = [...uniqueByPhone.keys()];
     if (phones.length === 0) return [];

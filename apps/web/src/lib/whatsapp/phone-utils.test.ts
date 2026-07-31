@@ -6,6 +6,9 @@ import {
   phoneVariants,
   phonesMatch,
   sanitizePhoneForMeta,
+  toE164,
+  isCanonicalE164,
+  formatPhoneDisplay,
 } from "./phone-utils";
 
 describe("sanitizePhoneForMeta", () => {
@@ -160,5 +163,100 @@ describe("isRecipientNotAllowedError", () => {
       false,
     );
     expect(isRecipientNotAllowedError("")).toBe(false);
+  });
+});
+
+describe("toE164", () => {
+  it("keeps an already-canonical number unchanged", () => {
+    expect(toE164("+919791766444", "IN")).toBe("+919791766444");
+    expect(toE164("+14155550123", "US")).toBe("+14155550123");
+  });
+
+  it("adds the missing + to a number that already carries its country code", () => {
+    // The WhatsApp webhook's shape: Meta's inbound `from` is digits
+    // only, and storing it verbatim is what started the drift.
+    expect(toE164("918300070574", "IN")).toBe("+918300070574");
+    expect(toE164("919791766444", "IN")).toBe("+919791766444");
+  });
+
+  it("adds the default country's code to a bare national number", () => {
+    expect(toE164("9791766444", "IN")).toBe("+919791766444");
+    expect(toE164("4155550123", "US")).toBe("+14155550123");
+  });
+
+  it("resolves the same digits differently per account country", () => {
+    // The reason the default is per-account and not global: ten digits
+    // are an Indian mobile in one tenant and a US one in another.
+    expect(toE164("4155550123", "IN")).toBe("+914155550123");
+    expect(toE164("4155550123", "US")).toBe("+14155550123");
+  });
+
+  it("drops a domestic trunk prefix", () => {
+    expect(toE164("07810032625", "IN")).toBe("+917810032625");
+    expect(toE164("00919791766444", "IN")).toBe("+919791766444");
+  });
+
+  it("strips punctuation and whitespace", () => {
+    expect(toE164("+91 78100 32625", "IN")).toBe("+917810032625");
+    expect(toE164("(415) 555-0123", "US")).toBe("+14155550123");
+    expect(toE164("  +14155550123  ", "US")).toBe("+14155550123");
+  });
+
+  it("prefers a valid foreign reading over the default country", () => {
+    // A UK number pasted without its + into an Indian account. Reading
+    // it as national-IN would yield +91447911123456, which is why the
+    // valid-national check has to run before the possible-national one.
+    expect(toE164("447911123456", "IN")).toBe("+447911123456");
+  });
+
+  it("returns null for input that is not a phone number", () => {
+    expect(toE164("1234", "IN")).toBeNull();
+    expect(toE164("abc", "IN")).toBeNull();
+    expect(toE164("", "IN")).toBeNull();
+    expect(toE164(null, "IN")).toBeNull();
+    expect(toE164(undefined, "IN")).toBeNull();
+  });
+
+  it("falls back to the international reading when the country is unusable", () => {
+    // A stale or malformed setting must not throw inside libphonenumber
+    // — it degrades to treating the digits as already-international.
+    expect(toE164("918300070574", "")).toBe("+918300070574");
+    expect(toE164("918300070574", "91")).toBe("+918300070574");
+    expect(toE164("918300070574", null)).toBe("+918300070574");
+  });
+
+  it("is idempotent", () => {
+    const once = toE164("9791766444", "IN");
+    expect(toE164(once, "IN")).toBe(once);
+  });
+
+  it("agrees with normalizePhone on the de-dup key", () => {
+    // Canonicalizing must not move a contact to a different bucket in
+    // the phone_normalized unique index (migration 022).
+    for (const raw of ["9791766444", "919791766444", "+91 97917 66444"]) {
+      expect(normalizePhone(toE164(raw, "IN")!)).toBe("919791766444");
+    }
+  });
+});
+
+describe("isCanonicalE164", () => {
+  it("accepts only the exact stored form", () => {
+    expect(isCanonicalE164("+919791766444")).toBe(true);
+    // Same invariant as contacts_phone_e164_chk (migration 061).
+    expect(isCanonicalE164("919791766444")).toBe(false);
+    expect(isCanonicalE164("+0919791766444")).toBe(false);
+    expect(isCanonicalE164("+91 97917 66444")).toBe(false);
+    expect(isCanonicalE164("")).toBe(false);
+  });
+});
+
+describe("formatPhoneDisplay", () => {
+  it("groups a canonical number for reading", () => {
+    expect(formatPhoneDisplay("+919791766444")).toBe("+91 97917 66444");
+  });
+
+  it("returns unparseable input unchanged rather than blanking it", () => {
+    expect(formatPhoneDisplay("not a number")).toBe("not a number");
+    expect(formatPhoneDisplay(null)).toBe("");
   });
 });

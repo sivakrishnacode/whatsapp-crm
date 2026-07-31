@@ -17,6 +17,7 @@ import {
   resolveImportTagIds,
   type ContactTagAssignment,
 } from '@/lib/contacts/resolve-import-tags';
+import { toE164 } from '@/lib/whatsapp/phone-utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
@@ -124,7 +125,7 @@ export function ImportModal({
   onImported,
 }: ImportModalProps) {
   const supabase = createClient();
-  const { accountId, canEditSettings } = useAuth();
+  const { accountId, canEditSettings, defaultCountry } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [file, setFile] = useState<File | null>(null);
@@ -220,8 +221,29 @@ export function ImportModal({
       let skipped = 0;
       let failed = 0;
 
+      // 0) Canonicalize to E.164 first. Two reasons it has to come
+      //    before the de-dupe and not after:
+      //      - contacts_phone_e164_chk (migration 061) rejects any
+      //        other shape, and this modal inserts into Supabase
+      //        directly, so a raw CSV value would fail every row;
+      //      - a file holding both "9791766444" and "+919791766444"
+      //        has two different digit strings for one person, so
+      //        de-duping on the raw values would let a duplicate
+      //        through to be rejected by the unique index instead.
+      //    A row whose phone is not a phone number at all counts as
+      //    failed, not skipped — skipped means "already had them".
+      const canonicalRows: ParsedContactRow[] = [];
+      for (const row of parsedRows) {
+        const canonical = toE164(row.phone, defaultCountry);
+        if (!canonical) {
+          failed++;
+          continue;
+        }
+        canonicalRows.push({ ...row, phone: canonical });
+      }
+
       // 1) De-dupe within the file by normalized phone (keep first).
-      const { unique, duplicates: inFileDupes } = dedupeByPhone(parsedRows);
+      const { unique, duplicates: inFileDupes } = dedupeByPhone(canonicalRows);
       skipped += inFileDupes;
 
       // 2) Skip numbers already in this account. One read of the

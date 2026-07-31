@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { formatCurrency } from '@/lib/currency';
+import { toE164 } from '@/lib/whatsapp/phone-utils';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, MessageTemplate } from '@/types';
 import {
@@ -54,7 +55,7 @@ export function ContactDetailView({
   onUpdated,
 }: ContactDetailViewProps) {
   const supabase = createClient();
-  const { accountId, defaultCurrency } = useAuth();
+  const { accountId, defaultCurrency, defaultCountry } = useAuth();
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
@@ -202,12 +203,23 @@ export function ContactDetailView({
       return;
     }
 
+    // Canonical E.164 or nothing — contacts_phone_e164_chk (migration
+    // 060) rejects anything else, and this panel writes to Supabase
+    // directly rather than through the API.
+    const canonicalPhone = toE164(editPhone, defaultCountry);
+    if (!canonicalPhone) {
+      toast.error(
+        'That phone number does not look right. Include the country code, e.g. +91.',
+      );
+      return;
+    }
+
     setSavingDetails(true);
     const { error } = await supabase
       .from('contacts')
       .update({
         name: editName.trim() || null,
-        phone: editPhone.trim(),
+        phone: canonicalPhone,
         email: editEmail.trim() || null,
         company: editCompany.trim() || null,
         updated_at: new Date().toISOString(),

@@ -30,6 +30,7 @@ export function WidgetForm({
   sessionToken,
   onSubmitted,
   compact = true,
+  error,
 }: {
   form: PublicForm;
   widgetKey: string;
@@ -40,6 +41,13 @@ export function WidgetForm({
   sessionToken: string | null;
   onSubmitted?: (answers: Record<string, unknown>) => void;
   compact?: boolean;
+  /**
+   * Rejection from the caller's post-submit step, shown above the form.
+   * A pre-chat form hands its answers to `start()`, which can bounce
+   * them — an unparseable phone number, say — and the visitor needs to
+   * see why without the widget dropping into its terminal error panel.
+   */
+  error?: string | null;
 }) {
   const submit = useCallback(
     async (payload: FormSubmitPayload): Promise<FormSubmitResult> => {
@@ -105,6 +113,11 @@ export function WidgetForm({
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-4">
+      {error && (
+        <p className="mb-3 rounded-md bg-red-500/10 px-2.5 py-2 text-[11px] text-red-500">
+          {error}
+        </p>
+      )}
       <FormRenderer form={form} onSubmit={submit} compact={compact} />
     </div>
   );

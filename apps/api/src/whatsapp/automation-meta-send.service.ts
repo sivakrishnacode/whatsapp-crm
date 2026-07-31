@@ -6,6 +6,7 @@ import {
   sanitizePhoneForMeta,
   isValidE164,
   phoneVariants,
+  metaVariantToE164,
   isRecipientNotAllowedError,
 } from './phone-utils.util';
 import { renderTemplateBody } from '../v1/utils/template-send-builder.util';
@@ -132,10 +133,15 @@ export class AutomationMetaSendService {
     }
 
     if (workingPhone !== sanitized) {
-      await this.prisma.contacts.update({
-        where: { id: contact.id },
-        data: { phone: workingPhone },
-      });
+      // Canonical form only — `workingPhone` is Meta's digits-only
+      // wire format. See metaVariantToE164.
+      const canonical = metaVariantToE164(workingPhone);
+      if (canonical) {
+        await this.prisma.contacts.update({
+          where: { id: contact.id },
+          data: { phone: canonical },
+        });
+      }
     }
 
     // Persist the sent message so it appears in the inbox with a real

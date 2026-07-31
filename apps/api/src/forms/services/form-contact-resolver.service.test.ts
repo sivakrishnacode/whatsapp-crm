@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FormContactResolverService } from './form-contact-resolver.service';
+import { clearAccountCountryCache } from '../../common/phone/account-country.util';
 import type { FormField } from '../form.types';
+
+// resolveAccountCountry memoizes per account for a minute. Left alone,
+// the first test to touch an account would pin its country for every
+// later one, so a per-country case would silently assert the previous
+// test's value.
+beforeEach(() => clearAccountCountryCache());
 
 const ACCOUNT = 'acc-1';
 const OTHER_ACCOUNT = 'acc-2';
@@ -36,6 +43,8 @@ function makePrisma(seed: {
     ig_scoped_id?: string | null;
   }>;
   customFields?: Array<{ id: string; account_id: string }>;
+  /** Account default country for phone canonicalization (ISO alpha-2). */
+  defaultCountry?: string;
 }) {
   const contacts = (seed.contacts ?? []).map((c) => ({
     phone: null,
@@ -149,6 +158,16 @@ function makePrisma(seed: {
         return Promise.resolve({});
       }),
     },
+    // resolveAccountCountry reads this to canonicalize a phone that
+    // arrives without a country code. Present in the double so the
+    // resolver takes its real path — without it the lookup throws and
+    // is swallowed into the app-wide default, which would pass for the
+    // wrong reason and hide a regression in the country plumbing.
+    account: {
+      findUnique: vi.fn(() =>
+        Promise.resolve({ defaultCountry: seed.defaultCountry ?? 'IN' }),
+      ),
+    },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn(prisma),
     ),
@@ -182,7 +201,49 @@ describe('resolve — creating', () => {
     expect(result.merged).toBe(false);
     const created = state.contacts.find((c) => c.id === result.contactId);
     expect(created?.name).toBe('Ada');
-    expect(created?.phone).toBe('+91 98765 43210');
+    // Stored canonically, not as typed — respondents write numbers
+    // however they like and contacts_phone_e164_chk (migration 061)
+    // takes exactly one shape.
+    expect(created?.phone).toBe('+919876543210');
+  });
+
+  it('supplies the account country for a bare national number', async () => {
+    // The web-widget shape: a respondent types their local number with
+    // no country code, so one has to be assumed — per account, because
+    // the same ten digits are Indian in one tenant and American in
+    // another.
+    const { prisma, state } = makePrisma({ defaultCountry: 'US' });
+    const result = await service(prisma).resolve({
+      accountId: ACCOUNT,
+      ownerUserId: OWNER,
+      fields: fields({ field_key: 'p', type: 'phone', mapping: 'phone' }),
+      data: { p: '4155550123' },
+    });
+
+    expect(
+      state.contacts.find((c) => c.id === result.contactId)?.phone,
+    ).toBe('+14155550123');
+  });
+
+  it('drops a phone answer that is not a phone number', async () => {
+    // Storing it raw would fail contacts_phone_e164_chk and take the
+    // whole submission down. Nothing is lost — the raw answer is still
+    // on the form_submissions row — and the name still identifies them.
+    const { prisma, state } = makePrisma({});
+    const result = await service(prisma).resolve({
+      accountId: ACCOUNT,
+      ownerUserId: OWNER,
+      fields: fields(
+        { field_key: 'n', mapping: 'name' },
+        { field_key: 'p', type: 'phone', mapping: 'phone' },
+      ),
+      data: { n: 'Ada', p: 'call me maybe' },
+    });
+
+    expect(result.created).toBe(true);
+    const created = state.contacts.find((c) => c.id === result.contactId);
+    expect(created?.name).toBe('Ada');
+    expect(created?.phone).toBeNull();
   });
 
   it('ignores unmapped fields when building identity', async () => {
@@ -446,8 +507,9 @@ describe('resolve — the web stub merge', () => {
     expect(result.contactId).toBe('stub');
     expect(result.created).toBe(false);
     expect(result.merged).toBe(false);
+    // The submission's bare `919876543210` reaches the stub canonical.
     expect(state.contacts.find((c) => c.id === 'stub')?.phone).toBe(
-      '919876543210',
+      '+919876543210',
     );
   });
 });

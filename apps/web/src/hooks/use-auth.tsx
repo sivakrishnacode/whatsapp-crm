@@ -13,6 +13,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
+import { DEFAULT_COUNTRY } from "@/lib/whatsapp/phone-utils";
 import {
   canEditSettings as canEditSettingsFor,
   canManageMembers as canManageMembersFor,
@@ -44,6 +45,10 @@ interface AccountSummary {
   /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'USD' in the
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
+  /** Country assumed for phone numbers entered without a country code
+   *  (ISO 3166-1 alpha-2). NOT NULL DEFAULT 'IN' in the DB (migration
+   *  059); narrowed to DEFAULT_COUNTRY when absent. */
+  default_country: string;
 }
 
 interface AuthContextValue {
@@ -89,6 +94,12 @@ interface AuthContextValue {
    *  while loading or when no account is resolved, so callers can use
    *  it unconditionally. */
   defaultCurrency: string;
+  /** Country assumed for phone numbers typed without a country code.
+   *  Pass this to toE164() on every contact write — the contacts UI
+   *  writes to Supabase directly, so these components are real write
+   *  paths and the CHECK constraint (migration 061) rejects anything
+   *  un-normalized. Falls back to DEFAULT_COUNTRY while loading. */
+  defaultCountry: string;
   /** True if `accountRole === 'owner'`. */
   isOwner: boolean;
   /** True if `accountRole === 'admin'` (does NOT include owner — use canManageMembers for "admin or above"). */
@@ -181,9 +192,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data.account_id) {
           const { data: account, error: accountErr } = await supabase
             .from("accounts")
-            // default_currency added in migration 021; narrowed to the
-            // USD fallback below for older schemas where it reads null.
-            .select("id, name, default_currency")
+            // default_currency added in migration 021, default_country
+            // in 059; both narrowed to their fallbacks below for older
+            // schemas where they read null.
+            .select("id, name, default_currency, default_country")
             .eq("id", data.account_id)
             .maybeSingle();
           if (accountErr) {
@@ -198,6 +210,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               id: account.id,
               name: account.name,
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
+              default_country: account.default_country ?? DEFAULT_COUNTRY,
             };
           }
         }
@@ -390,6 +403,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshProfile,
         account,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
+        defaultCountry: account?.default_country ?? DEFAULT_COUNTRY,
         subscription,
         subscriptionLoading,
         ...derived,
@@ -422,6 +436,7 @@ export function useAuth(): AuthContextValue {
       refreshProfile: async () => {},
       account: null,
       defaultCurrency: DEFAULT_CURRENCY,
+      defaultCountry: DEFAULT_COUNTRY,
       subscription: null,
       subscriptionLoading: false,
       accountId: null,

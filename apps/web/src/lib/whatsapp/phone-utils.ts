@@ -1,3 +1,108 @@
+import { parsePhoneNumberFromString } from 'libphonenumber-js'
+
+/**
+ * Phone numbers — the web app's authority. Mirrors
+ * `apps/api/src/common/phone/phone.util.ts`; the two must agree,
+ * because the contacts UI writes to Supabase directly (RLS) rather
+ * than through the API, so both sides are real write paths.
+ *
+ * ## The two formats, and which one goes where
+ *
+ * - **Canonical (`toE164`)** — `+<country><subscriber>`, e.g.
+ *   `+919791766444`. The ONLY shape allowed in `contacts.phone`;
+ *   migration 061 enforces it with a CHECK constraint, so an
+ *   un-normalized insert from here fails loudly rather than
+ *   re-introducing a mixed format.
+ * - **Meta wire format (`sanitizePhoneForMeta`)** — digits only, no
+ *   `+`. Applied at send time and nowhere else.
+ *
+ * `normalizePhone` (digits-only) still mirrors the
+ * `contacts.phone_normalized` generated column and remains the
+ * de-duplication key — canonicalizing `phone` does not change it.
+ */
+
+/**
+ * App-wide fallback country (ISO 3166-1 alpha-2) for numbers typed
+ * without a country code. Per-account overrides live in
+ * `accounts.default_country` (migration 059) and reach components as
+ * `useAuth().defaultCountry`.
+ */
+export const DEFAULT_COUNTRY = 'IN'
+
+/**
+ * Convert any user-typed or imported phone string to canonical
+ * E.164, or null when it cannot plausibly be a phone number.
+ *
+ * `defaultCountry` (ISO alpha-2) resolves the ambiguous case: a bare
+ * national number like `9791766444` carries no country code, so one
+ * has to be assumed. Pass `useAuth().defaultCountry`.
+ *
+ * The four-step precedence — explicit `+`, then valid-national,
+ * then valid-international, then the same two relaxed to
+ * possible-only — is documented in full on the API twin. The short
+ * version: a digit string with no `+` is genuinely ambiguous, so we
+ * ask libphonenumber which reading yields a real number and take the
+ * strictest one that does.
+ */
+export function toE164(
+  raw: string | null | undefined,
+  defaultCountry: string | null | undefined = DEFAULT_COUNTRY,
+): string | null {
+  if (!raw) return null
+
+  const trimmed = String(raw).trim()
+  if (!trimmed) return null
+
+  if (trimmed.startsWith('+')) {
+    const parsed = parsePhoneNumberFromString(trimmed)
+    return parsed?.isPossible() ? parsed.number : null
+  }
+
+  const digits = trimmed.replace(/\D/g, '')
+  if (!digits) return null
+
+  // An ISO alpha-2 is what libphonenumber expects; anything else
+  // would throw, so it is dropped and we fall through to the
+  // international readings.
+  const country = /^[A-Za-z]{2}$/.test(defaultCountry ?? '')
+    ? (defaultCountry as string).toUpperCase()
+    : undefined
+
+  const national = country
+    ? parsePhoneNumberFromString(digits, country as never)
+    : undefined
+  const international = parsePhoneNumberFromString(`+${digits}`)
+
+  if (national?.isValid()) return national.number
+  if (international?.isValid()) return international.number
+  if (international?.isPossible()) return international.number
+  if (national?.isPossible()) return national.number
+
+  return null
+}
+
+/**
+ * True when a string is already in the exact canonical storage form.
+ * This is the invariant migration 061's CHECK constraint enforces.
+ */
+export function isCanonicalE164(phone: string): boolean {
+  return /^\+[1-9]\d{6,14}$/.test(phone)
+}
+
+/**
+ * Render a stored number for display, e.g. `+919791766444` →
+ * `+91 97917 66444`. Falls back to the input unchanged when it
+ * cannot be parsed, so a legacy or hand-edited value still shows
+ * rather than vanishing.
+ *
+ * Display only — never write this back to the DB.
+ */
+export function formatPhoneDisplay(phone: string | null | undefined): string {
+  if (!phone) return ''
+  const parsed = parsePhoneNumberFromString(phone.trim())
+  return parsed?.isPossible() ? parsed.formatInternational() : phone
+}
+
 /**
  * Sanitize phone number for Meta WhatsApp API.
  * Meta requires digits only — no + prefix, no spaces, no dashes.

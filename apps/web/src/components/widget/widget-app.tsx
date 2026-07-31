@@ -34,6 +34,7 @@ export function WidgetApp({
     messages,
     agentTyping,
     error,
+    startError,
     hasSession,
     starting,
     start,
@@ -208,12 +209,14 @@ export function WidgetApp({
             widgetKey={widgetKey}
             sessionToken={null}
             onSubmitted={(answers) => void start(profileFromAnswers(answers))}
+            error={startError}
           />
         ) : (
           <PreChatForm
             accent={accent}
             starting={starting}
             onSubmit={(profile) => void start(profile)}
+            error={startError}
           />
         )}
         {showBranding && (
@@ -322,10 +325,15 @@ function PreChatForm({
   accent,
   starting,
   onSubmit,
+  error,
 }: {
   accent: string;
   starting: boolean;
   onSubmit: (profile: { name: string; phone: string; email?: string }) => void;
+  /** Recoverable rejection from `start()` — most often a phone number
+   *  the API could not resolve to E.164. Shown above the button so the
+   *  visitor can correct it in place. */
+  error?: string | null;
 }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -404,19 +412,27 @@ function PreChatForm({
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={handleSubmit}
-        disabled={!name.trim() || !phone.trim() || starting}
-        className="mt-6 flex h-9 w-full items-center justify-center rounded-lg font-medium text-white shadow-xs transition-opacity hover:opacity-90 disabled:opacity-50 text-xs cursor-pointer"
-        style={{ backgroundColor: accent }}
-      >
-        {starting ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          'Start Conversation'
+      <div className="mt-6 flex flex-col gap-2">
+        {error && (
+          <p className="rounded-md bg-red-500/10 px-2.5 py-2 text-[11px] text-red-500">
+            {error}
+          </p>
         )}
-      </button>
+
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={!name.trim() || !phone.trim() || starting}
+          className="flex h-9 w-full items-center justify-center rounded-lg font-medium text-white shadow-xs transition-opacity hover:opacity-90 disabled:opacity-50 text-xs cursor-pointer"
+          style={{ backgroundColor: accent }}
+        >
+          {starting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            'Start Conversation'
+          )}
+        </button>
+      </div>
     </form>
   );
 }

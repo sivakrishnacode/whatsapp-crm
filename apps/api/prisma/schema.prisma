@@ -15,6 +15,10 @@ model Account {
   createdAt                     DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                     DateTime                        @default(now()) @map("updated_at") @db.Timestamptz(6)
   defaultCurrency               String                          @default("USD") @map("default_currency")
+  /// ISO 3166-1 alpha-2 assumed for phone numbers entered without a
+  /// country code (migration 059). Read by toE164() on every contact
+  /// write path — see src/common/phone/phone.util.ts.
+  defaultCountry                String                          @default("IN") @map("default_country")
   account_invitations           account_invitations[]
   users                         users                           @relation(fields: [ownerUserId], references: [id], onUpdate: NoAction)
   ai_configs                    ai_configs?
@@ -943,6 +947,10 @@ model contact_tags {
 model contacts {
   id                            String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id                       String                          @db.Uuid
+  /// Canonical E.164, e.g. "+919791766444" — enforced by
+  /// contacts_phone_e164_chk (migration 061). Every write path must run
+  /// its input through toE164() first; Meta's digits-only form is a
+  /// send-time conversion, never a stored one.
   /// NULL for Instagram-only contacts. See contacts_identity_chk: every
   /// contact must carry a phone OR an ig_scoped_id.
   phone                         String?

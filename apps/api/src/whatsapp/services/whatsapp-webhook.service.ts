@@ -16,7 +16,13 @@ import {
   isLegacyFormat,
   encrypt,
 } from '../../common/security/encryption.util';
-import { normalizePhone, phonesMatch } from '../phone-utils.util';
+import {
+  normalizePhone,
+  phonesMatch,
+  toE164,
+  isCanonicalE164,
+} from '../phone-utils.util';
+import { resolveAccountCountry } from '../../common/phone/account-country.util';
 import {
   isTemplateWebhookField,
   handleTemplateWebhookChange,
@@ -1011,6 +1017,41 @@ export class WhatsappWebhookService {
       candidates.find((c) => phonesMatch(c.phone, phone)) ?? null;
 
     if (existingContact) {
+      // Meta hands us digits with no `+`. An existing row created
+      // before phones were canonicalized — or by this very webhook —
+      // still holds that shape, so repair it in passing rather than
+      // waiting for a backfill: this is the highest-volume contact
+      // path in the app, and leaving it is what let the format drift.
+      if (existingContact.phone && !isCanonicalE164(existingContact.phone)) {
+        const canonical = toE164(
+          existingContact.phone,
+          await resolveAccountCountry(this.prisma, accountId),
+        );
+        if (canonical && canonical !== existingContact.phone) {
+          try {
+            const repaired = await this.prisma.contacts.update({
+              where: { id: existingContact.id },
+              data: {
+                phone: canonical,
+                ...(name && name !== existingContact.name ? { name } : {}),
+                updated_at: new Date(),
+              },
+            });
+            return { contact: repaired, wasCreated: false };
+          } catch (err) {
+            // A collision means another contact already holds the
+            // canonical number — the two are the same person, filed
+            // twice under different formats. That is a merge decision
+            // (merge_contacts_into, migration 060), not something to
+            // resolve mid-webhook, and never a reason to drop an
+            // inbound message.
+            this.logger.error(
+              `Error canonicalizing contact phone: ${String(err)}`,
+            );
+          }
+        }
+      }
+
       if (name && name !== existingContact.name) {
         try {
           const updated = await this.prisma.contacts.update({
@@ -1025,13 +1066,28 @@ export class WhatsappWebhookService {
       return { contact: existingContact, wasCreated: false };
     }
 
+    // Meta's inbound `from` is digits only ("919791766444"). Storing
+    // it verbatim is what made the same person look different
+    // depending on which channel saw them first; `contacts.phone` is
+    // canonical E.164 and migration 061 enforces it.
+    const canonicalPhone = toE164(
+      phone,
+      await resolveAccountCountry(this.prisma, accountId),
+    );
+    if (!canonicalPhone) {
+      this.logger.error(
+        `Inbound message from an unparseable number, dropping: ${phone}`,
+      );
+      return null;
+    }
+
     try {
       const newContact = await this.prisma.contacts.create({
         data: {
           account_id: accountId,
           user_id: configOwnerUserId,
-          phone,
-          name: name || phone,
+          phone: canonicalPhone,
+          name: name || canonicalPhone,
           // Includes click-to-WhatsApp ad traffic: a CTWA click reaches
           // us as an ordinary inbound message carrying a referral, so
           // this is the creation path for those contacts too.

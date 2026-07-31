@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { parseMapping, type FormField } from '../form.types';
+import { toE164 } from '../../common/phone/phone.util';
+import { resolveAccountCountry } from '../../common/phone/account-country.util';
 
 export interface ResolveContactInput {
   accountId: string;
@@ -61,6 +63,7 @@ export class FormContactResolverService {
 
   async resolve(input: ResolveContactInput): Promise<ResolveContactResult> {
     const identity = this.extractIdentity(input.fields, input.data);
+    await this.canonicalizePhone(input.accountId, identity);
 
     // No identifying answer at all (a feedback form with only a rating).
     // Attaching to the widget's contact if there is one is still right;
@@ -161,6 +164,44 @@ export class FormContactResolverService {
     }
 
     return identity;
+  }
+
+  /**
+   * Rewrite `identity.phone` in place to canonical E.164, or drop it.
+   *
+   * Form respondents type whatever they like — "98765 43210", their
+   * local number with no country code, a number with a typo. The
+   * column takes exactly one shape (contacts_phone_e164_chk), so this
+   * has to happen before the value reaches a lookup or an insert;
+   * running it here rather than at each of the three call sites means
+   * find, create and enrich cannot disagree about the number.
+   *
+   * An unparseable answer is dropped rather than stored raw. It would
+   * fail the CHECK constraint and take the whole submission down with
+   * it, and nothing is actually lost: the raw answer is still on the
+   * `form_submissions` row, and name/email can still identify the
+   * person.
+   */
+  private async canonicalizePhone(
+    accountId: string,
+    identity: { phone?: string },
+  ): Promise<void> {
+    if (!identity.phone) return;
+
+    const canonical = toE164(
+      identity.phone,
+      await resolveAccountCountry(this.prisma, accountId),
+    );
+
+    if (!canonical) {
+      this.logger.warn(
+        `Form submission carried an unparseable phone, ignoring it: ${identity.phone}`,
+      );
+      delete identity.phone;
+      return;
+    }
+
+    identity.phone = canonical;
   }
 
   /**

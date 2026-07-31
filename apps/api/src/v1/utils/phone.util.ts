@@ -1,67 +1,16 @@
-export function sanitizePhoneForMeta(phone: string): string {
-  if (!phone) return '';
-  return phone.replace(/\D/g, '');
-}
-
-export function normalizePhone(phone: string): string {
-  if (!phone) return '';
-  return phone.replace(/\D/g, '');
-}
-
 /**
- * Nullable-tolerant: `contacts.phone` is nullable since Instagram
- * landed (Instagram-only contacts have an IGSID and no phone). A
- * missing phone matches nothing. Kept in step with the identical
- * helper in whatsapp/phone-utils.util.ts.
+ * Re-export shim — see `src/common/phone/phone.util.ts` for the
+ * implementation and for why the duplicate copies were collapsed.
  */
-export function phonesMatch(
-  phone1: string | null | undefined,
-  phone2: string | null | undefined,
-): boolean {
-  if (!phone1 || !phone2) return false;
-  const n1 = normalizePhone(phone1);
-  const n2 = normalizePhone(phone2);
-  if (n1 === n2) return true;
-  if (n1.length >= 8 && n2.length >= 8) {
-    return n1.slice(-8) === n2.slice(-8);
-  }
-  return false;
-}
-
-export function isValidE164(phone: string): boolean {
-  return /^\+?[1-9]\d{6,14}$/.test(phone);
-}
-
-export function phoneVariants(sanitized: string): string[] {
-  if (!sanitized) return [];
-  const seen = new Set<string>();
-  const push = (v: string) => {
-    if (v && !seen.has(v)) seen.add(v);
-  };
-
-  push(sanitized);
-
-  for (const ccLen of [1, 2, 3]) {
-    if (sanitized.length <= ccLen) continue;
-    const cc = sanitized.slice(0, ccLen);
-    const rest = sanitized.slice(ccLen);
-    if (!rest.startsWith('0')) {
-      push(cc + '0' + rest);
-    }
-  }
-
-  for (const ccLen of [1, 2, 3]) {
-    if (sanitized.length <= ccLen + 1) continue;
-    const cc = sanitized.slice(0, ccLen);
-    const rest = sanitized.slice(ccLen);
-    if (rest.startsWith('0')) {
-      push(cc + rest.slice(1));
-    }
-  }
-
-  return [...seen];
-}
-
-export function isRecipientNotAllowedError(message: string): boolean {
-  return /131030|not in allowed list|not in the allowed list/i.test(message);
-}
+export {
+  DEFAULT_COUNTRY,
+  toE164,
+  sanitizePhoneForMeta,
+  normalizePhone,
+  phonesMatch,
+  isValidE164,
+  isCanonicalE164,
+  phoneVariants,
+  metaVariantToE164,
+  isRecipientNotAllowedError,
+} from '../../common/phone/phone.util';

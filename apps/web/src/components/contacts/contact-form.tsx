@@ -11,6 +11,7 @@ import {
   isUniqueViolation,
   type ExistingContact,
 } from '@/lib/contacts/dedupe';
+import { toE164, formatPhoneDisplay } from '@/lib/whatsapp/phone-utils';
 import {
   Dialog,
   DialogContent,
@@ -45,7 +46,7 @@ export function ContactForm({
   onViewExisting,
 }: ContactFormProps) {
   const supabase = createClient();
-  const { accountId } = useAuth();
+  const { accountId, defaultCountry } = useAuth();
   const isEdit = !!contact;
 
   const [name, setName] = useState('');
@@ -66,6 +67,14 @@ export function ContactForm({
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
+
+  // Canonical form of what's typed so far, or '' while it isn't yet a
+  // phone number. Cheap enough to derive on render — libphonenumber
+  // parses a string, and this is one field on one dialog.
+  const canonicalPreview = toE164(phone, defaultCountry);
+  const phonePreview = canonicalPreview
+    ? formatPhoneDisplay(canonicalPreview)
+    : '';
 
   useEffect(() => {
     if (open) {
@@ -127,6 +136,19 @@ export function ContactForm({
       return;
     }
 
+    // `contacts.phone` stores canonical E.164 only
+    // (contacts_phone_e164_chk, migration 061). This form writes to
+    // Supabase directly rather than through the API, so normalizing
+    // here is not a nicety — an un-normalized insert is rejected by
+    // the database.
+    const canonicalPhone = toE164(phone, defaultCountry);
+    if (!canonicalPhone) {
+      toast.error(
+        'That phone number does not look right. Include the country code, e.g. +91.',
+      );
+      return;
+    }
+
     // Hard-block an exact duplicate on create (the DB unique index is
     // the real backstop; this avoids a round-trip + a raw error toast).
     if (!isEdit && dupMatch?.exact) {
@@ -151,7 +173,7 @@ export function ContactForm({
           .from('contacts')
           .update({
             name: name.trim() || null,
-            phone: phone.trim(),
+            phone: canonicalPhone,
             email: email.trim() || null,
             company: company.trim() || null,
             updated_at: new Date().toISOString(),
@@ -165,7 +187,7 @@ export function ContactForm({
             user_id: user.id,
             account_id: accountId,
             name: name.trim() || null,
-            phone: phone.trim(),
+            phone: canonicalPhone,
             email: email.trim() || null,
             company: company.trim() || null,
             // Set on insert only — never in the update branch above.
@@ -294,6 +316,15 @@ export function ContactForm({
                   )}
                 </div>
               </div>
+            ) : phonePreview ? (
+              // Show what will actually be stored. The account's
+              // default country silently supplies a missing code, and
+              // a number quietly becoming +91 something is exactly the
+              // guess the user should get to see before saving.
+              <p className="text-xs text-muted-foreground">
+                Will be saved as{' '}
+                <span className="text-foreground">{phonePreview}</span>
+              </p>
             ) : (
               <p className="text-xs text-muted-foreground">
                 Include country code, e.g. +1 for US

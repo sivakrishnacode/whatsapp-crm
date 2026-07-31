@@ -28,6 +28,7 @@ import {
   sanitizePhoneForMeta,
   isValidE164,
   phoneVariants,
+  metaVariantToE164,
   isRecipientNotAllowedError,
 } from '../utils/phone.util';
 import { ApiError } from '../utils/respond.util';
@@ -469,13 +470,19 @@ export class MessageSendService {
     }
 
     if (workingPhone !== sanitizedPhone) {
-      this.logger.log(
-        `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`,
-      );
-      await this.prisma.contacts.update({
-        where: { id: contact.id },
-        data: { phone: workingPhone },
-      });
+      // Store the correction canonically — `workingPhone` is Meta's
+      // digits-only wire form, and writing that back would undo the
+      // E.164 invariant on every trunk-variant retry.
+      const canonical = metaVariantToE164(workingPhone);
+      if (canonical) {
+        this.logger.log(
+          `[send-message] Auto-corrected contact phone: ${contact.phone} → ${canonical}`,
+        );
+        await this.prisma.contacts.update({
+          where: { id: contact.id },
+          data: { phone: canonical },
+        });
+      }
     }
 
     let finalContentText = contentText || null;

@@ -1,11 +1,7 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
-import {
-  normalizePhone,
-  phonesMatch,
-  isValidE164,
-  sanitizePhoneForMeta,
-} from './phone.util';
+import { normalizePhone, phonesMatch, toE164 } from './phone.util';
+import { resolveAccountCountry } from '../../common/phone/account-country.util';
 
 export interface ApiContact {
   id: string;
@@ -124,14 +120,21 @@ export async function findOrCreateContact(
   auditUserId: string,
   input: ContactInput,
 ): Promise<{ id: string; created: boolean }> {
-  const sanitized = sanitizePhoneForMeta(input.phone);
-  if (!isValidE164(sanitized)) {
+  // Canonical E.164 is what gets stored — the previous
+  // sanitizePhoneForMeta call validated E.164 and then wrote the
+  // digits-only form, so an API-created contact and a hand-entered one
+  // held the same number in two shapes.
+  const canonical = toE164(
+    input.phone,
+    await resolveAccountCountry(prisma, accountId),
+  );
+  if (!canonical) {
     throw new Error(
       "'phone' must be a valid phone number in E.164 format (e.g. +14155550123)",
     );
   }
 
-  const existing = await findExistingContact(prisma, accountId, sanitized);
+  const existing = await findExistingContact(prisma, accountId, canonical);
   if (existing) return { id: existing.id, created: false };
 
   try {
@@ -139,8 +142,8 @@ export async function findOrCreateContact(
       data: {
         account_id: accountId,
         user_id: auditUserId,
-        phone: sanitized,
-        name: input.name ?? sanitized,
+        phone: canonical,
+        name: input.name ?? canonical,
         email: input.email ?? null,
         company: input.company ?? null,
         source: 'api',
@@ -151,15 +154,15 @@ export async function findOrCreateContact(
     if (webhookDeliver) {
       void webhookDeliver.dispatchWebhookEvent(accountId, 'contact.created', {
         contact_id: created.id,
-        phone: sanitized,
-        name: input.name ?? sanitized,
+        phone: canonical,
+        name: input.name ?? canonical,
       });
     }
 
     return { id: created.id, created: true };
   } catch (error) {
     if (isUniqueViolation(error)) {
-      const raced = await findExistingContact(prisma, accountId, sanitized);
+      const raced = await findExistingContact(prisma, accountId, canonical);
       if (raced) return { id: raced.id, created: false };
     }
     console.error('[api/v1/contacts] create error:', error);

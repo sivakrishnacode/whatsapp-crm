@@ -3,6 +3,8 @@ import type { Prisma } from '@prisma/client';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { toE164 } from '../../common/phone/phone.util';
+import { resolveAccountCountry } from '../../common/phone/account-country.util';
 import { WebConfigService } from './web-config.service';
 import {
   generateVisitorId,
@@ -173,6 +175,21 @@ export class WebSessionService {
       );
     }
 
+    // The widget's phone field is free text, so this is where bare
+    // local numbers entered the CRM ("9791766444" with no country
+    // code). Rejecting is right here and not on the form paths: the
+    // visitor is at the keyboard and can fix it, whereas a form
+    // submission is fire-and-forget.
+    const canonicalPhone = toE164(
+      input.profile.phone,
+      await resolveAccountCountry(this.prisma, input.accountId),
+    );
+    if (!canonicalPhone) {
+      throw new BadRequestException(
+        'That mobile number does not look right. Include your country code, e.g. +91.',
+      );
+    }
+
     const verifiedIdentity = this.verifyIdentity(input.identity, secret);
     const visitorId = generateVisitorId();
 
@@ -187,7 +204,7 @@ export class WebSessionService {
           web_visitor_id: visitorId,
           name: input.profile?.name ?? null,
           email: input.profile?.email ?? null,
-          phone: input.profile?.phone ?? null,
+          phone: canonicalPhone,
           source: 'web',
         },
         select: { id: true },
@@ -298,7 +315,17 @@ export class WebSessionService {
     const data: Record<string, string> = {};
     if (!current.name && profile.name) data.name = profile.name;
     if (!current.email && profile.email) data.email = profile.email;
-    if (!current.phone && profile.phone) data.phone = profile.phone;
+    if (!current.phone && profile.phone) {
+      // Unlike createSession this cannot reject: the visitor is mid-
+      // conversation and their session must survive a phone we cannot
+      // parse. Leaving the field empty keeps them reachable on the web
+      // channel and lets a later submission fill it in properly.
+      const canonical = toE164(
+        profile.phone,
+        await resolveAccountCountry(this.prisma, accountId),
+      );
+      if (canonical) data.phone = canonical;
+    }
     if (Object.keys(data).length === 0) return;
 
     await this.prisma.contacts.update({

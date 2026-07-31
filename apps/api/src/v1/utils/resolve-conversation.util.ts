@@ -1,11 +1,12 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApiError } from './respond.util';
-import { sanitizePhoneForMeta, isValidE164 } from './phone.util';
+import { toE164 } from './phone.util';
 import {
   resolveAuditUserId,
   findExistingContact,
   isUniqueViolation,
 } from './contacts.util';
+import { resolveAccountCountry } from '../../common/phone/account-country.util';
 import { HttpStatus } from '@nestjs/common';
 
 export interface ResolvedConversation {
@@ -21,8 +22,15 @@ export async function resolveConversationByPhone(
   phone: string,
   name?: string | null,
 ): Promise<ResolvedConversation> {
-  const sanitized = sanitizePhoneForMeta(phone);
-  if (!isValidE164(sanitized)) {
+  // Was sanitizePhoneForMeta + isValidE164, which validated E.164 and
+  // then stored the digits-only form it had just validated — dropping
+  // the very `+` that made it E.164. toE164 both validates and yields
+  // the canonical value, so what is checked is what is stored.
+  const canonical = toE164(
+    phone,
+    await resolveAccountCountry(prisma, accountId),
+  );
+  if (!canonical) {
     throw new ApiError(
       'bad_request',
       "'to' must be a valid phone number in E.164 format (e.g. +14155550123)",
@@ -56,7 +64,7 @@ export async function resolveConversationByPhone(
   let contactId: string;
   let contactCreated = false;
 
-  const existing = await findExistingContact(prisma, accountId, sanitized);
+  const existing = await findExistingContact(prisma, accountId, canonical);
   if (existing) {
     contactId = existing.id;
     if (name && name !== existing.name) {
@@ -71,8 +79,8 @@ export async function resolveConversationByPhone(
         data: {
           account_id: accountId,
           user_id: ownerUserId,
-          phone: sanitized,
-          name: name || sanitized,
+          phone: canonical,
+          name: name || canonical,
           source: 'api',
         },
         select: { id: true },
@@ -83,13 +91,13 @@ export async function resolveConversationByPhone(
       if (webhookDeliver) {
         void webhookDeliver.dispatchWebhookEvent(accountId, 'contact.created', {
           contact_id: contactId,
-          phone: sanitized,
-          name: name || sanitized,
+          phone: canonical,
+          name: name || canonical,
         });
       }
     } catch (createErr) {
       if (isUniqueViolation(createErr)) {
-        const raced = await findExistingContact(prisma, accountId, sanitized);
+        const raced = await findExistingContact(prisma, accountId, canonical);
         if (raced) {
           contactId = raced.id;
         } else {
