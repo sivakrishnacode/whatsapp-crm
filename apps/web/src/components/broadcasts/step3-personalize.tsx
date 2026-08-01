@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { Contact, CustomField, MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { collectTemplateSlots } from '@/lib/whatsapp/template-slots';
 import {
   Select,
   SelectContent,
@@ -21,6 +22,32 @@ interface VariableMapping {
   value: string;
 }
 
+/**
+ * Send-time values that are the same for every recipient.
+ *
+ * Body variables are per-contact (mapped from a field), but a location
+ * pin, a header's text and a button's substitution are properties of
+ * the broadcast itself. Meta rejects the whole send when a required one
+ * is missing, so a template with a LOCATION header or a variable URL
+ * button was unsendable as a broadcast until these were collected.
+ */
+export interface BroadcastTemplateExtras {
+  headerText: string;
+  headerLocation: {
+    latitude: string;
+    longitude: string;
+    name: string;
+    address: string;
+  };
+  buttonParams: Record<string, string>;
+}
+
+export const EMPTY_BROADCAST_EXTRAS: BroadcastTemplateExtras = {
+  headerText: '',
+  headerLocation: { latitude: '', longitude: '', name: '', address: '' },
+  buttonParams: {},
+};
+
 interface Step3Props {
   template: MessageTemplate;
   variables: Record<string, VariableMapping>;
@@ -28,6 +55,8 @@ interface Step3Props {
   /** Media URL for an IMAGE/VIDEO/DOCUMENT header, when the template has one. */
   headerMediaUrl: string;
   onHeaderMediaUrlChange: (url: string) => void;
+  extras: BroadcastTemplateExtras;
+  onExtrasChange: (patch: Partial<BroadcastTemplateExtras>) => void;
   onNext: () => void;
   onBack: () => void;
 }
@@ -72,6 +101,8 @@ export function Step3Personalize({
   variables,
   onUpdate,
   headerMediaUrl,
+  extras,
+  onExtrasChange,
   onHeaderMediaUrlChange,
   onNext,
   onBack,
@@ -158,6 +189,25 @@ export function Step3Personalize({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaHeaderType, template.header_media_url]);
+
+  // Same collector the inbox picker and the automation builder use, so
+  // all three ask for exactly what Meta will require.
+  const slots = useMemo(() => collectTemplateSlots(template), [template]);
+
+  // All four, not just the coordinates — Meta answers a missing
+  // `name` or `address` on a template location header with a bare
+  // "(#100) Invalid parameter".
+  const locationIncomplete =
+    slots.headerLocation &&
+    (!extras.headerLocation.latitude.trim() ||
+      !extras.headerLocation.longitude.trim() ||
+      !extras.headerLocation.name.trim() ||
+      !extras.headerLocation.address.trim());
+
+  const buttonParamsIncomplete = [
+    ...slots.urlButtons,
+    ...slots.copyCodeButtons,
+  ].some((slot) => !(extras.buttonParams[String(slot.index)] ?? '').trim());
 
   const headerMediaError = useMemo<'missing' | 'invalid' | null>(() => {
     if (!mediaHeaderType) return null;
@@ -293,6 +343,134 @@ export function Step3Personalize({
               {headerMediaError === 'missing'
                 ? 'A media URL is required to send this template.'
                 : 'Enter a valid http(s) URL.'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Slots that are constant across the audience. Body variables map
+          per-contact; a pin, a header's text and a button's value do
+          not — but Meta still requires them, and omitting one fails
+          every recipient rather than none. */}
+      {slots.headerTextVars.length > 0 && (
+        <div className="rounded-xl border border-border bg-card/50 p-4">
+          <p className="mb-1.5 text-sm font-medium text-foreground">
+            Header text
+          </p>
+          <Input
+            value={extras.headerText}
+            onChange={(e) => onExtrasChange({ headerText: e.target.value })}
+            placeholder="Value for the header variable"
+            className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+          />
+        </div>
+      )}
+
+      {slots.headerLocation && (
+        <div className="rounded-xl border border-border bg-card/50 p-4">
+          <p className="mb-1 text-sm font-medium text-foreground">
+            Location header
+          </p>
+          <p className="mb-2.5 text-xs text-muted-foreground">
+            WhatsApp shows a map pin above the message. All four fields
+            are required, and the same pin is sent to everyone.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              value={extras.headerLocation.latitude}
+              onChange={(e) =>
+                onExtrasChange({
+                  headerLocation: {
+                    ...extras.headerLocation,
+                    latitude: e.target.value,
+                  },
+                })
+              }
+              placeholder="Latitude"
+              className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+            />
+            <Input
+              value={extras.headerLocation.longitude}
+              onChange={(e) =>
+                onExtrasChange({
+                  headerLocation: {
+                    ...extras.headerLocation,
+                    longitude: e.target.value,
+                  },
+                })
+              }
+              placeholder="Longitude"
+              className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+          <Input
+            value={extras.headerLocation.name}
+            onChange={(e) =>
+              onExtrasChange({
+                headerLocation: {
+                  ...extras.headerLocation,
+                  name: e.target.value,
+                },
+              })
+            }
+            placeholder="Place name"
+            className="mt-2 border-border bg-muted text-foreground placeholder:text-muted-foreground"
+          />
+          <Input
+            value={extras.headerLocation.address}
+            onChange={(e) =>
+              onExtrasChange({
+                headerLocation: {
+                  ...extras.headerLocation,
+                  address: e.target.value,
+                },
+              })
+            }
+            placeholder="Address"
+            className="mt-2 border-border bg-muted text-foreground placeholder:text-muted-foreground"
+          />
+          {locationIncomplete && (
+            <p className="mt-1.5 text-xs text-amber-300">
+              All four location fields are required to send this template.
+            </p>
+          )}
+        </div>
+      )}
+
+      {(slots.urlButtons.length > 0 || slots.copyCodeButtons.length > 0) && (
+        <div className="rounded-xl border border-border bg-card/50 p-4">
+          <p className="mb-2.5 text-sm font-medium text-foreground">
+            Button values
+          </p>
+          <div className="space-y-2">
+            {[...slots.urlButtons, ...slots.copyCodeButtons].map((slot) => (
+              <div key={slot.index}>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  {slot.text}
+                </label>
+                <Input
+                  value={extras.buttonParams[String(slot.index)] ?? ''}
+                  onChange={(e) =>
+                    onExtrasChange({
+                      buttonParams: {
+                        ...extras.buttonParams,
+                        [String(slot.index)]: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder={
+                    'token' in slot
+                      ? `Value for {{${slot.token}}} in the URL`
+                      : 'Coupon code'
+                  }
+                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+            ))}
+          </div>
+          {buttonParamsIncomplete && (
+            <p className="mt-1.5 text-xs text-amber-300">
+              Every button value is required to send this template.
             </p>
           )}
         </div>
@@ -455,7 +633,12 @@ export function Step3Personalize({
         </Button>
         <Button
           onClick={onNext}
-          disabled={unmappedKeys.length > 0 || headerMediaError !== null}
+          disabled={
+            unmappedKeys.length > 0 ||
+            headerMediaError !== null ||
+            locationIncomplete ||
+            buttonParamsIncomplete
+          }
           className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           Next

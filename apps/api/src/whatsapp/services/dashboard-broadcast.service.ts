@@ -23,8 +23,34 @@ export const BROADCASTS_QUEUE = 'broadcasts-send';
 const SEND_BATCH_SIZE = 10;
 const SEND_BATCH_DELAY_MS = 1000;
 
-/** Key inside broadcasts.template_variables carrying the header media URL. */
+/**
+ * Reserved keys inside `broadcasts.template_variables`.
+ *
+ * That column is a per-variable mapping keyed by placeholder token, so
+ * an underscore prefix is what keeps these send-time extras from
+ * colliding with a template's own variable named "headerText". Stored
+ * here rather than in new columns because they are exactly as
+ * per-broadcast as the variable mapping already in this Json.
+ *
+ * They exist because a template's requirements are not limited to its
+ * body: a LOCATION header needs a pin, a media header needs a URL when
+ * the template carries no default, and URL/COPY_CODE buttons need their
+ * substitution. Meta rejects the entire send when one is missing, so a
+ * broadcast that could not carry them simply failed for every
+ * recipient.
+ */
 const HEADER_MEDIA_KEY = '_headerMediaUrl';
+const HEADER_TEXT_KEY = '_headerText';
+const HEADER_LOCATION_KEY = '_headerLocation';
+const BUTTON_PARAMS_KEY = '_buttonParams';
+
+/** Every reserved key, so variable resolution can skip them. */
+const RESERVED_VARIABLE_KEYS = new Set([
+  HEADER_MEDIA_KEY,
+  HEADER_TEXT_KEY,
+  HEADER_LOCATION_KEY,
+  BUTTON_PARAMS_KEY,
+]);
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
@@ -52,6 +78,15 @@ export interface CreateDashboardBroadcastParams {
   audience: AudienceConfig;
   variables: Record<string, VariableMapping>;
   headerMediaUrl?: string | null;
+  headerText?: string | null;
+  headerLocation?: {
+    latitude: string;
+    longitude: string;
+    name?: string;
+    address?: string;
+  } | null;
+  /** Per-button substitution, keyed by the button's index. */
+  buttonParams?: Record<string, string> | null;
 }
 
 interface AudienceContact {
@@ -171,7 +206,16 @@ export class DashboardBroadcastService {
     userId: string,
     params: CreateDashboardBroadcastParams,
   ): Promise<{ id: string; totalRecipients: number }> {
-    const { name, templateName, audience, variables, headerMediaUrl } = params;
+    const {
+      name,
+      templateName,
+      audience,
+      variables,
+      headerMediaUrl,
+      headerText,
+      headerLocation,
+      buttonParams,
+    } = params;
     const templateLanguage = params.templateLanguage || 'en_US';
 
     if (!templateName) {
@@ -207,6 +251,31 @@ export class DashboardBroadcastService {
     const templateVariables: Record<string, unknown> = { ...(variables ?? {}) };
     const trimmedMediaUrl = headerMediaUrl?.trim();
     if (trimmedMediaUrl) templateVariables[HEADER_MEDIA_KEY] = trimmedMediaUrl;
+    if (headerText?.trim()) {
+      templateVariables[HEADER_TEXT_KEY] = headerText.trim();
+    }
+    // Only stored when usable: a pin missing either coordinate is not a
+    // partial pin, it is a send Meta will reject.
+    if (headerLocation?.latitude?.trim() && headerLocation?.longitude?.trim()) {
+      templateVariables[HEADER_LOCATION_KEY] = {
+        latitude: headerLocation.latitude.trim(),
+        longitude: headerLocation.longitude.trim(),
+        ...(headerLocation.name?.trim()
+          ? { name: headerLocation.name.trim() }
+          : {}),
+        ...(headerLocation.address?.trim()
+          ? { address: headerLocation.address.trim() }
+          : {}),
+      };
+    }
+    const trimmedButtonParams = Object.fromEntries(
+      Object.entries(buttonParams ?? {})
+        .filter(([, v]) => (v ?? '').trim())
+        .map(([k, v]) => [k, v.trim()]),
+    );
+    if (Object.keys(trimmedButtonParams).length > 0) {
+      templateVariables[BUTTON_PARAMS_KEY] = trimmedButtonParams;
+    }
 
     const broadcast = await this.prisma.broadcasts.create({
       data: {
@@ -464,7 +533,26 @@ export class DashboardBroadcastService {
       typeof rawVariables[HEADER_MEDIA_KEY] === 'string'
         ? rawVariables[HEADER_MEDIA_KEY]
         : undefined;
-    const variables = rawVariables as Record<string, VariableMapping>;
+    const headerText =
+      typeof rawVariables[HEADER_TEXT_KEY] === 'string'
+        ? rawVariables[HEADER_TEXT_KEY]
+        : undefined;
+    const headerLocation = rawVariables[HEADER_LOCATION_KEY] as
+      | { latitude: string; longitude: string; name?: string; address?: string }
+      | undefined;
+    const storedButtonParams = (rawVariables[BUTTON_PARAMS_KEY] ??
+      {}) as Record<string, string>;
+    const buttonParams = Object.fromEntries(
+      Object.entries(storedButtonParams).map(([k, v]) => [Number(k), v]),
+    );
+    // The reserved keys share this object with the real variable
+    // mapping; passing them through as variables would have the
+    // resolver look for a template placeholder called "_headerText".
+    const variables = Object.fromEntries(
+      Object.entries(rawVariables).filter(
+        ([key]) => !RESERVED_VARIABLE_KEYS.has(key),
+      ),
+    ) as Record<string, VariableMapping>;
     const isNamedTemplate =
       (templateRow as { parameter_format?: string } | null)
         ?.parameter_format === 'NAMED';
@@ -532,6 +620,9 @@ export class DashboardBroadcastService {
         : resolveBroadcastVariables(variables, contact, customValues);
       const messageParams = {
         ...(headerMediaUrl ? { headerMediaUrl } : {}),
+        ...(headerText ? { headerText } : {}),
+        ...(headerLocation ? { headerLocation } : {}),
+        ...(Object.keys(buttonParams).length > 0 ? { buttonParams } : {}),
         ...(isNamedTemplate
           ? {
               bodyNamed: resolveBroadcastVariableMap(
@@ -553,7 +644,7 @@ export class DashboardBroadcastService {
             to: variant,
             templateName: broadcast.template_name,
             language: broadcast.template_language,
-            template: (templateRow as any) ?? undefined,
+            template: (templateRow as never) ?? undefined,
             params,
             messageParams,
           });

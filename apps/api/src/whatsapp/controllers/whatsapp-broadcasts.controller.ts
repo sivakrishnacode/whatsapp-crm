@@ -53,6 +53,14 @@ export class WhatsappBroadcastsController {
       audience?: AudienceConfig;
       variables?: Record<string, VariableMapping>;
       header_media_url?: string;
+      header_text?: string;
+      header_location?: {
+        latitude: string;
+        longitude: string;
+        name?: string;
+        address?: string;
+      };
+      button_params?: Record<string, string>;
     },
     @Res() res: Response,
   ) {
@@ -66,6 +74,9 @@ export class WhatsappBroadcastsController {
         audience: body?.audience as AudienceConfig,
         variables: body?.variables ?? {},
         headerMediaUrl: body?.header_media_url ?? null,
+        headerText: body?.header_text ?? null,
+        headerLocation: body?.header_location ?? null,
+        buttonParams: body?.button_params ?? null,
       },
     );
 

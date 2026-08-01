@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import type { Message, MessageReaction } from "@/types";
+import type {
+  Message,
+  MessageReaction,
+  MessageTemplateButton,
+  MessageTemplateSnapshot,
+} from "@/types";
 import {
   Clock,
   Check,
@@ -17,6 +22,12 @@ import {
   Tag,
   Package,
   List,
+  UserRound,
+  Info,
+  Ban,
+  ExternalLink,
+  Phone,
+  Copy,
 } from "lucide-react";
 
 // Helper to determine if a message contains serialized interactive product data
@@ -84,7 +95,16 @@ function MediaUnavailable({ label }: { label: string }) {
   );
 }
 
-function MediaImage({ url, alt }: { url: string; alt: string }) {
+function MediaImage({
+  url,
+  alt,
+  className,
+}: {
+  url: string;
+  alt: string;
+  /** Overrides the default thumbnail box — stickers render unframed. */
+  className?: string;
+}) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -141,9 +161,141 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
     <img
       src={src ?? ""}
       alt={alt}
-      className="max-h-64 max-w-60 rounded-lg object-cover"
+      className={cn("max-h-64 max-w-60 rounded-lg object-cover", className)}
       onError={() => setError(true)}
     />
+  );
+}
+
+/**
+ * The media or text header of a sent template.
+ *
+ * Templates can be approved with an image, video or document header,
+ * and that header is a large part of what the customer actually sees —
+ * a product photo above two lines of copy. Nothing about it comes back
+ * from Meta, so this renders the snapshot captured at send time and
+ * degrades to "unavailable" when there is none (rows sent before the
+ * snapshot existed, or a send that used a Meta media handle rather than
+ * a URL, which the browser cannot fetch).
+ */
+function TemplateHeader({
+  header,
+  onPrimary,
+}: {
+  header: MessageTemplateSnapshot["header"];
+  onPrimary: boolean;
+}) {
+  if (!header) return null;
+
+  if (header.type === "TEXT" || header.type === "LOCATION") {
+    if (!header.text) return null;
+    return (
+      <p className="break-words text-sm font-semibold">{header.text}</p>
+    );
+  }
+
+  if (!header.media_url) {
+    return <MediaUnavailable label={header.type.toLowerCase()} />;
+  }
+
+  if (header.type === "IMAGE") {
+    return <MediaImage url={header.media_url} alt="Template header" />;
+  }
+
+  if (header.type === "VIDEO") {
+    return (
+      <video
+        src={header.media_url}
+        controls
+        className="max-h-64 max-w-60 rounded-lg"
+      />
+    );
+  }
+
+  return (
+    <a
+      href={header.media_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn(
+        "flex items-center gap-2 rounded-lg px-3 py-2 text-sm",
+        onPrimary
+          ? "bg-primary-foreground/10 hover:bg-primary-foreground/20"
+          : "bg-muted/50 hover:bg-muted",
+      )}
+    >
+      <FileText className="h-5 w-5 shrink-0 opacity-70" />
+      <span className="truncate">{header.filename || "Document"}</span>
+    </a>
+  );
+}
+
+/**
+ * The template's buttons, shown as the customer saw them.
+ *
+ * Non-interactive on purpose — these are a record of what was sent, not
+ * controls for the agent. A URL button still links out, because that is
+ * the one case where the agent may need to check where the customer was
+ * about to be sent.
+ */
+function TemplateButtons({
+  buttons,
+  onPrimary,
+}: {
+  buttons: MessageTemplateButton[];
+  onPrimary: boolean;
+}) {
+  const chrome = onPrimary
+    ? "border-primary-foreground/25 text-primary-foreground/90"
+    : "border-border text-foreground/80";
+
+  return (
+    <div className={cn("mt-0.5 flex flex-col gap-1 border-t pt-1.5", onPrimary ? "border-primary-foreground/20" : "border-border")}>
+      {buttons.map((button, i) => {
+        const icon =
+          button.type === "URL" ? (
+            <ExternalLink className="h-3 w-3 shrink-0" />
+          ) : button.type === "PHONE_NUMBER" ? (
+            <Phone className="h-3 w-3 shrink-0" />
+          ) : button.type === "COPY_CODE" ? (
+            <Copy className="h-3 w-3 shrink-0" />
+          ) : (
+            <CornerDownLeft className="h-3 w-3 shrink-0" />
+          );
+
+        const label = (
+          <span className="flex items-center justify-center gap-1.5 truncate">
+            {icon}
+            {button.text}
+          </span>
+        );
+
+        const className = cn(
+          "rounded-md border px-2 py-1 text-center text-xs",
+          chrome,
+        );
+
+        if (button.type === "URL" && button.url) {
+          return (
+            <a
+              key={i}
+              href={button.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(className, "hover:underline")}
+            >
+              {label}
+            </a>
+          );
+        }
+
+        return (
+          <span key={i} className={className}>
+            {label}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
@@ -230,12 +382,14 @@ function MessageContent({
         </a>
       );
 
-    case "template":
+    case "template": {
+      const snapshot = message.metadata?.template;
+      const header = snapshot?.header;
       return (
-        <div>
+        <div className="flex flex-col gap-1">
           <span
             className={cn(
-              "mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
+              "inline-flex w-fit items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
               onPrimary
                 ? "bg-primary-foreground/20 text-primary-foreground"
                 : "bg-primary/20 text-primary",
@@ -244,18 +398,25 @@ function MessageContent({
             <LayoutTemplate className="h-3 w-3" />
             Template
           </span>
-          {/* The body is stored at send time (Meta renders templates from
-              its own approved copy and returns no text). Name the template
-              when that text is missing — pre-fix rows and templates that
-              aren't synced locally — so the bubble is never blank. */}
+
+          {/* The header is the piece that used to go missing entirely:
+              Meta returns no rendered content, so unless it was captured
+              at send time the agent saw a bare paragraph while the
+              customer was looking at a photo. */}
+          <TemplateHeader header={header} onPrimary={onPrimary} />
+
+          {/* Body is stored at send time for the same reason. Name the
+              template when it's missing — pre-snapshot rows, and
+              templates not synced locally — so the bubble is never
+              blank. */}
           {message.content_text ? (
-            <p className="mt-1 whitespace-pre-wrap break-words text-sm">
+            <p className="whitespace-pre-wrap break-words text-sm">
               {message.content_text}
             </p>
           ) : (
             <p
               className={cn(
-                "mt-1 text-sm italic",
+                "text-sm italic",
                 onPrimary ? "text-primary-foreground/70" : "text-muted-foreground",
               )}
             >
@@ -264,14 +425,198 @@ function MessageContent({
                 : "Sent a template"}
             </p>
           )}
+
+          {snapshot?.footer && (
+            <p
+              className={cn(
+                "text-[11px]",
+                onPrimary
+                  ? "text-primary-foreground/60"
+                  : "text-muted-foreground",
+              )}
+            >
+              {snapshot.footer}
+            </p>
+          )}
+
+          {snapshot?.buttons && snapshot.buttons.length > 0 && (
+            <TemplateButtons
+              buttons={snapshot.buttons}
+              onPrimary={onPrimary}
+            />
+          )}
         </div>
       );
+    }
 
-    case "location":
+    case "location": {
+      const loc = message.metadata?.location;
+      // Built from the structured coordinates rather than parsed back
+      // out of "name - address - lat,lng", which breaks on any name
+      // containing a hyphen. Older rows have no metadata and stay as
+      // plain text.
+      const mapsUrl = loc
+        ? `https://www.google.com/maps/search/?api=1&query=${loc.latitude},${loc.longitude}`
+        : null;
+      const label =
+        [loc?.name, loc?.address].filter(Boolean).join(", ") ||
+        message.content_text ||
+        "Location shared";
+
+      const body = (
+        <span className="flex items-start gap-2 text-sm">
+          <MapPin
+            className={cn(
+              "mt-0.5 h-4 w-4 shrink-0",
+              onPrimary ? "text-primary-foreground/70" : "text-muted-foreground",
+            )}
+          />
+          <span className="break-words">{label}</span>
+        </span>
+      );
+
+      if (!mapsUrl) return body;
       return (
-        <div className="flex items-center gap-2 text-sm">
-          <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span>{message.content_text || "Location shared"}</span>
+        <a
+          href={mapsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline-offset-2 hover:underline"
+        >
+          {body}
+        </a>
+      );
+    }
+
+    case "sticker":
+      // Deliberately unframed: a sticker is transparent art, and the
+      // bubble chrome around it reads as a broken image. Rendered
+      // larger than a thumbnail because that is the whole point of one.
+      return message.media_url ? (
+        <MediaImage
+          url={message.media_url}
+          alt="Sticker"
+          className="max-h-32 max-w-32 object-contain"
+        />
+      ) : (
+        <MediaUnavailable label="Sticker" />
+      );
+
+    case "contacts": {
+      const cards = message.metadata?.contacts ?? [];
+      if (cards.length === 0) {
+        return (
+          <p className="text-sm">{message.content_text || "Contact shared"}</p>
+        );
+      }
+      return (
+        <div className="flex flex-col gap-2">
+          {cards.map((card, i) => (
+            <div
+              key={i}
+              className={cn(
+                "flex flex-col gap-0.5 rounded-lg px-2.5 py-2",
+                onPrimary ? "bg-primary-foreground/10" : "bg-background/60",
+              )}
+            >
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <UserRound className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                {card.name}
+              </span>
+              {card.organization && (
+                <span className="text-[11px] opacity-70">
+                  {card.organization}
+                </span>
+              )}
+              {card.phones.map((p) => (
+                <span key={p.phone} className="font-mono text-xs opacity-90">
+                  {p.phone}
+                </span>
+              ))}
+              {card.emails?.map((e) => (
+                <span key={e.email} className="text-xs opacity-90">
+                  {e.email}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    case "order": {
+      const order = message.metadata?.order;
+      // Pre-metadata rows kept the whole cart as a text blob; show it
+      // rather than an empty card.
+      if (!order?.items?.length) {
+        return (
+          <p className="whitespace-pre-wrap break-words text-sm">
+            {message.content_text || "Cart submitted"}
+          </p>
+        );
+      }
+      const currency = order.currency ?? "";
+      return (
+        <div className="flex flex-col gap-1.5">
+          <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide opacity-70">
+            <ShoppingBag className="h-3.5 w-3.5" />
+            Cart submitted
+          </span>
+          <div className="flex flex-col gap-1">
+            {order.items.map((item, i) => (
+              <div key={i} className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="break-words">
+                  {item.quantity}× {item.name || item.retailer_id}
+                </span>
+                <span className="shrink-0 font-mono text-xs opacity-80">
+                  {currency} {(item.quantity * item.unit_price).toFixed(2)}
+                </span>
+              </div>
+            ))}
+          </div>
+          {typeof order.total === "number" && (
+            <div
+              className={cn(
+                "flex items-baseline justify-between gap-3 border-t pt-1 text-sm font-semibold",
+                onPrimary ? "border-primary-foreground/20" : "border-border",
+              )}
+            >
+              <span>Total</span>
+              <span className="font-mono">
+                {currency} {order.total.toFixed(2)}
+              </span>
+            </div>
+          )}
+          {order.note && (
+            <p className="text-[11px] opacity-70">Note: {order.note}</p>
+          )}
+        </div>
+      );
+    }
+
+    case "system":
+      return (
+        <p className="flex items-center gap-1.5 text-xs italic opacity-70">
+          <Info className="h-3.5 w-3.5 shrink-0" />
+          {message.content_text || "Contact details changed"}
+        </p>
+      );
+
+    case "unsupported":
+      // Says what WhatsApp told us, not what we failed to parse. The
+      // distinction matters: the agent needs to know whether to ask the
+      // customer to resend in another form.
+      return (
+        <div className="flex flex-col gap-0.5">
+          <span className="flex items-center gap-1.5 text-xs italic opacity-70">
+            <Ban className="h-3.5 w-3.5 shrink-0" />
+            {message.content_text || "Unsupported message"}
+          </span>
+          {message.metadata?.error?.detail && (
+            <span className="text-[11px] opacity-60">
+              {message.metadata.error.detail}
+            </span>
+          )}
         </div>
       );
 
@@ -357,20 +702,54 @@ function MessageContent({
         }
       }
 
-      // Customer tapped a reply button or list row on a message the bot
-      // sent. We show the tapped option's title (already in content_text,
-      // set by parseMessageContent in the webhook) with a small affordance
-      // so agents reading the inbox can tell at a glance that this is a
-      // tap rather than the customer typing the same words.
+      // Customer tapped something we sent. We show the tapped option's
+      // title (already in content_text, set by parseMessageContent in
+      // the webhook) with a small affordance so agents reading the inbox
+      // can tell at a glance that this is a tap rather than the customer
+      // typing the same words.
+      //
+      // `source` names which kind of tap. All three land here because
+      // they mean the same thing to an agent; the label just stops
+      // "Button reply" from being a lie on a submitted form.
+      const source = message.metadata?.source;
+      const flowResponse = message.metadata?.flow_response;
+      const label =
+        source === "flow_reply"
+          ? "Form submitted"
+          : source === "template_button"
+            ? "Template button"
+            : "Button reply";
+
       return (
         <div className="flex flex-col gap-0.5">
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide",
+              onPrimary
+                ? "text-primary-foreground/70"
+                : "text-muted-foreground",
+            )}
+          >
             <CornerDownLeft className="h-3 w-3" />
-            Button reply
+            {label}
           </span>
           <p className="whitespace-pre-wrap break-words text-sm">
             {message.content_text || "[Interactive reply]"}
           </p>
+          {flowResponse && Object.keys(flowResponse).length > 0 && (
+            <dl className="mt-1 flex flex-col gap-0.5 text-xs">
+              {Object.entries(flowResponse).map(([key, value]) => (
+                <div key={key} className="flex gap-1.5">
+                  <dt className="shrink-0 opacity-60">{key}:</dt>
+                  <dd className="break-words">
+                    {typeof value === "object"
+                      ? JSON.stringify(value)
+                      : String(value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
         </div>
       );
     }

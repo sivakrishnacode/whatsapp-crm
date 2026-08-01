@@ -359,12 +359,13 @@ export function ContactDetailView({
           message_type: 'template',
           template_name: template.name,
           template_language: template.language,
-          template_message_params: {
-            body: values.body,
-            headerText: values.headerText,
-            buttonParams: values.buttonParams,
-          },
-          template_params: values.body,
+          // Whole object, not field-by-field. Enumerating the fields
+          // here silently dropped everything the list didn't name — a
+          // LOCATION header among them, which Meta then rejected with
+          // "Location header requires latitude and longitude at send
+          // time".
+          template_message_params: values,
+          template_params: values.body ?? [],
         }),
       });
 

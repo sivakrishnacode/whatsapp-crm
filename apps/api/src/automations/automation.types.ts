@@ -124,10 +124,39 @@ export interface SendMessageStepConfig {
   text: string;
 }
 
+/**
+ * A template send from an automation.
+ *
+ * Every value here is interpolated at run time, so `{{contact.name}}`
+ * or `{{message.text}}` can be used anywhere a literal can — which is
+ * most of the point of a template variable in an automation.
+ *
+ * The header/button fields exist because Meta rejects the whole send
+ * when any required parameter is absent, and a template's requirements
+ * are not limited to its body: a LOCATION header needs a pin per send,
+ * a media header needs a URL when the template carries no default, and
+ * URL/COPY_CODE buttons need their substitution. Collecting only body
+ * variables made those templates unsendable from an automation with no
+ * indication why.
+ */
 export interface SendTemplateStepConfig {
   template_name: string;
   language?: string;
+  /** Body values keyed by placeholder token ("1", "2", or a name). */
   variables?: Record<string, string>;
+  /** Value for a TEXT header's variable. */
+  header_text?: string;
+  /** Overrides the template's own media for IMAGE/VIDEO/DOCUMENT headers. */
+  header_media_url?: string;
+  /** Required for a LOCATION header — there is no template-level default. */
+  header_location?: {
+    latitude: string;
+    longitude: string;
+    name?: string;
+    address?: string;
+  };
+  /** Per-button substitution, keyed by the button's index. */
+  button_params?: Record<string, string>;
 }
 
 export interface TagStepConfig {
@@ -304,6 +333,19 @@ export interface AutomationContext {
   conversation_id?: string;
   /** Arbitrary variables accumulated during execution. */
   vars?: Record<string, unknown>;
+  /**
+   * The triggering contact's own fields, exposed to interpolation as
+   * `{{contact.name}}`, `{{contact.phone}}`, `{{contact.email}}`,
+   * `{{contact.company}}`.
+   *
+   * Filled in on demand (see `withContactTokens`) rather than at
+   * dispatch: most steps never reference it, and every automation run
+   * paying for a contact lookup to serve the few that do is a cost with
+   * no reader. Absent on a persisted pending-execution context written
+   * before this existed, which resolves to "" — the same as any other
+   * unknown token.
+   */
+  contact?: Record<string, string | null>;
   /** The tag id that was added, for tag_added trigger. */
   tag_id?: string;
   /** Which form was submitted, for the form_submitted trigger's filter. */

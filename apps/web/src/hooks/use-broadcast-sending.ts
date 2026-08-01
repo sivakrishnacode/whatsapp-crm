@@ -31,6 +31,14 @@ interface BroadcastPayload {
   audience: AudienceConfig;
   variables: Record<string, VariableMapping>;
   headerMediaUrl?: string;
+  headerText?: string;
+  headerLocation?: {
+    latitude: string;
+    longitude: string;
+    name?: string;
+    address?: string;
+  };
+  buttonParams?: Record<string, string>;
 }
 
 interface UseBroadcastSendingReturn {
@@ -85,6 +93,18 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           audience: payload.audience,
           variables: payload.variables,
           header_media_url: payload.headerMediaUrl?.trim() || undefined,
+          header_text: payload.headerText?.trim() || undefined,
+          // Only sent when complete — a half-filled pin is a rejected
+          // send, not a partial one.
+          header_location:
+            payload.headerLocation?.latitude?.trim() &&
+            payload.headerLocation?.longitude?.trim()
+              ? payload.headerLocation
+              : undefined,
+          button_params:
+            payload.buttonParams && Object.keys(payload.buttonParams).length > 0
+              ? payload.buttonParams
+              : undefined,
         }),
       });
 

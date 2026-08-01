@@ -23,6 +23,13 @@ import {
   isCanonicalE164,
 } from '../phone-utils.util';
 import { resolveAccountCountry } from '../../common/phone/account-country.util';
+import { buildMessagePreview } from '../../common/messages/message-preview.util';
+import {
+  toMessageMetadata,
+  type WhatsAppMessageMetadata,
+  type MessageContactCard,
+  type MessageOrderItem,
+} from '../../common/messages/message-content.types';
 import {
   isTemplateWebhookField,
   handleTemplateWebhookChange,
@@ -50,7 +57,7 @@ interface WhatsAppMessage {
     caption?: string;
   };
   audio?: { id: string; mime_type: string };
-  sticker?: { id: string; mime_type: string };
+  sticker?: { id: string; mime_type: string; animated?: boolean };
   location?: {
     latitude: number;
     longitude: number;
@@ -59,10 +66,48 @@ interface WhatsAppMessage {
   };
   reaction?: { message_id: string; emoji: string };
   interactive?: {
-    type: 'button_reply' | 'list_reply';
+    type: 'button_reply' | 'list_reply' | 'nfm_reply';
     button_reply?: { id: string; title: string };
     list_reply?: { id: string; title: string; description?: string };
+    /**
+     * A completed WhatsApp Flow. `response_json` is a JSON *string* of
+     * the submitted fields — Meta does not send it pre-parsed.
+     */
+    nfm_reply?: { name?: string; body?: string; response_json?: string };
   };
+  /**
+   * A tap on a *template's* quick-reply button. Distinct from
+   * `interactive` purely because of how the original message was sent —
+   * `payload` is the developer-defined value, `text` is the label the
+   * customer saw. This is the type that used to fall through to
+   * "[Unsupported message type: button]".
+   */
+  button?: { payload?: string; text?: string };
+  /** Shared contact card(s). Meta's shape is deeply nested and partial. */
+  contacts?: Array<{
+    name?: { formatted_name?: string; first_name?: string; last_name?: string };
+    phones?: Array<{ phone?: string; wa_id?: string; type?: string }>;
+    emails?: Array<{ email?: string; type?: string }>;
+    org?: { company?: string; department?: string; title?: string };
+  }>;
+  /** Platform notice — customer changed their number, etc. */
+  system?: {
+    body?: string;
+    type?: string;
+    wa_id?: string;
+    new_wa_id?: string;
+    customer?: string;
+  };
+  /**
+   * WhatsApp itself could not forward what the customer sent (a poll,
+   * say). The `errors` array carries Meta's reason.
+   */
+  errors?: Array<{
+    code?: number;
+    title?: string;
+    message?: string;
+    details?: string;
+  }>;
   context?: { id: string };
   order?: {
     catalog_id: string;
@@ -627,6 +672,9 @@ export class WhatsappWebhookService {
       return;
     }
 
+    // Mirrors messages_content_type_check (migration 062). A type not
+    // in here has no renderer, so it is deliberately narrowed to one
+    // that does rather than written through and rendered as a blank.
     const ALLOWED_CONTENT_TYPES = new Set([
       'text',
       'image',
@@ -636,12 +684,23 @@ export class WhatsappWebhookService {
       'location',
       'template',
       'interactive',
+      'sticker',
+      'contacts',
+      'order',
+      'system',
+      'unsupported',
     ]);
-    const contentType = ALLOWED_CONTENT_TYPES.has(message.type)
-      ? message.type
-      : message.type === 'sticker'
-        ? 'image'
-        : 'text';
+    // A tap on a template's quick-reply button is the same event as a
+    // tap on an interactive button — same meaning to an agent, same
+    // `interactive_reply_id` routing in the Flows engine — so it is
+    // stored under the type that already has both. Meta only calls it
+    // 'button' because of how the original message was sent.
+    const contentType =
+      message.type === 'button'
+        ? 'interactive'
+        : ALLOWED_CONTENT_TYPES.has(message.type)
+          ? message.type
+          : 'text';
 
     const [replyToInternalIdRaw, firstMsgRow] = await Promise.all([
       message.context?.id
@@ -676,6 +735,7 @@ export class WhatsappWebhookService {
           created_at: new Date(parseInt(message.timestamp) * 1000),
           reply_to_message_id: replyToInternalId,
           interactive_reply_id: parsedContent.interactiveReplyId,
+          metadata: toMessageMetadata(parsedContent.metadata),
         },
       });
     } catch (err) {
@@ -734,7 +794,10 @@ export class WhatsappWebhookService {
       await this.prisma.conversations.update({
         where: { id: conversation.id },
         data: {
-          last_message_text: parsedContent.contentText || `[${message.type}]`,
+          last_message_text: buildMessagePreview(
+            message.type,
+            parsedContent.contentText,
+          ),
           last_message_at: new Date(),
           // Distinct from last_message_at, which any outbound also
           // bumps. Only a *customer* message reopens the 24-hour reply
@@ -852,6 +915,8 @@ export class WhatsappWebhookService {
     mediaUrl: string | null;
     mediaType: string | null;
     interactiveReplyId: string | null;
+    /** Merged into messages.metadata. See common/messages/message-content.types.ts. */
+    metadata: WhatsAppMessageMetadata | null;
   }> {
     const verifyAndBuildUrl = async (
       mediaId: string,
@@ -874,6 +939,7 @@ export class WhatsappWebhookService {
       mediaUrl: null,
       mediaType: null,
       interactiveReplyId: null,
+      metadata: null as WhatsAppMessageMetadata | null,
     };
 
     switch (message.type) {
@@ -930,6 +996,10 @@ export class WhatsappWebhookService {
             ...empty,
             mediaUrl: await verifyAndBuildUrl(message.sticker.id),
             mediaType: message.sticker.mime_type,
+            // Animated stickers are WebP too, so the mime type cannot
+            // tell them apart — the renderer needs the flag to know not
+            // to treat one as a still image.
+            metadata: { animated: message.sticker.animated === true },
           };
         }
         return empty;
@@ -944,7 +1014,22 @@ export class WhatsappWebhookService {
           ]
             .filter(Boolean)
             .join(' - ');
-          return { ...empty, contentText: locationText };
+          return {
+            ...empty,
+            contentText: locationText,
+            // Kept structured as well as flattened: the bubble builds a
+            // maps link from these, and parsing them back out of a
+            // "name - address - lat,lng" string would break on any name
+            // containing a hyphen.
+            metadata: {
+              location: {
+                latitude: loc.latitude,
+                longitude: loc.longitude,
+                name: loc.name ?? null,
+                address: loc.address ?? null,
+              },
+            },
+          };
         }
         return empty;
 
@@ -964,14 +1049,58 @@ export class WhatsappWebhookService {
           const contentText = `🛒 *Cart Submitted*:\n${summary}${
             order.text ? `\n\nNote: ${order.text}` : ''
           }`;
+          const parsedItems: MessageOrderItem[] = items.map((item) => ({
+            retailer_id: item.product_retailer_id,
+            quantity: parseFloat(item.quantity) || 0,
+            unit_price: parseFloat(item.item_price) || 0,
+            currency: item.currency ?? null,
+          }));
           return {
             ...empty,
+            // The flattened text stays: it is the conversation-list
+            // preview and the fallback for rows written before the
+            // structured form existed.
             contentText,
+            metadata: {
+              order: {
+                catalog_id: order.catalog_id ?? null,
+                items: parsedItems,
+                total: parsedItems.reduce(
+                  (sum, i) => sum + i.quantity * i.unit_price,
+                  0,
+                ),
+                currency: parsedItems[0]?.currency ?? null,
+                note: order.text ?? null,
+              },
+            },
           };
         }
         return empty;
 
       case 'interactive': {
+        // A completed WhatsApp Flow. `body` is the summary Meta shows in
+        // the chat; the submitted fields are a JSON *string*, and a
+        // malformed one must not cost us the message.
+        const flow = message.interactive?.nfm_reply;
+        if (flow) {
+          let response: Record<string, unknown> | undefined;
+          if (flow.response_json) {
+            try {
+              response = JSON.parse(flow.response_json) as Record<
+                string,
+                unknown
+              >;
+            } catch {
+              this.logger.warn('nfm_reply response_json was not valid JSON');
+            }
+          }
+          return {
+            ...empty,
+            contentText: flow.body || flow.name || 'Form submitted',
+            metadata: { source: 'flow_reply', flow_response: response },
+          };
+        }
+
         const reply =
           message.interactive?.button_reply ?? message.interactive?.list_reply;
         if (reply?.id) {
@@ -979,12 +1108,98 @@ export class WhatsappWebhookService {
             ...empty,
             contentText: reply.title || reply.id,
             interactiveReplyId: reply.id,
+            metadata: { source: 'interactive_reply' },
           };
         }
         return { ...empty, contentText: '[Interactive reply]' };
       }
 
+      case 'button': {
+        // The customer tapped a quick-reply button on a *template* we
+        // sent. This case not existing is the reported bug: an opt-out
+        // tap ("Stop promotions") reached the agent as
+        // "[Unsupported message type: button]".
+        //
+        // `text` is the label as shown; `payload` is the developer value
+        // the Flows engine routes on. Either may be absent, so each
+        // falls back to the other rather than producing a blank bubble.
+        const label = message.button?.text || message.button?.payload || null;
+        return {
+          ...empty,
+          contentText: label,
+          interactiveReplyId: message.button?.payload || label,
+          metadata: { source: 'template_button' },
+        };
+      }
+
+      case 'contacts': {
+        const cards: MessageContactCard[] = (message.contacts ?? []).map(
+          (card) => ({
+            name:
+              card.name?.formatted_name ||
+              [card.name?.first_name, card.name?.last_name]
+                .filter(Boolean)
+                .join(' ') ||
+              'Unnamed contact',
+            // `wa_id` is preferred over `phone`: it is already the
+            // digits WhatsApp reaches them on, whereas `phone` is the
+            // free-text label from the sender's address book.
+            phones: (card.phones ?? [])
+              .map((p) => ({
+                phone: p.wa_id ? `+${p.wa_id}` : (p.phone ?? ''),
+                type: p.type ?? null,
+              }))
+              .filter((p) => p.phone),
+            emails: (card.emails ?? [])
+              .map((e) => ({ email: e.email ?? '', type: e.type ?? null }))
+              .filter((e) => e.email),
+            organization: card.org?.company ?? null,
+          }),
+        );
+        if (cards.length === 0) return empty;
+        return {
+          ...empty,
+          contentText:
+            cards.length === 1
+              ? cards[0].name
+              : `${cards.length} contacts shared`,
+          metadata: { contacts: cards },
+        };
+      }
+
+      case 'system':
+        // Not conversational — WhatsApp telling us the customer changed
+        // their number. Worth showing so an agent can explain a thread
+        // that suddenly has a different number on it.
+        return {
+          ...empty,
+          contentText: message.system?.body || 'Contact details changed',
+        };
+
+      case 'unsupported': {
+        // WhatsApp's own "I could not forward this" — a poll, or a
+        // message type this API version does not carry. Meta's reason is
+        // in `errors`; surfacing it beats a bare placeholder, because it
+        // tells the agent whether to ask the customer to resend.
+        const err = message.errors?.[0];
+        return {
+          ...empty,
+          contentText: err?.title || 'Message type not supported by WhatsApp',
+          metadata: {
+            error: {
+              code: err?.code ?? null,
+              title: err?.title ?? null,
+              detail: err?.details ?? err?.message ?? null,
+            },
+          },
+        };
+      }
+
       default:
+        // Reached only by a type Meta added after this switch was
+        // written. The name is kept in the text on purpose — it is the
+        // one clue that says which case to add next.
+        this.logger.warn(`Unhandled inbound message type: ${message.type}`);
         return {
           ...empty,
           contentText: `[Unsupported message type: ${message.type}]`,

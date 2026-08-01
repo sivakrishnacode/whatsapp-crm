@@ -52,26 +52,33 @@ describe('LOCATION headers', () => {
     });
   });
 
-  it('requires a pin at send time', () => {
+  it('requires a complete pin at send time', () => {
+    // This case previously asserted that lat/lng/name was enough. It is
+    // not: the live API answers that with "Parameter 'address' is
+    // mandatory for component parameter type 'location'". All four
+    // fields are required on a template location header, unlike the
+    // location *message* object where Meta documents name and address
+    // as optional.
     const template = {
       ...base,
       header_type: 'location',
     } as unknown as MessageTemplate;
-    expect(() => buildSendComponents(template)).toThrow(
-      /latitude and longitude/,
-    );
-    expect(
+    expect(() => buildSendComponents(template)).toThrow(/latitude/);
+    expect(() =>
       buildSendComponents(template, {
         headerLocation: { latitude: '12.9', longitude: '77.5', name: 'HQ' },
-      })[0],
-    ).toEqual({
+      }),
+    ).toThrow(/address/);
+
+    const pin = {
+      latitude: '12.9',
+      longitude: '77.5',
+      name: 'HQ',
+      address: '1 Main St',
+    };
+    expect(buildSendComponents(template, { headerLocation: pin })[0]).toEqual({
       type: 'header',
-      parameters: [
-        {
-          type: 'location',
-          location: { latitude: '12.9', longitude: '77.5', name: 'HQ' },
-        },
-      ],
+      parameters: [{ type: 'location', location: pin }],
     });
   });
 
@@ -365,4 +372,49 @@ describe('CAROUSEL templates', () => {
       },
     ]);
   });
+});
+
+describe('location header — all four fields are mandatory', () => {
+  // Verified against the live Cloud API: Meta answers a missing `name`
+  // with "Parameter 'name' is mandatory for component parameter type
+  // 'location'", then the same for `address`, and accepts only when all
+  // four are present. The location *message* object documents name and
+  // address as optional, which is why they looked optional here.
+  const locationTemplate = {
+    id: 't1',
+    user_id: 'u1',
+    name: 'out_for_delivery_location',
+    body_text: 'Good news {{1}}!',
+    header_type: 'location',
+  } as never;
+
+  const full = {
+    latitude: '11.0168',
+    longitude: '76.9558',
+    name: 'Ukkadam',
+    address: 'Ukkadam, Coimbatore',
+  };
+
+  it('emits the location header when every field is present', () => {
+    const components = buildSendComponents(locationTemplate, {
+      body: ['Siva'],
+      headerLocation: full,
+    });
+    expect(components[0]).toEqual({
+      type: 'header',
+      parameters: [{ type: 'location', location: full }],
+    });
+  });
+
+  for (const field of ['latitude', 'longitude', 'name', 'address'] as const) {
+    it(`names ${field} when it is the missing one`, () => {
+      const partial = { ...full, [field]: '' };
+      expect(() =>
+        buildSendComponents(locationTemplate, {
+          body: ['Siva'],
+          headerLocation: partial,
+        }),
+      ).toThrow(new RegExp(field));
+    });
+  }
 });

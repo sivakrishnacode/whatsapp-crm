@@ -32,7 +32,15 @@ import {
   isRecipientNotAllowedError,
 } from '../utils/phone.util';
 import { ApiError } from '../utils/respond.util';
-import { renderTemplateBody } from '../utils/template-send-builder.util';
+import {
+  renderTemplateBody,
+  type SendTimeParams,
+} from '../utils/template-send-builder.util';
+import { buildTemplateSnapshot } from '../../common/messages/template-snapshot.util';
+import {
+  toMessageMetadata,
+  type WhatsAppMessageMetadata,
+} from '../../common/messages/message-content.types';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -52,7 +60,14 @@ export interface SendMessageParams {
   templateName?: string | null;
   templateLanguage?: string | null;
   templateParams?: string[];
-  templateMessageParams?: any;
+  /**
+   * Structured send-time values: header text/media/location, per-button
+   * substitutions, named body values. Typed rather than `any` because
+   * this is the object the whole template path threads through — an
+   * untyped one is how a LOCATION header came to be dropped silently
+   * between the wizard and Meta.
+   */
+  templateMessageParams?: SendTimeParams;
   replyToMessageId?: string | null;
   interactiveProductParams?: {
     catalogId?: string;
@@ -487,6 +502,19 @@ export class MessageSendService {
 
     let finalContentText = contentText || null;
     let previewText = contentText || `[${messageType}]`;
+    // What the customer will actually see. Meta returns only a message
+    // id, so unless it is captured here the thread keeps nothing but
+    // the body text — no header image, no footer, no buttons. See
+    // buildTemplateSnapshot.
+    let messageMetadata: WhatsAppMessageMetadata | null = null;
+    if (messageType === 'template' && templateRow) {
+      messageMetadata = {
+        template: buildTemplateSnapshot(templateRow, {
+          ...templateMessageParams,
+          body: templateMessageParams?.body ?? templateParams,
+        }),
+      };
+    }
     if (messageType === 'template' && !finalContentText) {
       // Callers may or may not pre-render the body: the inbox composer
       // sends content_text, while the contact-detail send and the public
@@ -540,6 +568,7 @@ export class MessageSendService {
         message_id: waMessageId,
         status: 'sent',
         reply_to_message_id: replyToMessageId || null,
+        metadata: toMessageMetadata(messageMetadata),
       },
     });
 

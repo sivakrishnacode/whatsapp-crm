@@ -56,7 +56,7 @@ import {
   type SendMediaPayload,
 } from "./message-composer";
 import { deleteAccountMedia } from "@/lib/storage/upload-media";
-import { TemplatePicker } from "./template-picker";
+import { TemplatePicker, type TemplateSendValues } from "./template-picker";
 import { buildReplyPreview } from "./reply-quote";
 import { toast } from "sonner";
 
@@ -822,17 +822,13 @@ export function MessageThread({
   }, []);
 
   const handleSendTemplate = useCallback(
-    async (
-      template: MessageTemplate,
-      values: {
-        body: string[];
-        headerText?: string;
-        buttonParams?: Record<number, string>;
-      },
-    ) => {
+    async (template: MessageTemplate, values: TemplateSendValues) => {
       if (!conversation) return;
 
-      const renderedBody = renderTemplateBody(template.body_text, values.body);
+      const renderedBody = renderTemplateBody(
+        template.body_text,
+        values.body ?? [],
+      );
       const tempId = `temp-${Date.now()}`;
 
       const optimisticMsg: Message = {
@@ -856,16 +852,16 @@ export function MessageThread({
             message_type: "template",
             template_name: template.name,
             template_language: template.language,
-            // Structured params drive the new send-builder path
-            // (header media + URL button substitution). Body values
-            // are mirrored under both shapes so the route can fall
-            // back if the template row isn't found locally.
-            template_message_params: {
-              body: values.body,
-              headerText: values.headerText,
-              buttonParams: values.buttonParams,
-            },
-            template_params: values.body,
+            // Structured params drive the send-builder path (header
+            // text/media/location and per-button substitution). Passed
+            // through whole rather than field-by-field: a template can
+            // require any subset, and enumerating them here is how a
+            // LOCATION header came to be silently dropped and then
+            // rejected by Meta. Body values are mirrored under both
+            // shapes so the route can fall back if the template row
+            // isn't found locally.
+            template_message_params: values,
+            template_params: values.body ?? [],
             content_text: renderedBody,
           }),
         });

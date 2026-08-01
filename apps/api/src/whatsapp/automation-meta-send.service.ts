@@ -9,7 +9,15 @@ import {
   metaVariantToE164,
   isRecipientNotAllowedError,
 } from './phone-utils.util';
-import { renderTemplateBody } from '../v1/utils/template-send-builder.util';
+import {
+  renderTemplateBody,
+  type TemplateLocationParam,
+} from '../v1/utils/template-send-builder.util';
+import { buildTemplateSnapshot } from '../common/messages/template-snapshot.util';
+import {
+  toMessageMetadata,
+  type WhatsAppMessageMetadata,
+} from '../common/messages/message-content.types';
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -37,6 +45,17 @@ interface SendTemplateArgs {
   templateName: string;
   language?: string;
   params?: string[];
+  /**
+   * Everything a template needs beyond its body values. Meta rejects
+   * the whole send when a required one is absent, so an automation that
+   * picks a template with a LOCATION header or a variable URL button
+   * has to be able to supply them — previously only `params` was
+   * carried and those templates simply failed.
+   */
+  headerText?: string;
+  headerMediaUrl?: string;
+  headerLocation?: TemplateLocationParam;
+  buttonParams?: Record<number, string>;
 }
 
 type SendInput =
@@ -86,6 +105,22 @@ export class AutomationMetaSendService {
 
     const accessToken = decrypt(config.access_token);
 
+    // Loaded before the send, not after: passing the row to
+    // sendTemplateMessage is what routes it through the component
+    // builder, which is the only path that can express a header pin,
+    // header media or a button substitution. Without it Meta receives a
+    // name and a flat body array and rejects anything more complex.
+    const templateRow =
+      input.kind === 'template'
+        ? await this.prisma.message_templates.findFirst({
+            where: {
+              account_id: input.accountId,
+              name: input.templateName,
+              language: input.language || 'en_US',
+            },
+          })
+        : null;
+
     const attempt = async (phone: string): Promise<string> => {
       if (input.kind === 'template') {
         const r = await sendTemplateMessage({
@@ -95,6 +130,14 @@ export class AutomationMetaSendService {
           templateName: input.templateName,
           language: input.language,
           params: input.params,
+          template: (templateRow as never) ?? undefined,
+          messageParams: {
+            body: input.params,
+            headerText: input.headerText,
+            headerMediaUrl: input.headerMediaUrl,
+            headerLocation: input.headerLocation,
+            buttonParams: input.buttonParams,
+          },
         });
         return r.messageId;
       }
@@ -153,10 +196,11 @@ export class AutomationMetaSendService {
     // a message id, so the body has to be reconstructed locally or the
     // inbox shows an empty bubble. Read-only lookup — the payload already
     // sent to Meta above is untouched by this.
-    const content_text =
+    const sent =
       input.kind === 'text'
-        ? input.text
-        : await this.renderSentTemplateBody(input);
+        ? { body: input.text, metadata: null }
+        : this.describeSentTemplate(input, templateRow);
+    const content_text = sent.body;
 
     try {
       await this.prisma.messages.create({
@@ -168,6 +212,7 @@ export class AutomationMetaSendService {
           template_name,
           message_id: waMessageId,
           status: 'sent',
+          metadata: toMessageMetadata(sent.metadata),
         },
       });
     } catch (err) {
@@ -194,26 +239,41 @@ export class AutomationMetaSendService {
   }
 
   /**
-   * The body text of a template we just sent, with `{{n}}` placeholders
-   * filled from the automation's params — what the recipient sees.
+   * What a template we just sent looks like to the recipient: the body
+   * with `{{n}}` filled from the automation's params, plus a snapshot of
+   * the header media, footer and buttons so the inbox bubble shows the
+   * same thing the customer is looking at.
    *
-   * Returns null when the template isn't in our table (it can be
+   * Returns nulls when the template isn't in our table (it can be
    * approved at Meta but not yet synced locally); callers fall back to a
    * `[template:name]` marker rather than failing a send that Meta has
    * already accepted.
    */
-  private async renderSentTemplateBody(
+  private describeSentTemplate(
     input: SendTemplateArgs,
-  ): Promise<string | null> {
-    const row = await this.prisma.message_templates.findFirst({
-      where: {
-        account_id: input.accountId,
-        name: input.templateName,
-        language: input.language || 'en_US',
-      },
-      select: { body_text: true },
-    });
-    if (!row?.body_text) return null;
-    return renderTemplateBody(row.body_text, { body: input.params });
+    row: {
+      name: string;
+      language: string | null;
+      body_text: string;
+      header_type: string | null;
+      header_content: string | null;
+      header_media_url: string | null;
+      footer_text: string | null;
+      buttons: unknown;
+    } | null,
+  ): { body: string | null; metadata: WhatsAppMessageMetadata | null } {
+    if (!row) return { body: null, metadata: null };
+
+    const params = {
+      body: input.params,
+      headerText: input.headerText,
+      headerMediaUrl: input.headerMediaUrl,
+      headerLocation: input.headerLocation,
+      buttonParams: input.buttonParams,
+    };
+    return {
+      body: row.body_text ? renderTemplateBody(row.body_text, params) : null,
+      metadata: { template: buildTemplateSnapshot(row, params) },
+    };
   }
 }

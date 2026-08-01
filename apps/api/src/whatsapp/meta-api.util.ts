@@ -234,11 +234,27 @@ export async function sendTemplateMessage(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
+    // The one send path that was reading `error.message` directly while
+    // every other used throwMetaError. That is the generic string —
+    // "(#100) Invalid parameter" — and template sends are exactly where
+    // it is useless: every distinct rule Meta enforces on components
+    // surfaces under that same message, with the actual cause in
+    // error_user_title / error_user_msg / error_data.details.
+    //
+    // The components are logged alongside it because a template
+    // rejection is about the payload's *shape*, and the message alone
+    // cannot say which parameter Meta objected to.
     const metaErr = await (response
       .json()
       .catch(() => null) as Promise<MetaErrorResponse | null>);
-    const errMsg =
-      metaErr?.error?.message ?? `Meta API error: ${response.status}`;
+    const errMsg = formatMetaError(
+      metaErr?.error,
+      `Meta API error: ${response.status}`,
+    );
+    console.error(
+      `[meta] template "${templateName}" rejected: ${errMsg}\n` +
+        `payload: ${JSON.stringify(templatePayload)}`,
+    );
     throw new Error(errMsg);
   }
   const data = (await response.json()) as MetaSendResponse;

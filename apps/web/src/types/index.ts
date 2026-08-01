@@ -238,6 +238,16 @@ export interface Notification {
 }
 
 export type SenderType = 'customer' | 'agent' | 'bot';
+/**
+ * How to render a message. Mirrors `messages_content_type_check`
+ * (migration 062) — every value here needs a case in `MessageContent`
+ * (components/inbox/message-bubble.tsx), and vice versa.
+ *
+ * Note there is no `'button'`: a tap on a *template's* quick-reply
+ * button means the same thing as a tap on an interactive button, so
+ * both are stored as `'interactive'` and told apart by
+ * `metadata.source`.
+ */
 export type ContentType =
   | 'text'
   | 'image'
@@ -247,7 +257,16 @@ export type ContentType =
   | 'location'
   | 'template'
   /** Customer tapped a reply button or list row on a message we sent. */
-  | 'interactive';
+  | 'interactive'
+  | 'sticker'
+  /** Contact card(s) shared by the customer. */
+  | 'contacts'
+  /** Cart submitted from the catalog. */
+  | 'order'
+  /** Platform notice — the customer changed their number, etc. */
+  | 'system'
+  /** WhatsApp itself could not forward what was sent. */
+  | 'unsupported';
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
 export interface Message {
@@ -270,6 +289,87 @@ export interface Message {
    * cue (renders with a "↩ button reply" affordance).
    */
   interactive_reply_id?: string;
+  /**
+   * Everything the renderer needs beyond `content_text` and
+   * `media_url`. Written by the API — see
+   * apps/api/src/common/messages/message-content.types.ts, which this
+   * mirrors. Shared with the Instagram channel, so treat unknown keys
+   * as someone else's and never overwrite the whole object.
+   */
+  metadata?: MessageMetadata | null;
+}
+
+/** A template button exactly as the customer saw it. */
+export interface MessageTemplateButton {
+  type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'COPY_CODE';
+  text: string;
+  url?: string;
+  phone_number?: string;
+}
+
+/**
+ * What an outbound template looked like on the customer's phone,
+ * captured at send time.
+ *
+ * Meta renders templates from its own approved copy and returns only a
+ * message id, so this is the only record of the header image, footer
+ * and buttons that were actually delivered. Absent on rows sent before
+ * migration 062 — the bubble falls back to body text alone.
+ */
+export interface MessageTemplateSnapshot {
+  name: string;
+  language?: string | null;
+  header?: {
+    type: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'LOCATION';
+    text?: string | null;
+    media_url?: string | null;
+    filename?: string | null;
+  } | null;
+  footer?: string | null;
+  buttons?: MessageTemplateButton[];
+}
+
+export interface MessageContactCard {
+  name: string;
+  phones: Array<{ phone: string; type?: string | null }>;
+  emails?: Array<{ email: string; type?: string | null }>;
+  organization?: string | null;
+}
+
+export interface MessageOrderItem {
+  retailer_id: string;
+  name?: string | null;
+  quantity: number;
+  unit_price: number;
+  currency?: string | null;
+}
+
+export interface MessageMetadata {
+  /** Origin of an 'interactive' row: which kind of tap produced it. */
+  source?: 'template_button' | 'interactive_reply' | 'flow_reply';
+  template?: MessageTemplateSnapshot;
+  contacts?: MessageContactCard[];
+  order?: {
+    catalog_id?: string | null;
+    items: MessageOrderItem[];
+    total?: number;
+    currency?: string | null;
+    note?: string | null;
+  };
+  location?: {
+    latitude: number;
+    longitude: number;
+    name?: string | null;
+    address?: string | null;
+  };
+  error?: { code?: number | null; title?: string | null; detail?: string | null };
+  flow_response?: Record<string, unknown>;
+  animated?: boolean;
+  /** Instagram keys — owned by that channel, listed so they aren't stripped. */
+  title?: string;
+  ig_attachment_type?: string;
+  reel_video_id?: string;
+  ig_source_url_expired?: boolean;
 }
 
 export type ReactionActor = 'customer' | 'agent';

@@ -14,6 +14,7 @@ import { AutomationConditionService } from './automation-condition.service';
 import { interpolate } from './automation-interpolation.util';
 import type {
   AssignConversationStepConfig,
+  AutomationContext,
   AutomationLogStepResult,
   AutomationStepType,
   ConditionStepConfig,
@@ -235,6 +236,17 @@ export class AutomationStepExecutorService {
           conversationId,
           'templates',
         );
+        // Values are interpolated the same way `send_message` text is,
+        // so a template variable can carry `{{contact.name}}` or
+        // `{{message.text}}` rather than only a fixed string. Without
+        // this, "Hi {{1}}" could only ever greet everyone identically —
+        // which is most of the reason to use a template with a variable
+        // at all.
+        const templateContext = await this.withContactTokens(
+          args.context,
+          args.contactId,
+        );
+
         // Meta templates use positional {{1}}, {{2}}, … placeholders, so
         // we MUST emit params in strict numeric order. Lexicographic sort
         // of "1", "2", …, "10" yields "1", "10", "2", … which silently
@@ -251,8 +263,29 @@ export class AutomationStepExecutorService {
                 if (bNum) return 1;
                 return a.localeCompare(b);
               })
-              .map((k) => String(cfg.variables![k]))
+              .map((k) =>
+                interpolate(String(cfg.variables![k]), templateContext),
+              )
           : [];
+
+        // Header and button values travel alongside the body ones.
+        // Meta rejects the whole send if a template's LOCATION pin,
+        // media URL or button substitution is missing, so a config that
+        // carries them has to be able to deliver them.
+        const fill = (v: string | undefined) =>
+          v ? interpolate(v, templateContext) : undefined;
+
+        const buttonParams = cfg.button_params
+          ? Object.fromEntries(
+              Object.entries(cfg.button_params).map(
+                ([index, value]): [number, string] => [
+                  Number(index),
+                  interpolate(String(value), templateContext),
+                ],
+              ),
+            )
+          : undefined;
+
         const { whatsapp_message_id } = await this.metaSend.sendTemplate({
           accountId: args.automation.accountId,
           conversationId,
@@ -260,6 +293,23 @@ export class AutomationStepExecutorService {
           templateName: cfg.template_name,
           language: cfg.language,
           params,
+          headerText: fill(cfg.header_text),
+          headerMediaUrl: fill(cfg.header_media_url),
+          headerLocation: cfg.header_location
+            ? {
+                latitude: interpolate(
+                  cfg.header_location.latitude,
+                  templateContext,
+                ),
+                longitude: interpolate(
+                  cfg.header_location.longitude,
+                  templateContext,
+                ),
+                name: fill(cfg.header_location.name),
+                address: fill(cfg.header_location.address),
+              }
+            : undefined,
+          buttonParams,
         });
         return `template sent via Meta (${whatsapp_message_id})`;
       }
@@ -585,6 +635,42 @@ export class AutomationStepExecutorService {
       select: { slug: true },
     });
     return type ? `${base}/book/${type.slug}` : null;
+  }
+
+  /**
+   * The step's context with a `contact` namespace attached, so
+   * `{{contact.name}}` resolves inside a template variable.
+   *
+   * Loaded here rather than at dispatch because only template variables
+   * read it today — making every run of every automation pay for a
+   * contact lookup would be a cost with almost no reader. Returns the
+   * context untouched when there is no contact or the lookup fails: a
+   * template send is not worth failing over a greeting that would
+   * render empty anyway.
+   */
+  private async withContactTokens(
+    context: AutomationContext,
+    contactId: string | null | undefined,
+  ): Promise<AutomationContext> {
+    if (!contactId || context.contact) return context;
+    try {
+      const contact = await this.prisma.contacts.findUnique({
+        where: { id: contactId },
+        select: { name: true, phone: true, email: true, company: true },
+      });
+      if (!contact) return context;
+      return {
+        ...context,
+        contact: {
+          name: contact.name,
+          phone: contact.phone,
+          email: contact.email,
+          company: contact.company,
+        },
+      };
+    } catch {
+      return context;
+    }
   }
 
   private async resolveConversationId(

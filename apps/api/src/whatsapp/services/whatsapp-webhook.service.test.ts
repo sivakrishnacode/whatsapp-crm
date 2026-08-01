@@ -4,6 +4,7 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import type { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
 import type { FlowDispatchService } from '../../flows/services/flow-dispatch.service';
 import type { AutomationDispatchService } from '../../automations/services/automation-dispatch.service';
+import type { WhatsAppMessageMetadata } from '../../common/messages/message-content.types';
 
 vi.mock('../../common/security/encryption.util', () => ({
   decrypt: vi.fn((val) => val),
@@ -298,6 +299,233 @@ describe('WhatsappWebhookService', () => {
         data: expect.objectContaining({ tier_daily_limit: 100000 }),
       });
       expect(flowDispatch.dispatchInbound).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * `parseMessageContent` is private, but it is where every inbound
+   * type is decided and it is pure for everything that isn't media
+   * (media calls Meta to verify the id). Reaching it directly beats
+   * driving the whole webhook for each case.
+   */
+  describe('parseMessageContent', () => {
+    interface ParsedContent {
+      contentText: string | null;
+      mediaUrl: string | null;
+      mediaType: string | null;
+      interactiveReplyId: string | null;
+      metadata: WhatsAppMessageMetadata | null;
+    }
+
+    // Typed rather than `as any`: the cast is to the private method's
+    // real signature, so the assertions below still type-check against
+    // what the parser actually returns.
+    const parse = (message: Record<string, unknown>): Promise<ParsedContent> =>
+      (
+        service as unknown as {
+          parseMessageContent(
+            m: unknown,
+            token: string,
+          ): Promise<ParsedContent>;
+        }
+      ).parseMessageContent(message, 'token');
+
+    it('reads a template quick-reply tap instead of calling it unsupported', async () => {
+      // The reported bug. Meta sends type 'button' when a customer taps
+      // a button on a *template*; with no case for it the agent saw
+      // "[Unsupported message type: button]" where an opt-out request
+      // should have been.
+      const result = await parse({
+        type: 'button',
+        button: { text: 'Stop promotions', payload: 'STOP_PROMOS' },
+      });
+
+      expect(result.contentText).toBe('Stop promotions');
+      expect(result.interactiveReplyId).toBe('STOP_PROMOS');
+      expect(result.metadata?.source).toBe('template_button');
+    });
+
+    it('falls back between a button label and its payload', async () => {
+      // Either field can be absent. Neither absence should produce a
+      // blank bubble.
+      await expect(
+        parse({ type: 'button', button: { payload: 'STOP' } }),
+      ).resolves.toMatchObject({
+        contentText: 'STOP',
+        interactiveReplyId: 'STOP',
+      });
+      await expect(
+        parse({ type: 'button', button: { text: 'Stop' } }),
+      ).resolves.toMatchObject({
+        contentText: 'Stop',
+        interactiveReplyId: 'Stop',
+      });
+    });
+
+    it('reads an interactive button reply and marks its origin', async () => {
+      const result = await parse({
+        type: 'interactive',
+        interactive: {
+          type: 'button_reply',
+          button_reply: { id: 'yes', title: 'Yes' },
+        },
+      });
+      expect(result.contentText).toBe('Yes');
+      expect(result.interactiveReplyId).toBe('yes');
+      expect(result.metadata?.source).toBe('interactive_reply');
+    });
+
+    it('reads a completed Flow, parsing its response payload', async () => {
+      const result = await parse({
+        type: 'interactive',
+        interactive: {
+          type: 'nfm_reply',
+          nfm_reply: {
+            body: 'Sent',
+            response_json: '{"email":"ada@example.com"}',
+          },
+        },
+      });
+      expect(result.contentText).toBe('Sent');
+      expect(result.metadata?.source).toBe('flow_reply');
+      expect(result.metadata?.flow_response).toEqual({
+        email: 'ada@example.com',
+      });
+    });
+
+    it('keeps a Flow reply whose response payload is malformed', async () => {
+      // A bad payload costs the structured answers, not the message.
+      const result = await parse({
+        type: 'interactive',
+        interactive: {
+          type: 'nfm_reply',
+          nfm_reply: { body: 'Sent', response_json: '{not json' },
+        },
+      });
+      expect(result.contentText).toBe('Sent');
+      expect(result.metadata?.flow_response).toBeUndefined();
+    });
+
+    it('reads a shared contact card, preferring wa_id over the typed phone', async () => {
+      const result = await parse({
+        type: 'contacts',
+        contacts: [
+          {
+            name: { formatted_name: 'Ada Lovelace' },
+            phones: [{ phone: '098 765 4321', wa_id: '919876543210' }],
+            org: { company: 'Analytical Engines' },
+          },
+        ],
+      });
+
+      expect(result.contentText).toBe('Ada Lovelace');
+      expect(result.metadata?.contacts).toEqual([
+        {
+          name: 'Ada Lovelace',
+          phones: [{ phone: '+919876543210', type: null }],
+          emails: [],
+          organization: 'Analytical Engines',
+        },
+      ]);
+    });
+
+    it('summarizes multiple shared contacts', async () => {
+      const result = await parse({
+        type: 'contacts',
+        contacts: [
+          {
+            name: { formatted_name: 'A' },
+            phones: [{ wa_id: '911111111111' }],
+          },
+          {
+            name: { formatted_name: 'B' },
+            phones: [{ wa_id: '912222222222' }],
+          },
+        ],
+      });
+      expect(result.contentText).toBe('2 contacts shared');
+    });
+
+    it('structures a submitted cart alongside the readable summary', async () => {
+      const result = await parse({
+        type: 'order',
+        order: {
+          catalog_id: 'cat_1',
+          text: 'gift wrap please',
+          product_items: [
+            {
+              product_retailer_id: 'SKU1',
+              quantity: '2',
+              item_price: '150.5',
+              currency: 'INR',
+            },
+          ],
+        },
+      });
+
+      expect(result.contentText).toContain('Cart Submitted');
+      expect(result.metadata?.order).toEqual({
+        catalog_id: 'cat_1',
+        items: [
+          {
+            retailer_id: 'SKU1',
+            quantity: 2,
+            unit_price: 150.5,
+            currency: 'INR',
+          },
+        ],
+        total: 301,
+        currency: 'INR',
+        note: 'gift wrap please',
+      });
+    });
+
+    it('keeps location coordinates structured, not only flattened into text', async () => {
+      // The flattened form is "name - address - lat,lng", which cannot
+      // be parsed back when the name contains a hyphen.
+      const result = await parse({
+        type: 'location',
+        location: {
+          latitude: 13.08,
+          longitude: 80.27,
+          name: 'A - B',
+          address: 'Chennai',
+        },
+      });
+      expect(result.metadata?.location).toEqual({
+        latitude: 13.08,
+        longitude: 80.27,
+        name: 'A - B',
+        address: 'Chennai',
+      });
+    });
+
+    it("surfaces WhatsApp's own reason for an undeliverable message", async () => {
+      const result = await parse({
+        type: 'unsupported',
+        errors: [
+          { code: 131051, title: 'Message type is not currently supported' },
+        ],
+      });
+      expect(result.contentText).toBe(
+        'Message type is not currently supported',
+      );
+      expect(result.metadata?.error?.code).toBe(131051);
+    });
+
+    it('reads a system notice', async () => {
+      const result = await parse({
+        type: 'system',
+        system: { body: 'Customer changed their phone number' },
+      });
+      expect(result.contentText).toBe('Customer changed their phone number');
+    });
+
+    it('still names a genuinely unknown type, so the missing case is findable', async () => {
+      const result = await parse({ type: 'some_future_type' });
+      expect(result.contentText).toBe(
+        '[Unsupported message type: some_future_type]',
+      );
     });
   });
 });

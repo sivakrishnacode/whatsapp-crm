@@ -131,15 +131,25 @@ function buildHeaderComponent(
   if (!headerType) return null;
 
   if (headerType === 'location') {
+    // All four fields are mandatory, verified against the live API:
+    // omitting `name` returns "Parameter 'name' is mandatory for
+    // component parameter type 'location'", then the same for
+    // `address`. This differs from the location *message* object, where
+    // Meta documents both as optional — which is what made them look
+    // optional here. Checked individually so the error names the field
+    // rather than surfacing Meta's generic "(#100) Invalid parameter".
     const loc = params.headerLocation;
-    if (!loc?.latitude || !loc?.longitude) {
+    const missing = (['latitude', 'longitude', 'name', 'address'] as const)
+      .filter((field) => !loc?.[field]?.toString().trim());
+    if (missing.length > 0) {
       throw new Error(
-        'Location header requires latitude and longitude at send time — pass headerLocation.',
+        `Location header requires ${missing.join(', ')} at send time — ` +
+          'WhatsApp treats all four location fields as mandatory on a template.',
       );
     }
     return {
       type: 'header',
-      parameters: [{ type: 'location', location: loc }],
+      parameters: [{ type: 'location', location: loc! }],
     };
   }
 

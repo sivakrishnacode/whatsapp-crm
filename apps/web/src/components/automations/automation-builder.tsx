@@ -56,6 +56,7 @@ import type {
   Tag as TagRecord,
 } from "@/types"
 import { createClient } from "@/lib/supabase/client"
+import { collectTemplateSlots } from "@/lib/whatsapp/template-slots"
 import { cn } from "@/lib/utils"
 
 // ------------------------------------------------------------
@@ -168,7 +169,7 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
     case "send_message":
       return { text: "" }
     case "send_template":
-      return { template_name: "", language: "en_US" }
+      return { template_name: "", language: "en_US", variables: {} }
     case "add_tag":
     case "remove_tag":
       return { tag_id: "" }
@@ -579,15 +580,38 @@ function DealPipelineFields({
 /** Template dropdown showing approved templates by name + language,
  *  storing both template_name and language. Falls back to manual name +
  *  language inputs when no approved templates are synced yet. */
+/** Substitute the configured values into the body for a live preview. */
+function previewTemplateBody(
+  template: MessageTemplate,
+  variables: Record<string, string>,
+): string {
+  return (template.body_text ?? "").replace(
+    /\{\{\s*([^{}]+?)\s*\}\}/g,
+    (whole, key: string) => variables[key]?.trim() || whole,
+  )
+}
+
 function SendTemplateFields({
   templateName,
   language,
+  config,
   onChange,
 }: {
   templateName: string
   language: string
-  onChange: (patch: { template_name: string; language: string }) => void
+  /** The whole send_template step config — header and button values live here too. */
+  config: Record<string, unknown>
+  onChange: (patch: Record<string, unknown>) => void
 }) {
+  const variables = (config.variables as Record<string, string>) ?? {}
+  const buttonParams = (config.button_params as Record<string, string>) ?? {}
+  const headerLocation =
+    (config.header_location as {
+      latitude?: string
+      longitude?: string
+      name?: string
+      address?: string
+    }) ?? {}
   const { templates } = useResources()
 
   if (templates.length === 0) {
@@ -623,32 +647,274 @@ function SendTemplateFields({
     (t) => toValue(t.name, t.language ?? "en_US") === current,
   )
 
+  const selected = templates.find(
+    (t) => toValue(t.name, t.language ?? "en_US") === current,
+  )
+  // Same collector the inbox picker uses, so an automation asks for
+  // exactly what a manual send would — including the header pin and
+  // button substitutions a template can require beyond its body.
+  const slots = selected ? collectTemplateSlots(selected) : null
+  const variableKeys = slots?.bodyVars ?? []
+
   return (
-    <FieldBlock label="Template">
-      <select
-        value={current}
-        onChange={(e) => {
-          const [name, lang] = e.target.value.split("::")
-          onChange({ template_name: name ?? "", language: lang ?? "" })
-        }}
-        className={SELECT_CLASS}
-      >
-        <option value="">Select a template…</option>
-        {templates.map((t) => {
-          const lang = t.language ?? "en_US"
-          return (
-            <option key={t.id} value={toValue(t.name, lang)}>
-              {t.name} ({lang})
+    <>
+      <FieldBlock label="Template">
+        <select
+          value={current}
+          onChange={(e) => {
+            const [name, lang] = e.target.value.split("::")
+            // Drop the old values: they were positioned against a
+            // different template's placeholders, and carrying them over
+            // would silently send last template's copy in this one's
+            // slots.
+            onChange({
+              template_name: name ?? "",
+              language: lang ?? "",
+              variables: {},
+              button_params: {},
+              header_text: "",
+              header_media_url: "",
+              header_location: undefined,
+            })
+          }}
+          className={SELECT_CLASS}
+        >
+          <option value="">Select a template…</option>
+          {templates.map((t) => {
+            const lang = t.language ?? "en_US"
+            return (
+              <option key={t.id} value={toValue(t.name, lang)}>
+                {t.name} ({lang})
+              </option>
+            )
+          })}
+          {current && !hasMatch && (
+            <option value={current}>
+              {templateName} ({language || "unknown"}) — not in approved list
             </option>
-          )
-        })}
-        {current && !hasMatch && (
-          <option value={current}>
-            {templateName} ({language || "unknown"}) — not in approved list
-          </option>
-        )}
-      </select>
-    </FieldBlock>
+          )}
+        </select>
+      </FieldBlock>
+
+      {/* A template's requirements are not limited to its body. Meta
+          rejects the whole send when any of these is missing, so an
+          automation has to be able to supply them — same slots the
+          inbox picker collects. */}
+      {slots?.headerTextVars.length ? (
+        <FieldBlock label="Header variable">
+          <Input
+            value={(config.header_text as string) ?? ""}
+            onChange={(e) => onChange({ header_text: e.target.value })}
+            placeholder="Text, or {{contact.name}}"
+            className="bg-muted text-foreground"
+          />
+        </FieldBlock>
+      ) : null}
+
+      {slots?.headerMedia && (
+        <FieldBlock
+          label={`${slots.headerMedia.kind.charAt(0)}${slots.headerMedia.kind
+            .slice(1)
+            .toLowerCase()} header URL`}
+        >
+          <Input
+            value={(config.header_media_url as string) ?? ""}
+            onChange={(e) => onChange({ header_media_url: e.target.value })}
+            placeholder={
+              slots.headerMedia.hasDefault
+                ? "Leave blank to use the template's media"
+                : "https://…"
+            }
+            className="bg-muted text-foreground"
+          />
+          {!slots.headerMedia.hasDefault && (
+            <p className="mt-1 text-[11px] text-amber-500">
+              This template has no media saved, so a URL is required for
+              every send.
+            </p>
+          )}
+        </FieldBlock>
+      )}
+
+      {slots?.headerLocation && (
+        <FieldBlock label="Location header">
+          <div className="flex flex-col gap-2">
+            <p className="text-[11px] text-muted-foreground">
+              WhatsApp shows a map pin above the message. All four fields
+              are required — Meta rejects the send without them.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                value={headerLocation.latitude ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    header_location: {
+                      ...headerLocation,
+                      latitude: e.target.value,
+                    },
+                  })
+                }
+                placeholder="Latitude"
+                className="bg-muted text-foreground"
+              />
+              <Input
+                value={headerLocation.longitude ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    header_location: {
+                      ...headerLocation,
+                      longitude: e.target.value,
+                    },
+                  })
+                }
+                placeholder="Longitude"
+                className="bg-muted text-foreground"
+              />
+            </div>
+            <Input
+              value={headerLocation.name ?? ""}
+              onChange={(e) =>
+                onChange({
+                  header_location: { ...headerLocation, name: e.target.value },
+                })
+              }
+              placeholder="Place name"
+              className="bg-muted text-foreground"
+            />
+            <Input
+              value={headerLocation.address ?? ""}
+              onChange={(e) =>
+                onChange({
+                  header_location: {
+                    ...headerLocation,
+                    address: e.target.value,
+                  },
+                })
+              }
+              placeholder="Address"
+              className="bg-muted text-foreground"
+            />
+            {(!headerLocation.latitude?.trim() ||
+              !headerLocation.longitude?.trim() ||
+              !headerLocation.name?.trim() ||
+              !headerLocation.address?.trim()) && (
+              <p className="text-[11px] text-amber-500">
+                All four fields are required — WhatsApp rejects a
+                location header that is missing any of them.
+              </p>
+            )}
+          </div>
+        </FieldBlock>
+      )}
+
+      {/* One input per placeholder in the template body. Without these
+          a template with variables could not be used from an automation
+          at all: the executor reads `variables`, and nothing wrote it. */}
+      {variableKeys.length > 0 && (
+        <FieldBlock label="Template variables">
+          <div className="flex flex-col gap-2">
+            {variableKeys.map((key) => {
+              // Meta counts parameters, so a blank one is not "send it
+              // empty" — it fails the whole send at runtime with
+              // "number of parameters does not match". Flag it here,
+              // where it can still be fixed.
+              const empty = !(variables[key] ?? "").trim()
+              return (
+                <div key={key} className="flex items-center gap-2">
+                  <span className="w-24 shrink-0 truncate font-mono text-xs text-muted-foreground">
+                    {`{{${key}}}`}
+                  </span>
+                  <Input
+                    value={variables[key] ?? ""}
+                    onChange={(e) =>
+                      onChange({
+                        variables: { ...variables, [key]: e.target.value },
+                      })
+                    }
+                    placeholder="Text, or {{contact.name}}"
+                    className={cn(
+                      "bg-muted text-foreground",
+                      empty && "border-amber-500/60",
+                    )}
+                  />
+                </div>
+              )
+            })}
+            {variableKeys.some((k) => !(variables[k] ?? "").trim()) && (
+              <p className="text-[11px] text-amber-500">
+                Every variable needs a value — WhatsApp rejects a template
+                send whose parameter count doesn&apos;t match.
+              </p>
+            )}
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Values can be plain text or a token resolved when the
+              automation runs:{" "}
+              <code className="font-mono">{"{{contact.name}}"}</code>,{" "}
+              <code className="font-mono">{"{{contact.phone}}"}</code>,{" "}
+              <code className="font-mono">{"{{contact.email}}"}</code>,{" "}
+              <code className="font-mono">{"{{contact.company}}"}</code>,{" "}
+              <code className="font-mono">{"{{message.text}}"}</code>. An
+              unknown token resolves to nothing.
+            </p>
+          </div>
+        </FieldBlock>
+      )}
+
+      {(slots?.urlButtons.length || slots?.copyCodeButtons.length) ? (
+        <FieldBlock label="Button values">
+          <div className="flex flex-col gap-2">
+            {slots.urlButtons.map((slot) => (
+              <div key={`url-${slot.index}`} className="flex items-center gap-2">
+                <span className="w-24 shrink-0 truncate text-xs text-muted-foreground">
+                  {slot.text}
+                </span>
+                <Input
+                  value={buttonParams[String(slot.index)] ?? ""}
+                  onChange={(e) =>
+                    onChange({
+                      button_params: {
+                        ...buttonParams,
+                        [String(slot.index)]: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder={`Value for {{${slot.token}}} in the URL`}
+                  className="bg-muted text-foreground"
+                />
+              </div>
+            ))}
+            {slots.copyCodeButtons.map((slot) => (
+              <div key={`copy-${slot.index}`} className="flex items-center gap-2">
+                <span className="w-24 shrink-0 truncate text-xs text-muted-foreground">
+                  {slot.text}
+                </span>
+                <Input
+                  value={buttonParams[String(slot.index)] ?? ""}
+                  onChange={(e) =>
+                    onChange({
+                      button_params: {
+                        ...buttonParams,
+                        [String(slot.index)]: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="Coupon code"
+                  className="bg-muted text-foreground"
+                />
+              </div>
+            ))}
+          </div>
+        </FieldBlock>
+      ) : null}
+
+      {selected?.body_text && (
+        <FieldBlock label="Preview">
+          <p className="whitespace-pre-wrap rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-foreground">
+            {previewTemplateBody(selected, variables)}
+          </p>
+        </FieldBlock>
+      )}
+    </>
   )
 }
 
@@ -1467,6 +1733,7 @@ function StepEditor({
         <SendTemplateFields
           templateName={(cfg.template_name as string) ?? ""}
           language={(cfg.language as string) ?? ""}
+          config={cfg}
           onChange={(patch) => set(patch)}
         />
       )
