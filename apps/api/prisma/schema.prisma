@@ -37,6 +37,8 @@ model Account {
   flowRuns                      FlowRun[]
   flows                         Flow[]
   instagram_comments            instagram_comments[]
+  instagram_comment_funnels     instagram_comment_funnels[]
+  instagram_comment_funnel_runs instagram_comment_funnel_runs[]
   instagram_config              instagram_config?
   instagram_media               instagram_media[]
   member_presence               member_presence[]
@@ -564,6 +566,7 @@ model users {
   flowRuns                                                           FlowRun[]
   flows                                                              Flow[]
   instagram_config                                                   instagram_config[]
+  instagram_comment_funnels                                          instagram_comment_funnels[]
   member_presence                                                    member_presence?
   message_templates                                                  message_templates[]
   notifications_notifications_actor_user_idTousers                   notifications[]                 @relation("notifications_actor_user_idTousers")
@@ -992,6 +995,7 @@ model contacts {
   notifications                 notifications[]
   whatsapp_orders               whatsapp_orders[]
   instagram_comments            instagram_comments[]
+  instagram_funnel_runs         instagram_comment_funnel_runs[]
   web_sessions                  web_sessions[]
   form_submissions              form_submissions[]
   form_bookings                 form_bookings[]
@@ -1035,6 +1039,7 @@ model conversations {
   messages              messages[]
   notifications         notifications[]
   instagram_comments    instagram_comments[]
+  instagram_funnel_runs instagram_comment_funnel_runs[]
   web_sessions          web_sessions[]
   form_submissions      form_submissions[]
   form_bookings         form_bookings[]
@@ -1667,11 +1672,87 @@ model instagram_config {
   last_error          String?
   created_at          DateTime  @default(now()) @db.Timestamptz(6)
   updated_at          DateTime  @default(now()) @db.Timestamptz(6)
+  /// Master switch for comment → DM funnels. FALSE (default) means no
+  /// funnel fires regardless of its own is_active. Off by default
+  /// because the feature DMs people who never messaged the business.
+  comment_funnels_enabled Boolean @default(false)
   accounts            Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users               users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([account_id], map: "idx_instagram_config_account")
   @@index([token_expires_at], map: "idx_instagram_config_token_expires", where: raw("(token_expires_at IS NOT NULL)"))
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model instagram_comment_funnels {
+  id                  String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id          String                          @db.Uuid
+  user_id             String                          @db.Uuid
+  name                String
+  /// NULL = every post. Not an FK to instagram_media: that table is a
+  /// resyncable cache, and losing a cache row must not delete a funnel.
+  ig_media_id         String?
+  /// Empty = match any comment. Case-insensitive substring match.
+  keywords            String[]                        @default([])
+  optin_text          String
+  optin_button_label  String                          @default("I'm ready 🙂")
+  follow_gate_enabled Boolean                         @default(true)
+  follow_ask_text     String?
+  follow_button_label String                          @default("I followed you! ✅")
+  reward_text         String
+  /// Up to 3 {label,url} link-out buttons, sent as a web_url button
+  /// template. Not postbacks — tapping one ends the funnel.
+  reward_buttons      Json                            @default("[]")
+  /// Optional public reply on the comment itself ("check your DMs").
+  public_reply_text   String?
+  is_active           Boolean                         @default(false)
+  matched_count       Int                             @default(0)
+  delivered_count     Int                             @default(0)
+  created_at          DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime                        @default(now()) @db.Timestamptz(6)
+  accounts            Account                         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users               users                           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  runs                instagram_comment_funnel_runs[]
+
+  @@index([account_id, ig_media_id], map: "idx_ig_comment_funnels_active", where: raw("(is_active = true)"))
+  @@index([account_id, updated_at(sort: Desc)], map: "idx_ig_comment_funnels_account_updated")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model instagram_comment_funnel_runs {
+  id              String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String                    @db.Uuid
+  funnel_id       String                    @db.Uuid
+  ig_comment_id   String
+  from_igsid      String
+  /// Both NULL until the opt-in tap: the contact and conversation are
+  /// created by the messaging webhook, not by the comment.
+  contact_id      String?                   @db.Uuid
+  conversation_id String?                   @db.Uuid
+  /// awaiting_optin | awaiting_follow | delivered | failed
+  state           String                    @default("awaiting_optin")
+  /// is_user_follow_business at gate time. NULL = never determined.
+  /// Reporting only — a soft gate delivers either way.
+  was_following   Boolean?
+  delivered_at    DateTime?                 @db.Timestamptz(6)
+  last_error      String?
+  created_at      DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime                  @default(now()) @db.Timestamptz(6)
+  accounts        Account                   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  funnel          instagram_comment_funnels @relation(fields: [funnel_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contacts        contacts?                 @relation(fields: [contact_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  conversations   conversations?            @relation(fields: [conversation_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  /// One run per person per funnel, forever. A repeat commenter gets
+  /// one DM, not five — Meta's one-private-reply-per-comment rule
+  /// would not have helped, since five comments are five comment ids.
+  @@unique([funnel_id, from_igsid])
+  @@index([funnel_id, state, created_at(sort: Desc)], map: "idx_ig_funnel_runs_funnel_state")
+  @@index([account_id, created_at(sort: Desc)], map: "idx_ig_funnel_runs_account_created")
   @@schema("public")
 }
 

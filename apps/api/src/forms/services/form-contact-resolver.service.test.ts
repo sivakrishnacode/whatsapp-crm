@@ -220,9 +220,9 @@ describe('resolve — creating', () => {
       data: { p: '4155550123' },
     });
 
-    expect(
-      state.contacts.find((c) => c.id === result.contactId)?.phone,
-    ).toBe('+14155550123');
+    expect(state.contacts.find((c) => c.id === result.contactId)?.phone).toBe(
+      '+14155550123',
+    );
   });
 
   it('drops a phone answer that is not a phone number', async () => {

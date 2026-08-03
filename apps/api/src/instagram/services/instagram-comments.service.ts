@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
 import { AutomationDispatchService } from '../../automations/services/automation-dispatch.service';
 import { InstagramIdentityService } from './instagram-identity.service';
+import { CommentFunnelService } from './comment-funnel.service';
 import {
   getMedia,
   getMediaComments,
@@ -61,6 +62,7 @@ export class InstagramCommentsService {
     private readonly identity: InstagramIdentityService,
     private readonly webhookDeliver: WebhookDeliverService,
     private readonly automationDispatch: AutomationDispatchService,
+    private readonly commentFunnel: CommentFunnelService,
   ) {}
 
   // ------------------------------------------------------------
@@ -121,7 +123,7 @@ export class InstagramCommentsService {
 
     // Upsert, because Meta redelivers. The unique key is
     // (account_id, ig_comment_id).
-    await this.prisma.instagram_comments.upsert({
+    const commentRow = await this.prisma.instagram_comments.upsert({
       where: {
         account_id_ig_comment_id: {
           account_id: args.accountId,
@@ -136,6 +138,7 @@ export class InstagramCommentsService {
       // Only the mutable parts. Never overwrite a status an agent has
       // already moved to 'hidden' or 'replied'.
       update: { text: record.text, from_username: record.from_username },
+      select: { id: true },
     });
 
     if (isFromBusiness) return;
@@ -152,9 +155,27 @@ export class InstagramCommentsService {
       },
     );
 
-    // The comment → DM funnel. Only fires for commenters we can match
-    // to a contact, because the automation engine is contact-scoped.
-    if (contactId) {
+    // Comment → DM funnels. Deliberately OUTSIDE the `if (contactId)`
+    // below: a first-time commenter has no contact row, and that is
+    // exactly who this feature is for. Awaited rather than
+    // fire-and-forget so the funnel has claimed the comment's single
+    // private reply before any automation can spend it.
+    const claimedByFunnel = await this.commentFunnel.onComment({
+      accountId: args.accountId,
+      ownerUserId: args.ownerUserId,
+      igUserId: args.igUserId,
+      accessToken: args.accessToken,
+      commentRowId: commentRow.id,
+      igCommentId: value.id,
+      igMediaId: value.media?.id ?? null,
+      fromIgsid: fromId ?? '',
+      text: value.text ?? '',
+    });
+
+    // The older automation-based funnel. Only fires for commenters we
+    // can match to a contact, because the automation engine is
+    // contact-scoped.
+    if (contactId && !claimedByFunnel) {
       this.automationDispatch
         .dispatch({
           accountId: args.accountId,

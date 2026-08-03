@@ -1,0 +1,500 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../ig-api.util', () => ({
+  getUserProfile: vi.fn(),
+  sendPrivateReply: vi.fn(),
+  replyToComment: vi.fn(),
+}));
+
+import {
+  CommentFunnelService,
+  matchesKeywords,
+  parsePayload,
+  parseRewardButtons,
+} from './comment-funnel.service';
+import type { PrismaService } from '../../prisma/prisma.service';
+import type { InstagramSendService } from './instagram-send.service';
+import {
+  getUserProfile,
+  replyToComment,
+  sendPrivateReply,
+} from '../ig-api.util';
+
+const ACCOUNT = 'acc-1';
+const OWNER = 'user-1';
+const IGSID = '99887766';
+const COMMENT_ROW = 'cmt-row-1';
+const IG_COMMENT_ID = 'ig-cmt-1';
+const MEDIA_ID = 'media-1';
+const RUN_ID = 'run-1';
+
+function makeFunnel(over: Record<string, unknown> = {}) {
+  return {
+    id: 'funnel-1',
+    account_id: ACCOUNT,
+    ig_media_id: null,
+    keywords: [],
+    optin_text: 'Tap below ✨',
+    optin_button_label: "I'm ready 🙂",
+    follow_gate_enabled: true,
+    follow_ask_text: "You aren't following!",
+    follow_button_label: 'I followed you! ✅',
+    reward_text: 'Here you go 🎁',
+    reward_buttons: [{ label: 'Click here!', url: 'https://example.com' }],
+    public_reply_text: null,
+    is_active: true,
+    ...over,
+  };
+}
+
+function makePrisma(
+  opts: {
+    enabled?: boolean;
+    status?: string;
+    funnels?: Array<Record<string, unknown>>;
+    privateRepliedAt?: Date | null;
+    run?: Record<string, unknown> | null;
+    createThrows?: { code?: string };
+  } = {},
+) {
+  const funnelUpdates: Array<Record<string, unknown>> = [];
+  const runUpdates: Array<Record<string, unknown>> = [];
+  const commentUpdates: Array<Record<string, unknown>> = [];
+
+  const prisma = {
+    instagram_config: {
+      findUnique: vi.fn(() =>
+        Promise.resolve({
+          comment_funnels_enabled: opts.enabled ?? true,
+          status: opts.status ?? 'connected',
+        }),
+      ),
+    },
+    instagram_comments: {
+      findUnique: vi.fn(() =>
+        Promise.resolve({ private_replied_at: opts.privateRepliedAt ?? null }),
+      ),
+      update: vi.fn(({ data }: never) => {
+        commentUpdates.push(data as Record<string, unknown>);
+        return Promise.resolve({});
+      }),
+    },
+    instagram_comment_funnels: {
+      findMany: vi.fn(() => Promise.resolve(opts.funnels ?? [makeFunnel()])),
+      update: vi.fn(({ data }: never) => {
+        funnelUpdates.push(data as Record<string, unknown>);
+        return Promise.resolve({});
+      }),
+    },
+    instagram_comment_funnel_runs: {
+      create: vi.fn(() =>
+        opts.createThrows
+          ? Promise.reject(Object.assign(new Error('dup'), opts.createThrows))
+          : Promise.resolve({ id: RUN_ID }),
+      ),
+      findFirst: vi.fn(() => Promise.resolve(opts.run ?? null)),
+      update: vi.fn(({ data }: never) => {
+        runUpdates.push(data as Record<string, unknown>);
+        return Promise.resolve({});
+      }),
+    },
+  };
+
+  return { prisma, funnelUpdates, runUpdates, commentUpdates };
+}
+
+function makeSend() {
+  return {
+    sendText: vi.fn().mockResolvedValue({ messageId: 'm1', internalId: 'i1' }),
+    sendButtons: vi
+      .fn()
+      .mockResolvedValue({ messageId: 'm2', internalId: 'i2' }),
+    sendLinkButtons: vi
+      .fn()
+      .mockResolvedValue({ messageId: 'm3', internalId: 'i3' }),
+  };
+}
+
+function build(prisma: unknown, send: unknown) {
+  return new CommentFunnelService(
+    prisma as PrismaService,
+    send as InstagramSendService,
+  );
+}
+
+const commentArgs = (text = 'send me the link') => ({
+  accountId: ACCOUNT,
+  ownerUserId: OWNER,
+  igUserId: 'ig-biz',
+  accessToken: 'tok',
+  commentRowId: COMMENT_ROW,
+  igCommentId: IG_COMMENT_ID,
+  igMediaId: MEDIA_ID,
+  fromIgsid: IGSID,
+  text,
+});
+
+const postbackArgs = (payload: string) => ({
+  accountId: ACCOUNT,
+  ownerUserId: OWNER,
+  accessToken: 'tok',
+  contactId: 'contact-1',
+  conversationId: 'conv-1',
+  fromIgsid: IGSID,
+  payload,
+});
+
+beforeEach(() => {
+  vi.mocked(sendPrivateReply)
+    .mockReset()
+    .mockResolvedValue({
+      messageId: 'pm-1',
+    } as never);
+  vi.mocked(replyToComment).mockReset().mockResolvedValue({ id: 'r1' });
+  vi.mocked(getUserProfile).mockReset();
+});
+
+// ============================================================
+// Pure helpers
+// ============================================================
+
+describe('parsePayload', () => {
+  it('accepts the two funnel steps', () => {
+    expect(parsePayload('c2dm:abc:optin')).toEqual({
+      runId: 'abc',
+      step: 'optin',
+    });
+    expect(parsePayload('c2dm:abc:followed')).toEqual({
+      runId: 'abc',
+      step: 'followed',
+    });
+  });
+
+  it('ignores payloads belonging to other engines', () => {
+    // Flows, automations and ice-breakers share this webhook. Claiming
+    // one of their taps would silently break them.
+    expect(parsePayload('flow:node-3')).toBeNull();
+    expect(parsePayload('')).toBeNull();
+    expect(parsePayload('c2dm:abc')).toBeNull();
+    expect(parsePayload('c2dm:abc:delivered')).toBeNull();
+  });
+});
+
+describe('matchesKeywords', () => {
+  it('matches everything when no keywords are set', () => {
+    expect(matchesKeywords([], 'anything at all')).toBe(true);
+  });
+
+  it('matches case-insensitively as a substring', () => {
+    expect(matchesKeywords(['LINK'], 'send me the link please')).toBe(true);
+    expect(matchesKeywords(['link'], 'nothing relevant')).toBe(false);
+  });
+});
+
+describe('parseRewardButtons', () => {
+  it('drops entries that are not http(s) links', () => {
+    // These end up in a button Meta renders publicly.
+    const out = parseRewardButtons([
+      { label: 'ok', url: 'https://example.com' },
+      { label: 'bad', url: 'javascript:alert(1)' },
+      { label: '', url: 'https://example.com' },
+      'nonsense',
+    ]);
+    expect(out).toEqual([{ label: 'ok', url: 'https://example.com' }]);
+  });
+
+  it('caps at the 3 Meta will render', () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({
+      label: `b${i}`,
+      url: 'https://example.com',
+    }));
+    expect(parseRewardButtons(many)).toHaveLength(3);
+  });
+
+  it('survives a non-array', () => {
+    expect(parseRewardButtons(null)).toEqual([]);
+    expect(parseRewardButtons({ label: 'x' })).toEqual([]);
+  });
+});
+
+// ============================================================
+// onComment
+// ============================================================
+
+describe('CommentFunnelService — a comment arrives', () => {
+  it('private-replies with a button and claims the comment', async () => {
+    const { prisma, commentUpdates, funnelUpdates } = makePrisma();
+    const claimed = await build(prisma, makeSend()).onComment(commentArgs());
+
+    expect(claimed).toBe(true);
+    expect(vi.mocked(sendPrivateReply)).toHaveBeenCalledTimes(1);
+
+    const sent = vi.mocked(sendPrivateReply).mock.calls[0][0];
+    expect(sent.commentId).toBe(IG_COMMENT_ID);
+    // The button is the whole point: without an inbound event, Meta
+    // will not answer is_user_follow_business for this person.
+    expect(sent.quickReplies).toEqual([
+      { title: "I'm ready 🙂", payload: `c2dm:${RUN_ID}:optin` },
+    ]);
+
+    expect(commentUpdates[0].private_replied_at).toBeInstanceOf(Date);
+    expect(funnelUpdates[0]).toEqual({ matched_count: { increment: 1 } });
+  });
+
+  it('does nothing while the account master switch is off', async () => {
+    // The switch has to beat every funnel's own is_active, or "pause
+    // everything" is not a thing the merchant can actually do.
+    const { prisma } = makePrisma({ enabled: false });
+    const claimed = await build(prisma, makeSend()).onComment(commentArgs());
+
+    expect(claimed).toBe(false);
+    expect(vi.mocked(sendPrivateReply)).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a comment no funnel wants', async () => {
+    const { prisma } = makePrisma({
+      funnels: [makeFunnel({ keywords: ['discount'] })],
+    });
+    const claimed = await build(prisma, makeSend()).onComment(
+      commentArgs('lovely photo'),
+    );
+
+    expect(claimed).toBe(false);
+    expect(vi.mocked(sendPrivateReply)).not.toHaveBeenCalled();
+  });
+
+  it('respects Meta’s one-private-reply-per-comment budget', async () => {
+    const { prisma } = makePrisma({ privateRepliedAt: new Date() });
+    const claimed = await build(prisma, makeSend()).onComment(commentArgs());
+
+    expect(claimed).toBe(false);
+    expect(vi.mocked(sendPrivateReply)).not.toHaveBeenCalled();
+  });
+
+  it('sends one DM to someone who comments repeatedly', async () => {
+    // The unique index doing its job. Still "claimed", so the older
+    // automation trigger cannot answer the second comment either.
+    const { prisma } = makePrisma({ createThrows: { code: 'P2002' } });
+    const claimed = await build(prisma, makeSend()).onComment(commentArgs());
+
+    expect(claimed).toBe(true);
+    expect(vi.mocked(sendPrivateReply)).not.toHaveBeenCalled();
+  });
+
+  it('posts the public reply when one is configured', async () => {
+    const { prisma } = makePrisma({
+      funnels: [makeFunnel({ public_reply_text: 'Check your DMs 📩' })],
+    });
+    await build(prisma, makeSend()).onComment(commentArgs());
+
+    expect(vi.mocked(replyToComment)).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Check your DMs 📩' }),
+    );
+  });
+
+  it('keeps the DM when the public reply fails', async () => {
+    // The private reply is already spent by then; a failed public
+    // comment must not roll it back.
+    vi.mocked(replyToComment).mockRejectedValue(new Error('rate limited'));
+    const { prisma, commentUpdates } = makePrisma({
+      funnels: [makeFunnel({ public_reply_text: 'Check your DMs 📩' })],
+    });
+
+    const claimed = await build(prisma, makeSend()).onComment(commentArgs());
+
+    expect(claimed).toBe(true);
+    expect(commentUpdates[0].private_replied_at).toBeInstanceOf(Date);
+  });
+
+  it('parks a failed private reply on the run instead of throwing', async () => {
+    // The caller is a webhook that already answered Meta, so throwing
+    // would make the failure invisible.
+    vi.mocked(sendPrivateReply).mockRejectedValue(new Error('comment gone'));
+    const { prisma, runUpdates } = makePrisma();
+
+    const claimed = await build(prisma, makeSend()).onComment(commentArgs());
+
+    expect(claimed).toBe(true);
+    expect(runUpdates[0]).toMatchObject({
+      state: 'failed',
+      last_error: 'comment gone',
+    });
+  });
+});
+
+// ============================================================
+// onPostback
+// ============================================================
+
+describe('CommentFunnelService — the opt-in tap', () => {
+  it('asks a non-follower to follow', async () => {
+    vi.mocked(getUserProfile).mockResolvedValue({
+      igsid: IGSID,
+      isUserFollowBusiness: false,
+    });
+    const { prisma, runUpdates } = makePrisma({
+      run: { id: RUN_ID, state: 'awaiting_optin', funnel: makeFunnel() },
+    });
+    const send = makeSend();
+
+    const consumed = await build(prisma, send).onPostback(
+      postbackArgs(`c2dm:${RUN_ID}:optin`),
+    );
+
+    expect(consumed).toBe(true);
+    expect(send.sendButtons).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "You aren't following!",
+        buttons: [
+          { id: `c2dm:${RUN_ID}:followed`, title: 'I followed you! ✅' },
+        ],
+      }),
+    );
+    expect(send.sendLinkButtons).not.toHaveBeenCalled();
+    expect(runUpdates.at(-1)).toMatchObject({ state: 'awaiting_follow' });
+  });
+
+  it('skips the gate for someone already following', async () => {
+    // Telling an existing follower to follow is the fastest way to make
+    // the funnel feel broken.
+    vi.mocked(getUserProfile).mockResolvedValue({
+      igsid: IGSID,
+      isUserFollowBusiness: true,
+    });
+    const { prisma } = makePrisma({
+      run: { id: RUN_ID, state: 'awaiting_optin', funnel: makeFunnel() },
+    });
+    const send = makeSend();
+
+    await build(prisma, send).onPostback(postbackArgs(`c2dm:${RUN_ID}:optin`));
+
+    expect(send.sendButtons).not.toHaveBeenCalled();
+    expect(send.sendLinkButtons).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Here you go 🎁',
+        buttons: [{ label: 'Click here!', url: 'https://example.com' }],
+      }),
+    );
+  });
+
+  it('delivers when the follow lookup fails', async () => {
+    // Fails OPEN. Under a soft gate the reward ships regardless, so
+    // withholding it because of an outage on our side is strictly worse
+    // than not checking at all.
+    vi.mocked(getUserProfile).mockRejectedValue(new Error('403'));
+    const { prisma, runUpdates } = makePrisma({
+      run: { id: RUN_ID, state: 'awaiting_optin', funnel: makeFunnel() },
+    });
+    const send = makeSend();
+
+    await build(prisma, send).onPostback(postbackArgs(`c2dm:${RUN_ID}:optin`));
+
+    expect(send.sendLinkButtons).toHaveBeenCalled();
+    // Recorded as unknown, not as a false — was_following is reporting,
+    // and a fallback must not read as an observation.
+    expect(
+      runUpdates.find((u) => 'was_following' in u)?.was_following,
+    ).toBeNull();
+  });
+
+  it('goes straight to the reward when the gate is off', async () => {
+    const { prisma } = makePrisma({
+      run: {
+        id: RUN_ID,
+        state: 'awaiting_optin',
+        funnel: makeFunnel({ follow_gate_enabled: false }),
+      },
+    });
+    const send = makeSend();
+
+    await build(prisma, send).onPostback(postbackArgs(`c2dm:${RUN_ID}:optin`));
+
+    expect(vi.mocked(getUserProfile)).not.toHaveBeenCalled();
+    expect(send.sendLinkButtons).toHaveBeenCalled();
+  });
+
+  it('sends plain text when the funnel has no reward buttons', async () => {
+    const { prisma } = makePrisma({
+      run: {
+        id: RUN_ID,
+        state: 'awaiting_optin',
+        funnel: makeFunnel({ follow_gate_enabled: false, reward_buttons: [] }),
+      },
+    });
+    const send = makeSend();
+
+    await build(prisma, send).onPostback(postbackArgs(`c2dm:${RUN_ID}:optin`));
+
+    expect(send.sendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Here you go 🎁' }),
+    );
+    expect(send.sendLinkButtons).not.toHaveBeenCalled();
+  });
+});
+
+describe('CommentFunnelService — the follow tap', () => {
+  it('delivers without re-checking', async () => {
+    // Soft gate. A second lookup could only produce a false negative —
+    // follow status lags by seconds — and cost a conversion the gate
+    // was never meant to block.
+    const { prisma, runUpdates } = makePrisma({
+      run: { id: RUN_ID, state: 'awaiting_follow', funnel: makeFunnel() },
+    });
+    const send = makeSend();
+
+    const consumed = await build(prisma, send).onPostback(
+      postbackArgs(`c2dm:${RUN_ID}:followed`),
+    );
+
+    expect(consumed).toBe(true);
+    expect(vi.mocked(getUserProfile)).not.toHaveBeenCalled();
+    expect(send.sendLinkButtons).toHaveBeenCalled();
+    expect(runUpdates.at(-1)).toMatchObject({ state: 'delivered' });
+  });
+
+  it('will not deliver the reward twice', async () => {
+    const { prisma } = makePrisma({
+      run: { id: RUN_ID, state: 'delivered', funnel: makeFunnel() },
+    });
+    const send = makeSend();
+
+    const consumed = await build(prisma, send).onPostback(
+      postbackArgs(`c2dm:${RUN_ID}:followed`),
+    );
+
+    // Still consumed: a duplicate tap is ours to swallow, not the AI
+    // bot's to answer.
+    expect(consumed).toBe(true);
+    expect(send.sendLinkButtons).not.toHaveBeenCalled();
+  });
+});
+
+describe('CommentFunnelService — taps that are not ours', () => {
+  it('leaves other engines’ payloads alone', async () => {
+    const { prisma } = makePrisma();
+    const send = makeSend();
+
+    const consumed = await build(prisma, send).onPostback(
+      postbackArgs('flow:node-7'),
+    );
+
+    expect(consumed).toBe(false);
+    expect(
+      prisma.instagram_comment_funnel_runs.findFirst,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('claims a funnel payload whose run has gone', async () => {
+    // Recognisably ours. Letting a flow answer a half-finished funnel
+    // is worse than answering nothing.
+    const { prisma } = makePrisma({ run: null });
+    const send = makeSend();
+
+    const consumed = await build(prisma, send).onPostback(
+      postbackArgs(`c2dm:${RUN_ID}:optin`),
+    );
+
+    expect(consumed).toBe(true);
+    expect(send.sendLinkButtons).not.toHaveBeenCalled();
+  });
+});

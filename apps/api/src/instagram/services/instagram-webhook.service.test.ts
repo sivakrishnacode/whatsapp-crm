@@ -4,6 +4,7 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import type { InstagramIdentityService } from './instagram-identity.service';
 import type { InstagramMediaMirrorService } from './instagram-media-mirror.service';
 import type { InstagramCommentsService } from './instagram-comments.service';
+import type { CommentFunnelService } from './comment-funnel.service';
 import type { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
 import type { FlowDispatchService } from '../../flows/services/flow-dispatch.service';
 import type { AutomationDispatchService } from '../../automations/services/automation-dispatch.service';
@@ -74,6 +75,10 @@ function makeService(prisma: ReturnType<typeof makePrismaMock>) {
   const comments = {
     ingestWebhookComment: vi.fn().mockResolvedValue(undefined),
   };
+  // Claims nothing by default, so every existing expectation about
+  // flows/automations/AI still describes what happens to an ordinary
+  // inbound.
+  const commentFunnel = { onPostback: vi.fn().mockResolvedValue(false) };
   const webhookDeliver = {
     dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
   };
@@ -90,6 +95,7 @@ function makeService(prisma: ReturnType<typeof makePrismaMock>) {
     identity as unknown as InstagramIdentityService,
     mediaMirror as unknown as InstagramMediaMirrorService,
     comments as unknown as InstagramCommentsService,
+    commentFunnel as unknown as CommentFunnelService,
     webhookDeliver as unknown as WebhookDeliverService,
     flowDispatch as unknown as FlowDispatchService,
     automationDispatch as unknown as AutomationDispatchService,

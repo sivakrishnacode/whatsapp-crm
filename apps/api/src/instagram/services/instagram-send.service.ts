@@ -339,6 +339,63 @@ export class InstagramSendService {
     return { messageId, internalId };
   }
 
+  /**
+   * A card whose buttons are links out, not postbacks.
+   *
+   * Kept separate from `sendButtons` rather than bolted onto it with a
+   * flag, because the two do opposite things: a postback button drives
+   * the conversation forward and comes back on a webhook, a web_url
+   * button ends it by sending the person somewhere else. They are the
+   * same widget only by accident of Meta's API.
+   *
+   * Quick replies are not an option here — they carry payloads, not
+   * URLs — so this is always a button template.
+   */
+  async sendLinkButtons(args: {
+    accountId: string;
+    conversationId: string;
+    text: string;
+    buttons: Array<{ label: string; url: string }>;
+    senderId?: string | null;
+  }): Promise<IgSendOutcome> {
+    const target = await this.resolveTarget(
+      args.accountId,
+      args.conversationId,
+    );
+
+    const buttons: IgButton[] = args.buttons.map((b) => ({
+      type: 'web_url',
+      title: b.label,
+      url: b.url,
+    }));
+
+    const result = await sendButtonTemplate({
+      igUserId: target.igUserId,
+      accessToken: target.accessToken,
+      recipientId: target.recipientIgsid,
+      text: args.text,
+      buttons,
+      tag: target.decision.requiresTag ?? undefined,
+    });
+
+    const internalId = await this.persistOutbound({
+      conversationId: target.conversationId,
+      messageId: result.messageId,
+      contentType: 'interactive',
+      contentText: args.text,
+      senderId: args.senderId,
+      metadata: {
+        ig_interactive: 'button_template',
+        // `options` deliberately mirrors sendButtons' shape so the inbox
+        // renderer needs one branch, not two — with `url` instead of
+        // `id` marking these as unclickable-in-CRM link-outs.
+        options: args.buttons,
+      },
+    });
+
+    return { messageId: result.messageId, internalId };
+  }
+
   async sendCarousel(args: {
     accountId: string;
     conversationId: string;

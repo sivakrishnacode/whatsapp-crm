@@ -800,18 +800,50 @@ export async function sendPublishedPost(
  * being posted; a second attempt is an API error, so callers must check
  * `instagram_comments.private_replied_at` first.
  */
+/**
+ * DM someone who has only commented.
+ *
+ * The one documented way to open a thread with a person who has never
+ * messaged the business. Meta allows exactly one per comment, within 7
+ * days — callers must check `instagram_comments.private_replied_at`
+ * first, because a second attempt is a hard error, not a no-op.
+ *
+ * `quickReplies` matters more than it looks. A comment is not consent,
+ * so the User Profile API (and therefore is_user_follow_business) will
+ * not answer for this person until they send something. Attaching a
+ * button to the opening DM is what gets that first inbound event —
+ * without it, a private reply is a dead end.
+ */
 export async function sendPrivateReply(args: {
   igUserId: string;
   accessToken: string;
   commentId: string;
   text: string;
+  quickReplies?: IgQuickReply[];
 }): Promise<IgSendResult> {
+  if (args.quickReplies && args.quickReplies.length > IG_LIMITS.quickReplies) {
+    throw new Error(
+      `Instagram allows at most ${IG_LIMITS.quickReplies} quick replies, got ${args.quickReplies.length}`,
+    );
+  }
   return sendMessagePayload({
     igUserId: args.igUserId,
     accessToken: args.accessToken,
     body: {
       recipient: { comment_id: args.commentId },
-      message: { text: args.text },
+      message: {
+        text: args.text,
+        ...(args.quickReplies?.length
+          ? {
+              quick_replies: args.quickReplies.map((qr) => ({
+                content_type: 'text',
+                title: qr.title,
+                payload: qr.payload,
+                ...(qr.imageUrl ? { image_url: qr.imageUrl } : {}),
+              })),
+            }
+          : {}),
+      },
     },
   });
 }

@@ -16,6 +16,7 @@ import { AiReplyService } from '../../ai/services/ai-reply.service';
 import { InstagramIdentityService } from './instagram-identity.service';
 import { InstagramMediaMirrorService } from './instagram-media-mirror.service';
 import { InstagramCommentsService } from './instagram-comments.service';
+import { CommentFunnelService } from './comment-funnel.service';
 import type {
   IgWebhookBody,
   IgWebhookEntry,
@@ -67,6 +68,7 @@ export class InstagramWebhookService {
     private readonly identity: InstagramIdentityService,
     private readonly mediaMirror: InstagramMediaMirrorService,
     private readonly comments: InstagramCommentsService,
+    private readonly commentFunnel: CommentFunnelService,
     private readonly webhookDeliver: WebhookDeliverService,
     private readonly flowDispatch: FlowDispatchService,
     private readonly automationDispatch: AutomationDispatchService,
@@ -420,6 +422,7 @@ export class InstagramWebhookService {
       ctx,
       conversation,
       contactId: contact.id,
+      customerIgsid,
       contactCreated,
       isFirstInbound,
       text: parsed.contentText ?? '',
@@ -502,6 +505,7 @@ export class InstagramWebhookService {
       ctx,
       conversation,
       contactId: contact.id,
+      customerIgsid,
       contactCreated,
       // A postback is a tap on something we sent, so the thread already
       // existed — never a first inbound message.
@@ -870,11 +874,20 @@ export class InstagramWebhookService {
    * Precedence matters: a flow that consumes the message suppresses
    * automations and the AI bot, so the customer gets one answer rather
    * than three.
+   *
+   * Comment → DM funnels sit AHEAD of flows in that order. A funnel tap
+   * is addressed to one specific run by id, so it is the narrowest
+   * possible claim on a message — where a flow's keyword trigger or the
+   * AI bot would both happily answer "I followed you! ✅" with something
+   * of their own, mid-funnel.
    */
   private async fanOut(args: {
     ctx: IgContext;
     conversation: conversations;
     contactId: string;
+    /** The sender's IGSID. Per-event, not per-context — funnels need it
+     *  to ask Meta whether this person follows the business. */
+    customerIgsid: string;
     contactCreated: boolean;
     isFirstInbound: boolean;
     text: string;
@@ -885,6 +898,42 @@ export class InstagramWebhookService {
     isStoryReply?: boolean;
   }): Promise<void> {
     const { ctx, conversation, contactId } = args;
+
+    // Funnels first. Only a button tap can belong to one, so this is a
+    // cheap prefix check on the payload for every other inbound.
+    if (args.interactiveReplyId) {
+      try {
+        const consumed = await this.commentFunnel.onPostback({
+          accountId: ctx.accountId,
+          ownerUserId: ctx.ownerUserId,
+          accessToken: ctx.accessToken,
+          contactId,
+          conversationId: conversation.id,
+          fromIgsid: args.customerIgsid,
+          payload: args.interactiveReplyId,
+        });
+        if (consumed) {
+          void this.webhookDeliver.dispatchWebhookEvent(
+            ctx.accountId,
+            'message.received',
+            {
+              channel: 'instagram',
+              conversation_id: conversation.id,
+              contact_id: contactId,
+              instagram_message_id: args.metaMessageId,
+              content_type: args.contentType,
+              text: args.text || null,
+            },
+          );
+          return;
+        }
+      } catch (err) {
+        // Fall through to the normal engines rather than swallowing the
+        // message: a broken funnel should degrade to "no funnel", not to
+        // "Instagram stopped replying".
+        this.logger.error(`[funnel] Instagram dispatch failed: ${String(err)}`);
+      }
+    }
 
     let flowConsumed = false;
     try {

@@ -5,6 +5,7 @@ import { InstagramWebhookController } from './controllers/instagram-webhook.cont
 import { InstagramConnectController } from './controllers/instagram-connect.controller';
 import { InstagramDashboardController } from './controllers/instagram-dashboard.controller';
 import { InstagramCommentsController } from './controllers/instagram-comments.controller';
+import { InstagramFunnelsController } from './controllers/instagram-funnels.controller';
 
 import { InstagramConnectService } from './services/instagram-connect.service';
 import { InstagramIdentityService } from './services/instagram-identity.service';
@@ -12,6 +13,7 @@ import { InstagramMediaMirrorService } from './services/instagram-media-mirror.s
 import { InstagramWebhookService } from './services/instagram-webhook.service';
 import { InstagramSendService } from './services/instagram-send.service';
 import { InstagramCommentsService } from './services/instagram-comments.service';
+import { CommentFunnelService } from './services/comment-funnel.service';
 import {
   InstagramTokenRefreshService,
   IG_TOKEN_QUEUE,
@@ -53,6 +55,7 @@ import { AiModule } from '../ai/ai.module';
     InstagramConnectController,
     InstagramDashboardController,
     InstagramCommentsController,
+    InstagramFunnelsController,
   ],
   providers: [
     InstagramConnectService,
@@ -61,6 +64,7 @@ import { AiModule } from '../ai/ai.module';
     InstagramWebhookService,
     InstagramSendService,
     InstagramCommentsService,
+    CommentFunnelService,
     InstagramTokenRefreshService,
     InstagramTokenRefreshProcessor,
   ],

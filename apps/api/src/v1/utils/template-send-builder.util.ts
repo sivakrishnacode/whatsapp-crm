@@ -139,8 +139,9 @@ function buildHeaderComponent(
     // optional here. Checked individually so the error names the field
     // rather than surfacing Meta's generic "(#100) Invalid parameter".
     const loc = params.headerLocation;
-    const missing = (['latitude', 'longitude', 'name', 'address'] as const)
-      .filter((field) => !loc?.[field]?.toString().trim());
+    const missing = (
+      ['latitude', 'longitude', 'name', 'address'] as const
+    ).filter((field) => !loc?.[field]?.toString().trim());
     if (missing.length > 0) {
       throw new Error(
         `Location header requires ${missing.join(', ')} at send time — ` +
