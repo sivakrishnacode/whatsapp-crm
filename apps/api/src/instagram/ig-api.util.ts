@@ -863,39 +863,67 @@ export interface IgComment {
   replies?: IgComment[];
 }
 
-export async function getMediaComments(args: {
-  mediaId: string;
-  accessToken: string;
-  limit?: number;
-}): Promise<IgComment[]> {
-  const fields = 'id,text,timestamp,username,from,hidden,parent_id';
-  const params = new URLSearchParams({ fields });
-  if (args.limit) params.set('limit', String(args.limit));
+interface IgCommentResponse {
+  id: string;
+  text?: string;
+  timestamp?: string;
+  username?: string;
+  from?: { id?: string; username?: string };
+  hidden?: boolean;
+  parent_id?: string;
+  like_count?: number;
+  replies?: { data?: IgCommentResponse[] };
+}
 
-  const data = await igGet<{
-    data?: Array<{
-      id: string;
-      text?: string;
-      timestamp?: string;
-      username?: string;
-      from?: { id?: string; username?: string };
-      hidden?: boolean;
-      parent_id?: string;
-    }>;
-  }>(
-    `${IG_GRAPH_BASE}/${args.mediaId}/comments?${params.toString()}`,
-    args.accessToken,
-  );
-
-  return (data.data ?? []).map((c) => ({
+function normaliseComment(c: IgCommentResponse, parentId?: string): IgComment {
+  return {
     id: c.id,
     text: c.text,
     timestamp: c.timestamp,
     username: c.username ?? c.from?.username,
     fromId: c.from?.id,
     hidden: c.hidden,
-    parentId: c.parent_id,
-  }));
+    // The nested `replies` edge does not echo parent_id on its members,
+    // so it is threaded in from the caller.
+    parentId: c.parent_id ?? parentId,
+  };
+}
+
+/**
+ * Every comment on a post, flattened.
+ *
+ * `/{media}/comments` returns only TOP-LEVEL comments — replies live on
+ * a nested `replies` edge. Backfilling without expanding it means a
+ * post whose every comment was already answered still syncs as a wall
+ * of unanswered work, because the answers were never fetched.
+ *
+ * Flattened rather than nested because that is what
+ * `instagram_comments` is: one row per comment, threaded by
+ * `parent_comment_id`.
+ */
+export async function getMediaComments(args: {
+  mediaId: string;
+  accessToken: string;
+  limit?: number;
+}): Promise<IgComment[]> {
+  const leafFields = 'id,text,timestamp,username,from,hidden,like_count';
+  const fields = `${leafFields},parent_id,replies{${leafFields}}`;
+  const params = new URLSearchParams({ fields });
+  if (args.limit) params.set('limit', String(args.limit));
+
+  const data = await igGet<{ data?: IgCommentResponse[] }>(
+    `${IG_GRAPH_BASE}/${args.mediaId}/comments?${params.toString()}`,
+    args.accessToken,
+  );
+
+  const flattened: IgComment[] = [];
+  for (const comment of data.data ?? []) {
+    flattened.push(normaliseComment(comment));
+    for (const reply of comment.replies?.data ?? []) {
+      flattened.push(normaliseComment(reply, comment.id));
+    }
+  }
+  return flattened;
 }
 
 /** Public reply, visible under the post. */
@@ -940,15 +968,102 @@ export async function deleteComment(args: {
 // Media (posts) — read-only; publishing is out of scope
 // ============================================================
 
+export interface IgMediaChild {
+  id: string;
+  mediaType?: string;
+  mediaUrl?: string;
+  thumbnailUrl?: string;
+}
+
 export interface IgMedia {
   id: string;
   mediaType?: string;
   mediaProductType?: string;
   permalink?: string;
+  /**
+   * The small asset. Only VIDEO/REELS populate Meta's `thumbnail_url`,
+   * so this falls back to `media_url` to give the grid something to
+   * render for images.
+   */
   thumbnailUrl?: string;
+  /** The full-size asset. Absent on CAROUSEL_ALBUM — use `children`. */
+  mediaUrl?: string;
   caption?: string;
   timestamp?: string;
   commentsCount?: number;
+  likeCount?: number;
+  isCommentEnabled?: boolean;
+  /** Carousel items. Empty for every other media type. */
+  children?: IgMediaChild[];
+}
+
+interface IgMediaResponse {
+  id: string;
+  media_type?: string;
+  media_product_type?: string;
+  permalink?: string;
+  thumbnail_url?: string;
+  media_url?: string;
+  caption?: string;
+  timestamp?: string;
+  comments_count?: number;
+  like_count?: number;
+  is_comment_enabled?: boolean;
+  children?: {
+    data?: Array<{
+      id: string;
+      media_type?: string;
+      media_url?: string;
+      thumbnail_url?: string;
+    }>;
+  };
+}
+
+/**
+ * Everything the Posts view renders, in one request.
+ *
+ * `children{...}` is field expansion, not a second call: a
+ * CAROUSEL_ALBUM parent carries no `media_url` of its own, so without
+ * it every carousel is a blank tile.
+ */
+const MEDIA_FIELDS = [
+  'id',
+  'media_type',
+  'media_product_type',
+  'permalink',
+  'thumbnail_url',
+  'media_url',
+  'caption',
+  'timestamp',
+  'comments_count',
+  'like_count',
+  'is_comment_enabled',
+  'children{id,media_type,media_url,thumbnail_url}',
+].join(',');
+
+function normaliseMedia(m: IgMediaResponse): IgMedia {
+  return {
+    id: m.id,
+    mediaType: m.media_type,
+    mediaProductType: m.media_product_type,
+    permalink: m.permalink,
+    // Videos expose thumbnail_url; images only media_url. The UI wants
+    // one field for the grid, so collapse them here — but keep
+    // media_url separately so a detail view can show the real asset.
+    thumbnailUrl: m.thumbnail_url ?? m.media_url,
+    mediaUrl: m.media_url,
+    caption: m.caption,
+    timestamp: m.timestamp,
+    commentsCount: m.comments_count,
+    likeCount: m.like_count,
+    isCommentEnabled: m.is_comment_enabled,
+    children: m.children?.data?.map((c) => ({
+      id: c.id,
+      mediaType: c.media_type,
+      mediaUrl: c.media_url,
+      thumbnailUrl: c.thumbnail_url ?? c.media_url,
+    })),
+  };
 }
 
 export async function listMedia(args: {
@@ -956,38 +1071,43 @@ export async function listMedia(args: {
   accessToken: string;
   limit?: number;
 }): Promise<IgMedia[]> {
-  const fields =
-    'id,media_type,media_product_type,permalink,thumbnail_url,media_url,caption,timestamp,comments_count';
-  const params = new URLSearchParams({ fields });
+  const params = new URLSearchParams({ fields: MEDIA_FIELDS });
   params.set('limit', String(args.limit ?? 25));
 
-  const data = await igGet<{
-    data?: Array<{
-      id: string;
-      media_type?: string;
-      media_product_type?: string;
-      permalink?: string;
-      thumbnail_url?: string;
-      media_url?: string;
-      caption?: string;
-      timestamp?: string;
-      comments_count?: number;
-    }>;
-  }>(
+  const data = await igGet<{ data?: IgMediaResponse[] }>(
     `${IG_GRAPH_BASE}/${args.igUserId}/media?${params.toString()}`,
     args.accessToken,
   );
 
-  return (data.data ?? []).map((m) => ({
-    id: m.id,
-    mediaType: m.media_type,
-    mediaProductType: m.media_product_type,
-    permalink: m.permalink,
-    // Videos expose thumbnail_url; images only media_url. The UI wants
-    // one field, so collapse them here rather than at every call site.
-    thumbnailUrl: m.thumbnail_url ?? m.media_url,
-    caption: m.caption,
-    timestamp: m.timestamp,
-    commentsCount: m.comments_count,
-  }));
+  return (data.data ?? []).map(normaliseMedia);
+}
+
+/** Re-read one post — used to refresh counts after moderating it. */
+export async function getMedia(args: {
+  mediaId: string;
+  accessToken: string;
+}): Promise<IgMedia> {
+  const data = await igGet<IgMediaResponse>(
+    `${IG_GRAPH_BASE}/${args.mediaId}?fields=${MEDIA_FIELDS}`,
+    args.accessToken,
+  );
+  return normaliseMedia(data);
+}
+
+/**
+ * Turn commenting on or off for a single post.
+ *
+ * The blunt instrument for a post that has turned into a pile-on —
+ * cheaper than hiding comments one at a time, and reversible. Note the
+ * field name asymmetry: Meta *reads* it back as `is_comment_enabled`
+ * but *writes* it as `comment_enabled`.
+ */
+export async function setMediaCommentsEnabled(args: {
+  mediaId: string;
+  accessToken: string;
+  enabled: boolean;
+}): Promise<void> {
+  await igPost(`${IG_GRAPH_BASE}/${args.mediaId}`, args.accessToken, {
+    comment_enabled: args.enabled,
+  });
 }

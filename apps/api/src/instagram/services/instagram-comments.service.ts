@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
 import { AutomationDispatchService } from '../../automations/services/automation-dispatch.service';
@@ -10,6 +11,7 @@ import {
   setCommentHidden,
   deleteComment,
   listMedia,
+  setMediaCommentsEnabled,
 } from '../ig-api.util';
 import type { IgCommentValue } from '../types/webhook.types';
 
@@ -217,7 +219,18 @@ export class InstagramCommentsService {
             ? new Date(comment.timestamp)
             : new Date(),
         },
-        update: { text: comment.text ?? null },
+        // Never clobber a status an agent set here — 'replied' and
+        // 'deleted' have no remote equivalent to re-derive from, and a
+        // re-sync that reset them would refill a queue somebody had
+        // just cleared. Hidden is the one exception: it IS remote
+        // state, so someone hiding a comment in the Instagram app
+        // should show up here.
+        update: {
+          text: comment.text ?? null,
+          from_username: comment.username ?? null,
+          parent_comment_id: comment.parentId ?? null,
+          ...(comment.hidden ? { status: 'hidden' } : {}),
+        },
       });
       synced++;
     }
@@ -239,6 +252,27 @@ export class InstagramCommentsService {
     });
 
     for (const item of media) {
+      // Everything Meta can restate on a re-sync. Split out because
+      // create and update need the same values and drifting between
+      // the two is how a column silently stops being refreshed.
+      const mutable = {
+        media_type: item.mediaType ?? null,
+        media_product_type: item.mediaProductType ?? null,
+        permalink: item.permalink ?? null,
+        thumbnail_url: item.thumbnailUrl ?? null,
+        media_url: item.mediaUrl ?? null,
+        caption: item.caption ?? null,
+        like_count: item.likeCount ?? null,
+        comments_count: item.commentsCount ?? null,
+        is_comment_enabled: item.isCommentEnabled ?? null,
+        // `undefined` (leave alone), never `null` — a post whose
+        // carousel children Meta omitted this time should keep the ones
+        // we already have rather than blank the tile.
+        children: item.children?.length
+          ? (item.children as unknown as Prisma.InputJsonValue)
+          : undefined,
+      };
+
       await this.prisma.instagram_media.upsert({
         where: {
           account_id_ig_media_id: {
@@ -249,23 +283,94 @@ export class InstagramCommentsService {
         create: {
           account_id: args.accountId,
           ig_media_id: item.id,
-          media_type: item.mediaType ?? null,
-          media_product_type: item.mediaProductType ?? null,
-          permalink: item.permalink ?? null,
-          thumbnail_url: item.thumbnailUrl ?? null,
-          caption: item.caption ?? null,
+          ...mutable,
           posted_at: item.timestamp ? new Date(item.timestamp) : null,
         },
-        update: {
-          permalink: item.permalink ?? null,
-          thumbnail_url: item.thumbnailUrl ?? null,
-          caption: item.caption ?? null,
-          synced_at: new Date(),
-        },
+        update: { ...mutable, synced_at: new Date() },
       });
     }
 
     return { synced: media.length };
+  }
+
+  /**
+   * Backfill comments for every synced post.
+   *
+   * One button instead of N, because "pull in the backlog" is a
+   * whole-account intent — nobody wants to click sync on forty tiles.
+   * Failures are counted, not thrown: one post with revoked access
+   * must not abort the other thirty-nine.
+   *
+   * Capped at the 50 most recent posts, and the cap is reported back as
+   * `posts` so the UI can say what it actually covered. This is one
+   * Graph call per post inside one HTTP request — an uncapped sweep of
+   * a years-old account would sit past the proxy's timeout and return
+   * a 504 having done most of the work invisibly.
+   */
+  async syncAllMediaComments(args: {
+    accountId: string;
+    igUserId: string;
+    accessToken: string;
+  }): Promise<{ synced: number; posts: number; failed: number }> {
+    const media = await this.prisma.instagram_media.findMany({
+      where: { account_id: args.accountId },
+      select: { ig_media_id: true },
+      orderBy: { posted_at: 'desc' },
+      take: 50,
+    });
+
+    let synced = 0;
+    let failed = 0;
+    for (const item of media) {
+      try {
+        const result = await this.syncMediaComments({
+          accountId: args.accountId,
+          igUserId: args.igUserId,
+          accessToken: args.accessToken,
+          mediaId: item.ig_media_id,
+        });
+        synced += result.synced;
+      } catch (err) {
+        failed++;
+        this.logger.warn(
+          `Comment backfill failed for media ${item.ig_media_id}: ${String(err)}`,
+        );
+      }
+    }
+
+    return { synced, posts: media.length, failed };
+  }
+
+  /**
+   * Turn commenting on or off for a post.
+   *
+   * Scoped through our own `instagram_media` row first, for the same
+   * reason `requireComment` exists: the media id arrives from a request
+   * path and an unscoped call would let one tenant silence another
+   * tenant's post.
+   */
+  async setCommentsEnabled(args: {
+    accountId: string;
+    accessToken: string;
+    mediaId: string;
+    enabled: boolean;
+  }): Promise<void> {
+    const media = await this.prisma.instagram_media.findFirst({
+      where: { account_id: args.accountId, ig_media_id: args.mediaId },
+      select: { id: true, ig_media_id: true },
+    });
+    if (!media) throw new Error('Post not found');
+
+    await setMediaCommentsEnabled({
+      mediaId: media.ig_media_id,
+      accessToken: args.accessToken,
+      enabled: args.enabled,
+    });
+
+    await this.prisma.instagram_media.update({
+      where: { id: media.id },
+      data: { is_comment_enabled: args.enabled },
+    });
   }
 
   // ------------------------------------------------------------
@@ -473,6 +578,56 @@ export class InstagramCommentsService {
       where: { id: comment.id },
       data: { status: 'deleted' },
     });
+  }
+
+  /**
+   * Apply one moderation action to many comments.
+   *
+   * Sequential, not `Promise.all`: these are writes against Meta's API
+   * and firing fifty at once is the fastest way to get rate-limited
+   * into a partial, unrepeatable state. Per-comment failures are
+   * collected rather than thrown so a spam sweep reports "38 hidden,
+   * 2 failed" instead of dying on the third row and leaving the agent
+   * unsure what actually happened.
+   */
+  async bulkModerate(args: {
+    accountId: string;
+    accessToken: string;
+    commentIds: string[];
+    action: 'hide' | 'unhide' | 'delete';
+  }): Promise<{ succeeded: number; failed: number; errors: string[] }> {
+    let succeeded = 0;
+    const errors: string[] = [];
+
+    for (const commentId of args.commentIds) {
+      try {
+        if (args.action === 'delete') {
+          await this.remove({
+            accountId: args.accountId,
+            accessToken: args.accessToken,
+            commentId,
+          });
+        } else {
+          await this.setHidden({
+            accountId: args.accountId,
+            accessToken: args.accessToken,
+            commentId,
+            hidden: args.action === 'hide',
+          });
+        }
+        succeeded++;
+      } catch (err) {
+        errors.push(err instanceof Error ? err.message : 'Request failed');
+      }
+    }
+
+    return {
+      succeeded,
+      failed: errors.length,
+      // Only the distinct reasons — fifty copies of the same permission
+      // error is not more informative than one.
+      errors: [...new Set(errors)].slice(0, 3),
+    };
   }
 
   // ------------------------------------------------------------
