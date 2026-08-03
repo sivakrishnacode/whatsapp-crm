@@ -84,8 +84,12 @@ export function InstagramPostPanel({
   media: IgMedia | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Fires when something here changes counts the grid displays. */
-  onChanged: () => void;
+  /**
+   * Fires when something here changes what the grid displays. Awaited
+   * where the panel needs the refreshed `media` back before it can drop
+   * an optimistic local state — so returning the reload promise matters.
+   */
+  onChanged: () => void | Promise<void>;
 }) {
   const router = useRouter();
   const [comments, setComments] = useState<IgComment[]>([]);
@@ -93,7 +97,11 @@ export function InstagramPostPanel({
   const [syncing, setSyncing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [bulkBusy, setBulkBusy] = useState<'hide' | 'resolve' | null>(null);
-  const [togglingComments, setTogglingComments] = useState(false);
+  // The position the switch was dragged to, held until Meta confirms it.
+  // `null` means "not mid-flight — show what Meta last told us".
+  const [pendingCommentsEnabled, setPendingCommentsEnabled] = useState<
+    boolean | null
+  >(null);
   const [onlyOpen, setOnlyOpen] = useState(true);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [slide, setSlide] = useState(0);
@@ -183,19 +191,26 @@ export function InstagramPostPanel({
     }
   }
 
+  /**
+   * Meta is the source of truth for this switch, and the value comes
+   * back through the grid rather than from the response — so the local
+   * `pending` position is what the switch shows until `onChanged()`
+   * has finished reloading. Clearing it any earlier makes the thumb
+   * snap back to the old position for a beat.
+   */
   async function toggleComments(enabled: boolean) {
     if (!mediaId) return;
-    setTogglingComments(true);
+    setPendingCommentsEnabled(enabled);
     try {
       await post(`media/${mediaId}/comment-settings`, { enabled });
       toast.success(enabled ? 'Comments turned on.' : 'Comments turned off.');
-      onChanged();
+      await onChanged();
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : 'Could not change the setting'
       );
     } finally {
-      setTogglingComments(false);
+      setPendingCommentsEnabled(null);
     }
   }
 
@@ -252,6 +267,7 @@ export function InstagramPostPanel({
     : [{ url: mediaPreviewUrl(media), isVideo: kind.isVideo }];
   const current = slides[Math.min(slide, slides.length - 1)];
 
+  const togglingComments = pendingCommentsEnabled !== null;
   const caption = media.caption ?? '';
   const captionIsLong = caption.length > CAPTION_CLAMP_CHARS;
   const openCount = comments.filter((c) => c.status === 'open').length;
@@ -433,20 +449,31 @@ export function InstagramPostPanel({
 
       <div className="border-border bg-muted/30 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
-          <MessageCircleOff className="text-muted-foreground size-4 shrink-0" />
+          {togglingComments ? (
+            <Loader2 className="text-muted-foreground size-4 shrink-0 animate-spin" />
+          ) : (
+            <MessageCircleOff className="text-muted-foreground size-4 shrink-0" />
+          )}
           <div className="min-w-0">
             <p className="text-foreground text-sm">Allow comments</p>
             <p className="text-muted-foreground text-xs">
-              {media.is_comment_enabled === null
-                ? 'Unknown until the next sync'
-                : media.is_comment_enabled
-                  ? 'Anyone can comment on this post'
-                  : 'Commenting is turned off on Instagram'}
+              {togglingComments
+                ? pendingCommentsEnabled
+                  ? 'Turning comments on…'
+                  : 'Turning comments off…'
+                : media.is_comment_enabled === null
+                  ? 'Unknown until the next sync'
+                  : media.is_comment_enabled
+                    ? 'Anyone can comment on this post'
+                    : 'Commenting is turned off on Instagram'}
             </p>
           </div>
         </div>
         <Switch
-          checked={media.is_comment_enabled !== false}
+          // Shows the requested position while the call is in flight, so
+          // the thumb moves on click instead of sitting still until Meta
+          // answers and the grid reloads. Reverts on failure.
+          checked={pendingCommentsEnabled ?? media.is_comment_enabled !== false}
           disabled={togglingComments}
           onCheckedChange={(next) => void toggleComments(next === true)}
         />

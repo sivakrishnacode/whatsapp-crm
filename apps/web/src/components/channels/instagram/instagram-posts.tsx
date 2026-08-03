@@ -419,7 +419,9 @@ export function InstagramPosts() {
         media={active}
         open={activeId !== null}
         onOpenChange={(next) => !next && setActiveId(null)}
-        onChanged={() => void load(true)}
+        // Returned, not voided: the panel awaits this so an optimistic
+        // toggle can hold its position until the refreshed post is back.
+        onChanged={() => load(true)}
       />
     </div>
   );

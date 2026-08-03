@@ -7,6 +7,7 @@ import { Heart, Loader2, Plus, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { channelScopeLabel, runsOnInstagram } from '@/lib/instagram/intents';
 import { cn } from '@/lib/utils';
 
 interface Automation {
@@ -15,6 +16,8 @@ interface Automation {
   description: string | null;
   trigger_type: string;
   trigger_config: { keywords?: string[]; match_type?: string } | null;
+  /** Empty = every channel. Non-empty restricts. See migration 052. */
+  channels: string[];
   is_active: boolean;
   execution_count: number;
   last_executed_at: string | null;
@@ -32,8 +35,8 @@ interface Automation {
  * mean two engines racing to answer the same message, two places to
  * look when one misfires, and rules that work on WhatsApp but not
  * Instagram. The value this page adds is framing — surfacing the
- * keyword rules on their own, with the Instagram-specific reach
- * (comments as well as DMs) spelled out.
+ * keyword rules that reach Instagram, with the Instagram-specific
+ * reach (comments as well as DMs) spelled out.
  */
 export function InstagramIntents() {
   const [automations, setAutomations] = useState<Automation[]>([]);
@@ -58,14 +61,21 @@ export function InstagramIntents() {
     };
   }, []);
 
-  const intents = automations.filter((a) => a.trigger_type === 'keyword_match');
+  const keywordRules = automations.filter(
+    (a) => a.trigger_type === 'keyword_match'
+  );
+  const intents = keywordRules.filter(runsOnInstagram);
+  // Keyword rules that exist but are scoped away from Instagram. Worth
+  // naming: "I definitely made one of these" is otherwise a confusing
+  // way to look at an empty page.
+  const otherChannelCount = keywordRules.length - intents.length;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-foreground">Intents</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-foreground text-lg font-semibold">Intents</h1>
+          <p className="text-muted-foreground text-sm">
             Keyword rules that route a message to the right response.
           </p>
         </div>
@@ -75,32 +85,53 @@ export function InstagramIntents() {
         </Button>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4 text-xs text-muted-foreground">
+      <div className="border-border bg-card text-muted-foreground rounded-xl border p-4 text-xs">
         Intents are{' '}
         <Link href="/automations" className="text-primary hover:underline">
           automations
         </Link>{' '}
-        with a keyword trigger, shared with WhatsApp. On Instagram they match
-        both <strong className="text-foreground">direct messages</strong> and{' '}
+        with a keyword trigger. On Instagram they match both{' '}
+        <strong className="text-foreground">direct messages</strong> and{' '}
         <strong className="text-foreground">comments</strong> — which is what
         makes the &ldquo;comment a keyword, get a DM&rdquo; pattern work.
+        {otherChannelCount > 0 && (
+          <>
+            {' '}
+            {otherChannelCount} other keyword rule
+            {otherChannelCount === 1 ? ' is' : 's are'} scoped to another
+            channel and {otherChannelCount === 1 ? 'does' : 'do'} not run here.
+          </>
+        )}
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 p-8 text-sm text-muted-foreground">
+        <div className="text-muted-foreground flex items-center gap-2 p-8 text-sm">
           <Loader2 className="size-4 animate-spin" />
           Loading intents…
         </div>
       ) : intents.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border p-10 text-center">
-          <Heart className="mx-auto size-8 text-muted-foreground" />
-          <p className="mt-3 text-sm font-medium text-foreground">
+        <div className="border-border rounded-xl border border-dashed p-10 text-center">
+          <Heart className="text-muted-foreground mx-auto size-8" />
+          <p className="text-foreground mt-3 text-sm font-medium">
             No intents yet
           </p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            A common first one: reply with a link whenever someone comments or
-            DMs &ldquo;price&rdquo;. Create an automation with a{' '}
-            <strong>keyword match</strong> trigger.
+          <p className="text-muted-foreground mx-auto mt-1 max-w-md text-sm">
+            {otherChannelCount > 0 ? (
+              <>
+                You have {otherChannelCount} keyword rule
+                {otherChannelCount === 1 ? '' : 's'}, but{' '}
+                {otherChannelCount === 1 ? 'it is' : 'none are'} set to run on
+                Instagram. Add Instagram to{' '}
+                {otherChannelCount === 1 ? 'its' : 'their'} channels, or create
+                a new one.
+              </>
+            ) : (
+              <>
+                A common first one: reply with a link whenever someone comments
+                or DMs &ldquo;price&rdquo;. Create an automation with a{' '}
+                <strong>keyword match</strong> trigger.
+              </>
+            )}
           </p>
           <Button
             className="mt-4"
@@ -126,13 +157,13 @@ function IntentCard({ intent }: { intent: Automation }) {
   const keywords = intent.trigger_config?.keywords ?? [];
 
   return (
-    <li className="rounded-xl border border-border bg-card p-4">
+    <li className="border-border bg-card rounded-xl border p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href={`/automations/${intent.id}/edit`}
-              className="font-medium text-foreground hover:underline"
+              className="text-foreground font-medium hover:underline"
             >
               {intent.name}
             </Link>
@@ -141,15 +172,25 @@ function IntentCard({ intent }: { intent: Automation }) {
                 'rounded-full px-2 py-0.5 text-[10px] font-medium',
                 intent.is_active
                   ? 'bg-emerald-500/10 text-emerald-600'
-                  : 'bg-muted text-muted-foreground',
+                  : 'bg-muted text-muted-foreground'
               )}
             >
               {intent.is_active ? 'Active' : 'Paused'}
             </span>
+
+            {/* Makes the page's filter legible: a rule is here either
+                because it is Instagram-scoped or because it is unscoped
+                and therefore runs everywhere. */}
+            <span
+              className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[10px] font-medium"
+              title="Which channels this rule runs on"
+            >
+              {channelScopeLabel(intent.channels ?? [])}
+            </span>
           </div>
 
           {intent.description && (
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="text-muted-foreground mt-1 text-xs">
               {intent.description}
             </p>
           )}
@@ -159,7 +200,7 @@ function IntentCard({ intent }: { intent: Automation }) {
               {keywords.map((kw) => (
                 <span
                   key={kw}
-                  className="rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-foreground"
+                  className="bg-muted text-foreground rounded-md px-2 py-0.5 font-mono text-[11px]"
                 >
                   {kw}
                 </span>
@@ -175,7 +216,7 @@ function IntentCard({ intent }: { intent: Automation }) {
           )}
         </div>
 
-        <div className="shrink-0 text-right text-xs text-muted-foreground">
+        <div className="text-muted-foreground shrink-0 text-right text-xs">
           <p className="flex items-center justify-end gap-1">
             <Zap className="size-3" />
             {intent.execution_count} run
