@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   PRIVATE_REPLY_WINDOW_MS,
   formatCount,
+  formatCountLabel,
   mediaKind,
   mediaPreviewUrl,
   privateReplyBlock,
@@ -74,6 +75,23 @@ describe('formatCount', () => {
     expect(formatCount(null)).toBe('—');
     expect(formatCount(undefined)).toBe('—');
     expect(formatCount(0)).toBe('0');
+  });
+});
+
+describe('formatCountLabel', () => {
+  it('singularises at exactly one', () => {
+    // "1 comments" is what this exists to stop.
+    expect(formatCountLabel(1, 'comment')).toBe('1 comment');
+    expect(formatCountLabel(0, 'comment')).toBe('0 comments');
+    expect(formatCountLabel(79, 'like')).toBe('79 likes');
+  });
+
+  it('keeps the em dash readable for unknown counts', () => {
+    expect(formatCountLabel(null, 'like')).toBe('— likes');
+  });
+
+  it('takes an irregular plural', () => {
+    expect(formatCountLabel(2, 'reply', 'replies')).toBe('2 replies');
   });
 });
 

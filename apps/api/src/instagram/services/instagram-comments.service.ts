@@ -5,6 +5,7 @@ import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service
 import { AutomationDispatchService } from '../../automations/services/automation-dispatch.service';
 import { InstagramIdentityService } from './instagram-identity.service';
 import {
+  getMedia,
   getMediaComments,
   replyToComment,
   sendPrivateReply,
@@ -13,6 +14,7 @@ import {
   listMedia,
   setMediaCommentsEnabled,
 } from '../ig-api.util';
+import type { IgMedia as IgMediaSnapshot } from '../ig-api.util';
 import type { IgCommentValue } from '../types/webhook.types';
 
 /**
@@ -21,6 +23,12 @@ import type { IgCommentValue } from '../types/webhook.types';
  * an agent gets a clear reason rather than a raw Graph error.
  */
 const PRIVATE_REPLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * `resolve` is the odd one out — it is local bookkeeping, not a Meta
+ * call. See `markResolved`.
+ */
+export type BulkModerationAction = 'hide' | 'unhide' | 'delete' | 'resolve';
 
 export interface CommentIngestArgs {
   accountId: string;
@@ -252,45 +260,84 @@ export class InstagramCommentsService {
     });
 
     for (const item of media) {
-      // Everything Meta can restate on a re-sync. Split out because
-      // create and update need the same values and drifting between
-      // the two is how a column silently stops being refreshed.
-      const mutable = {
-        media_type: item.mediaType ?? null,
-        media_product_type: item.mediaProductType ?? null,
-        permalink: item.permalink ?? null,
-        thumbnail_url: item.thumbnailUrl ?? null,
-        media_url: item.mediaUrl ?? null,
-        caption: item.caption ?? null,
-        like_count: item.likeCount ?? null,
-        comments_count: item.commentsCount ?? null,
-        is_comment_enabled: item.isCommentEnabled ?? null,
-        // `undefined` (leave alone), never `null` — a post whose
-        // carousel children Meta omitted this time should keep the ones
-        // we already have rather than blank the tile.
-        children: item.children?.length
-          ? (item.children as unknown as Prisma.InputJsonValue)
-          : undefined,
-      };
-
-      await this.prisma.instagram_media.upsert({
-        where: {
-          account_id_ig_media_id: {
-            account_id: args.accountId,
-            ig_media_id: item.id,
-          },
-        },
-        create: {
-          account_id: args.accountId,
-          ig_media_id: item.id,
-          ...mutable,
-          posted_at: item.timestamp ? new Date(item.timestamp) : null,
-        },
-        update: { ...mutable, synced_at: new Date() },
-      });
+      await this.upsertMedia(args.accountId, item);
     }
 
     return { synced: media.length };
+  }
+
+  /**
+   * Re-read ONE post from Meta.
+   *
+   * Likes and comment totals are a snapshot taken at sync time and go
+   * stale immediately; nothing pushes a like count over a webhook. This
+   * is the "these numbers look old" button, scoped to the post someone
+   * is actually looking at rather than re-fetching the whole grid.
+   *
+   * Scoped through our own row first — the media id arrives from a
+   * request path, and an unscoped fetch would let one tenant read
+   * another tenant's post through our token.
+   */
+  async refreshMedia(args: {
+    accountId: string;
+    accessToken: string;
+    mediaId: string;
+  }) {
+    const existing = await this.prisma.instagram_media.findFirst({
+      where: { account_id: args.accountId, ig_media_id: args.mediaId },
+      select: { ig_media_id: true },
+    });
+    if (!existing) throw new Error('Post not found');
+
+    const item = await getMedia({
+      mediaId: existing.ig_media_id,
+      accessToken: args.accessToken,
+    });
+
+    return this.upsertMedia(args.accountId, item);
+  }
+
+  /**
+   * Write one post to the local cache.
+   *
+   * Create and update need the same values, and drifting between the
+   * two is how a column silently stops being refreshed — so the mutable
+   * set is defined once, here.
+   */
+  private upsertMedia(accountId: string, item: IgMediaSnapshot) {
+    const mutable = {
+      media_type: item.mediaType ?? null,
+      media_product_type: item.mediaProductType ?? null,
+      permalink: item.permalink ?? null,
+      thumbnail_url: item.thumbnailUrl ?? null,
+      media_url: item.mediaUrl ?? null,
+      caption: item.caption ?? null,
+      like_count: item.likeCount ?? null,
+      comments_count: item.commentsCount ?? null,
+      is_comment_enabled: item.isCommentEnabled ?? null,
+      // `undefined` (leave alone), never `null` — a post whose carousel
+      // children Meta omitted this time should keep the ones we already
+      // have rather than blank the tile.
+      children: item.children?.length
+        ? (item.children as unknown as Prisma.InputJsonValue)
+        : undefined,
+    };
+
+    return this.prisma.instagram_media.upsert({
+      where: {
+        account_id_ig_media_id: {
+          account_id: accountId,
+          ig_media_id: item.id,
+        },
+      },
+      create: {
+        account_id: accountId,
+        ig_media_id: item.id,
+        ...mutable,
+        posted_at: item.timestamp ? new Date(item.timestamp) : null,
+      },
+      update: { ...mutable, synced_at: new Date() },
+    });
   }
 
   /**
@@ -594,8 +641,14 @@ export class InstagramCommentsService {
     accountId: string;
     accessToken: string;
     commentIds: string[];
-    action: 'hide' | 'unhide' | 'delete';
+    action: BulkModerationAction;
   }): Promise<{ succeeded: number; failed: number; errors: string[] }> {
+    // Purely local — no Meta call, so it can be one statement instead of
+    // a loop. See `markResolved` for why this action exists at all.
+    if (args.action === 'resolve') {
+      return this.markResolved(args.accountId, args.commentIds);
+    }
+
     let succeeded = 0;
     const errors: string[] = [];
 
@@ -627,6 +680,48 @@ export class InstagramCommentsService {
       // Only the distinct reasons — fifty copies of the same permission
       // error is not more informative than one.
       errors: [...new Set(errors)].slice(0, 3),
+    };
+  }
+
+  /**
+   * Clear comments out of the queue without touching Instagram.
+   *
+   * WHY THIS IS NOT A META CALL
+   *   `open` means "we still owe this person something", which is our
+   *   bookkeeping, not Meta's — Instagram has no concept of a handled
+   *   comment. Plenty of comments get answered in the Instagram app, or
+   *   need no answer at all ("🔥🔥"), and without this they sit in the
+   *   queue forever and the tab count stops meaning anything. Hiding or
+   *   deleting them would be a public, destructive way to fix a private
+   *   bookkeeping problem.
+   *
+   * Deliberately does NOT move 'hidden' or 'deleted' rows: those are
+   * remote states, and quietly relabelling them 'replied' would lose
+   * the record of what was actually done to a comment.
+   */
+  private async markResolved(
+    accountId: string,
+    commentIds: string[],
+  ): Promise<{ succeeded: number; failed: number; errors: string[] }> {
+    const now = new Date();
+    const result = await this.prisma.instagram_comments.updateMany({
+      where: {
+        account_id: accountId,
+        status: 'open',
+        OR: [
+          { id: { in: commentIds.filter(isUuid) } },
+          { ig_comment_id: { in: commentIds } },
+        ],
+      },
+      data: { status: 'replied', replied_at: now },
+    });
+
+    return {
+      succeeded: result.count,
+      // Rows that were already handled are not a failure — asking to
+      // resolve an already-resolved comment is a no-op, not an error.
+      failed: 0,
+      errors: [],
     };
   }
 

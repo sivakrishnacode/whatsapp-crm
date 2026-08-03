@@ -44,6 +44,21 @@ export function formatCount(value: number | null | undefined): string {
   return `${m < 10 ? m.toFixed(1).replace(/\.0$/, '') : Math.round(m)}M`;
 }
 
+/**
+ * "79 likes", "1 comment", "— likes".
+ *
+ * Exists because "1 comments" is the kind of thing that makes a product
+ * look unfinished, and the check has to live next to the formatting or
+ * it gets forgotten at the next call site.
+ */
+export function formatCountLabel(
+  value: number | null | undefined,
+  singular: string,
+  plural = `${singular}s`
+): string {
+  return `${formatCount(value)} ${value === 1 ? singular : plural}`;
+}
+
 export interface MediaKind {
   label: string;
   /** True when the tile should show a play affordance. */

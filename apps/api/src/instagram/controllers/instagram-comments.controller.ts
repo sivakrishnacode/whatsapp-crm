@@ -17,10 +17,18 @@ import { CurrentAccount } from '../../auth/decorators/current-account.decorator'
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InstagramCommentsService } from '../services/instagram-comments.service';
+import type { BulkModerationAction } from '../services/instagram-comments.service';
 import { InstagramConnectService } from '../services/instagram-connect.service';
 
 const MAX_PAGE = 100;
 const DEFAULT_PAGE = 25;
+
+const BULK_ACTIONS: readonly BulkModerationAction[] = [
+  'hide',
+  'unhide',
+  'delete',
+  'resolve',
+];
 
 /** Guards against a client asking for 50 000 rows via `?limit=`. */
 function pageSize(limit: string | undefined, fallback = DEFAULT_PAGE): number {
@@ -334,6 +342,46 @@ export class InstagramCommentsController {
     }
   }
 
+  /**
+   * Re-read one post from Meta.
+   *
+   * Likes and comment totals are a sync-time snapshot that nothing
+   * pushes updates for, so the detail panel needs a way to refresh the
+   * post being looked at without re-syncing the whole grid.
+   */
+  @Post('media/:mediaId/refresh')
+  async refreshMedia(
+    @CurrentAccount() account: SupabaseAccountContext,
+    @Param('mediaId') mediaId: string,
+    @Res() res: Response,
+  ) {
+    try {
+      const config = await this.requireToken(account.accountId);
+      const media = await this.comments.refreshMedia({
+        accountId: account.accountId,
+        accessToken: config.accessToken,
+        mediaId,
+      });
+
+      const open = await this.prisma.instagram_comments.count({
+        where: {
+          account_id: account.accountId,
+          ig_media_id: media.ig_media_id,
+          status: 'open',
+          is_from_business: false,
+        },
+      });
+
+      // Same shape as a row from `GET media`, so the client can swap it
+      // straight into the list it already has.
+      return res
+        .status(HttpStatus.OK)
+        .json({ media: { ...media, open_comments: open } });
+    } catch (err) {
+      return fail(res, err);
+    }
+  }
+
   /** Turn commenting on or off for one post. */
   @Post('media/:mediaId/comment-settings')
   async setCommentSettings(
@@ -473,10 +521,10 @@ export class InstagramCommentsController {
         .status(HttpStatus.BAD_REQUEST)
         .json({ error: `At most ${MAX_PAGE} comments at a time.` });
     }
-    if (action !== 'hide' && action !== 'unhide' && action !== 'delete') {
-      return res
-        .status(HttpStatus.BAD_REQUEST)
-        .json({ error: 'action must be one of: hide, unhide, delete' });
+    if (!BULK_ACTIONS.includes(action as BulkModerationAction)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        error: `action must be one of: ${BULK_ACTIONS.join(', ')}`,
+      });
     }
 
     try {
@@ -485,7 +533,7 @@ export class InstagramCommentsController {
         accountId: account.accountId,
         accessToken: config.accessToken,
         commentIds: ids,
-        action,
+        action: action as BulkModerationAction,
       });
       return res.status(HttpStatus.OK).json(result);
     } catch (err) {

@@ -38,7 +38,7 @@ import {
 import type { IgMedia, IgMediaListResponse } from '@/lib/instagram/types';
 import { cn } from '@/lib/utils';
 
-import { InstagramPostSheet } from './instagram-post-sheet';
+import { InstagramPostPanel } from './instagram-post-panel';
 
 const PAGE_SIZE = 24;
 /** The server's own cap on `?limit=`. */
@@ -415,7 +415,7 @@ export function InstagramPosts() {
         </>
       )}
 
-      <InstagramPostSheet
+      <InstagramPostPanel
         media={active}
         open={activeId !== null}
         onOpenChange={(next) => !next && setActiveId(null)}
