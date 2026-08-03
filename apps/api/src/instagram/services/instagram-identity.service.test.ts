@@ -152,3 +152,61 @@ describe('InstagramIdentityService.upgradePlaceholderName', () => {
     expect(getUserProfile).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('InstagramIdentityService — a contact born from our own outbound', () => {
+  beforeEach(() => {
+    vi.mocked(getUserProfile).mockReset();
+  });
+
+  /**
+   * The comment → DM funnel makes this the normal path, not an edge
+   * case: every funnel contact is created by the echo of the private
+   * reply we sent, before the person has messaged us at all.
+   */
+  it('still resolves the name on their first reply', async () => {
+    const prisma = {
+      contacts: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue(makeContact()),
+        update: vi
+          .fn()
+          .mockImplementation(({ data }: { data: Partial<contacts> }) =>
+            Promise.resolve(makeContact(data)),
+          ),
+      },
+    };
+    const service = new InstagramIdentityService(
+      prisma as unknown as PrismaService,
+    );
+
+    // 1. The echo lands. Meta refuses — a comment is not consent, and
+    //    they have not messaged us yet. This failure is guaranteed.
+    vi.mocked(getUserProfile).mockRejectedValueOnce(
+      new Error('User consent is required to access user profile'),
+    );
+    await service.findOrCreateContact({
+      accountId: 'acc-1',
+      ownerUserId: 'user-1',
+      igsid: IGSID,
+      accessToken: TOKEN,
+    });
+
+    // 2. Seconds later they tap the button. Consent now exists, so the
+    //    retry has to actually happen — this is the whole window in
+    //    which it can. Stamping a cooldown in step 1 is what used to
+    //    leave these contacts named by their IGSID for good.
+    vi.mocked(getUserProfile).mockResolvedValue({
+      igsid: IGSID,
+      name: 'Thalapathy',
+      username: 'ak_gopi_75',
+    });
+    const upgraded = await service.upgradePlaceholderName({
+      contact: makeContact(),
+      accessToken: TOKEN,
+    });
+
+    expect(getUserProfile).toHaveBeenCalledTimes(2);
+    expect(upgraded.name).toBe('Thalapathy');
+    expect(upgraded.ig_username).toBe('ak_gopi_75');
+  });
+});

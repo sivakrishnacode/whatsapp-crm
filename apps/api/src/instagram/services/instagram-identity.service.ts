@@ -94,9 +94,22 @@ export class InstagramIdentityService {
       return { contact: existing, wasCreated: false };
     }
 
+    // `paceRetries: false` is load-bearing. A contact created from the
+    // echo of our own outbound DM CANNOT have a resolvable profile yet —
+    // Meta answers 230 "user consent is required" until the person has
+    // messaged us, and they have not, or we would not be creating them
+    // from an echo. Stamping the cooldown on that guaranteed failure is
+    // what used to suppress the retry on their very first reply, 90
+    // seconds later, leaving them named by their IGSID for good.
+    //
+    // Nothing is lost by not pacing here: creation happens once per
+    // contact, so there is no per-message call to protect against. The
+    // cooldown exists for `upgradePlaceholderName`, which runs on every
+    // inbound.
     const profile = await this.fetchProfileQuietly(
       args.igsid,
       args.accessToken,
+      { paceRetries: false },
     );
     const username = profile?.username ?? args.knownUsername;
     const displayName =
@@ -189,7 +202,18 @@ export class InstagramIdentityService {
     }
   }
 
-  private async fetchProfileQuietly(igsid: string, accessToken: string) {
+  /**
+   * @param paceRetries Whether a failure should start the retry
+   *   cooldown. True for the per-inbound upgrade path, which would
+   *   otherwise spend a Graph call per message on someone permanently
+   *   unresolvable. False for one-off callers, where there is no repeat
+   *   to pace and a stamp only sabotages the next genuine attempt.
+   */
+  private async fetchProfileQuietly(
+    igsid: string,
+    accessToken: string,
+    opts: { paceRetries?: boolean } = {},
+  ) {
     try {
       const profile = await getUserProfile({ igsid, accessToken });
       this.lastEmptyProfileLookup.delete(igsid);
@@ -197,7 +221,7 @@ export class InstagramIdentityService {
     } catch (err) {
       // Expected in development mode (profiles only resolve for users
       // who have messaged the business) and whenever Meta rate-limits.
-      this.noteEmptyLookup(igsid);
+      if (opts.paceRetries !== false) this.noteEmptyLookup(igsid);
       this.logger.debug(
         `Instagram profile lookup failed for ${igsid}: ${String(err)}`,
       );
