@@ -193,36 +193,19 @@ export class WebSessionService {
     const verifiedIdentity = this.verifyIdentity(input.identity, secret);
     const visitorId = generateVisitorId();
 
-    // One transaction: a contact with no conversation is a row the widget
-    // can never reach again, because the next load mints a new visitor id
-    // and never finds it.
-    const created = await this.prisma.$transaction(async (tx) => {
-      const contact = await tx.contacts.create({
-        data: {
-          account_id: input.accountId,
-          user_id: input.ownerUserId,
-          web_visitor_id: visitorId,
-          name: input.profile?.name ?? null,
-          email: input.profile?.email ?? null,
-          phone: canonicalPhone,
-          source: 'web',
-        },
-        select: { id: true },
-      });
-
-      const conversation = await tx.conversations.create({
-        data: {
-          account_id: input.accountId,
-          user_id: input.ownerUserId,
-          contact_id: contact.id,
-          channel: 'web',
-          status: 'open',
-        },
-        select: { id: true },
-      });
-
-      return { contactId: contact.id, conversationId: conversation.id };
-    });
+    let created: { contactId: string; conversationId: string };
+    try {
+      created = await this.openThread(input, visitorId, canonicalPhone);
+    } catch (err) {
+      // Two first-time visits with the same number can both see "no
+      // contact" and both insert; the loser gets P2002. Retried whole,
+      // not inside the transaction — a failed statement aborts a
+      // Postgres transaction, so nothing further can run in it. On the
+      // second pass the winner's row exists and the lookup path takes
+      // over.
+      if ((err as { code?: string })?.code !== 'P2002') throw err;
+      created = await this.openThread(input, visitorId, canonicalPhone);
+    }
 
     await this.recordSession({
       accountId: input.accountId,
@@ -252,6 +235,139 @@ export class WebSessionService {
       visitorId,
       isNew: true,
     };
+  }
+
+  /**
+   * The contact + conversation pair, in one transaction.
+   *
+   * One transaction because a contact with no conversation is a row the
+   * widget can never reach again: the next load mints a new visitor id
+   * and never finds it.
+   */
+  private openThread(
+    input: StartSessionInput,
+    visitorId: string,
+    canonicalPhone: string,
+  ): Promise<{ contactId: string; conversationId: string }> {
+    return this.prisma.$transaction(async (tx) => {
+      const contactId = await this.resolveContact(tx, {
+        accountId: input.accountId,
+        ownerUserId: input.ownerUserId,
+        visitorId,
+        phone: canonicalPhone,
+        name: input.profile?.name?.trim(),
+        email: input.profile?.email?.trim(),
+      });
+
+      // ALWAYS a new conversation, never a reattachment to an existing
+      // web thread. The widget is unauthenticated, so a phone number is
+      // a claim and not proof — resuming someone's previous chat because
+      // a stranger typed their number would hand over its history.
+      const conversation = await tx.conversations.create({
+        data: {
+          account_id: input.accountId,
+          user_id: input.ownerUserId,
+          contact_id: contactId,
+          channel: 'web',
+          status: 'open',
+        },
+        select: { id: true },
+      });
+
+      return { contactId, conversationId: conversation.id };
+    });
+  }
+
+  /**
+   * Find the contact this phone already belongs to, or create one.
+   *
+   * WHY THIS EXISTS
+   *   `contacts` carries a partial UNIQUE index on
+   *   (account_id, phone_normalized). A visitor who already reached the
+   *   business on WhatsApp and then types the same number into the
+   *   widget used to hit a blind `contacts.create()`, violate that
+   *   index, and get "Could not start the chat" — the number being
+   *   *known* to the business made the widget unusable, which is exactly
+   *   backwards.
+   *
+   *   One human is one contact row here. `contacts_identity_chk` was
+   *   written for precisely this: phone, ig_scoped_id and
+   *   web_visitor_id coexist on a single row, and the channel lives on
+   *   the conversation rather than on the person.
+   *
+   * WHAT IT WILL NOT DO
+   *   Overwrite anything. The widget is public and unauthenticated, so
+   *   every value it supplies is an unverified claim — a stranger who
+   *   guesses a customer's number must not be able to rename them or
+   *   change their email. Only blank fields are filled, matching
+   *   FormContactResolverService.enrich.
+   *
+   *   Move an existing `web_visitor_id`. If the contact already has one,
+   *   a second browser gets a session whose visitor id lives only in its
+   *   signed token and in `web_sessions` — which is enough, because
+   *   resume is keyed on the token's `conversationId`, never on the
+   *   contact's visitor id. Overwriting would fight the partial unique
+   *   index for no gain.
+   */
+  private async resolveContact(
+    tx: Prisma.TransactionClient,
+    args: {
+      accountId: string;
+      ownerUserId: string;
+      visitorId: string;
+      phone: string;
+      name?: string;
+      email?: string;
+    },
+  ): Promise<string> {
+    // Match on the same normalisation the index uses
+    // (`regexp_replace(phone, '\D', '', 'g')`), so a lookup and an
+    // insert agree about what counts as the same number. Comparing raw
+    // `phone` would miss "+91 98765 43210" vs "919876543210" and then
+    // fail the constraint on insert anyway.
+    const normalized = args.phone.replace(/\D/g, '');
+
+    const existing = normalized
+      ? await tx.contacts.findFirst({
+          where: { account_id: args.accountId, phone_normalized: normalized },
+          select: { id: true, name: true, email: true, web_visitor_id: true },
+        })
+      : null;
+
+    if (!existing) {
+      const created = await tx.contacts.create({
+        data: {
+          account_id: args.accountId,
+          user_id: args.ownerUserId,
+          web_visitor_id: args.visitorId,
+          name: args.name ?? null,
+          email: args.email ?? null,
+          phone: args.phone,
+          source: 'web',
+        },
+        select: { id: true },
+      });
+      return created.id;
+    }
+
+    const patch: Prisma.contactsUncheckedUpdateInput = {};
+    if (!existing.name?.trim() && args.name) patch.name = args.name;
+    if (!existing.email?.trim() && args.email) patch.email = args.email;
+    // Their first visit through the widget. `source` is deliberately
+    // left alone — this contact was earned on whichever channel found
+    // them first, and rewriting it would lose that attribution.
+    if (existing.web_visitor_id === null) {
+      patch.web_visitor_id = args.visitorId;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      await tx.contacts.update({
+        where: { id: existing.id },
+        data: { ...patch, updated_at: new Date() },
+      });
+    }
+
+    return existing.id;
   }
 
   /**
