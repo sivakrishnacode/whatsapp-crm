@@ -381,9 +381,14 @@ export function InstagramPostPanel({
 
       <div className="flex flex-wrap items-center gap-1.5">
         {media.permalink && (
+          // `nativeButton={false}` because this renders an <a>: Base UI
+          // otherwise assumes a real <button> and warns that native
+          // button semantics were dropped. It is a link — navigating to
+          // Instagram — so an anchor is the correct element.
           <Button
             size="sm"
             variant="outline"
+            nativeButton={false}
             render={
               <a href={media.permalink} target="_blank" rel="noreferrer" />
             }
