@@ -56,6 +56,26 @@ function SelectTrigger({
   )
 }
 
+/**
+ * `alignItemWithTrigger` is OFF by default, and that is load-bearing.
+ *
+ * Base UI's item-aligned mode (the native-macOS look, where the selected
+ * row sits over the trigger) positions the popup `position: fixed` and
+ * sets `disableAnchorTracking`, then relies on a scroll lock to keep the
+ * two together — see SelectPositioner: `disableAnchorTracking:
+ * disableAnchorTracking ?? alignItemWithTriggerActive`.
+ *
+ * That scroll lock only ever locks `<html>`/`<body>`. This app does not
+ * scroll the document: the dashboard scrolls an inner
+ * `<main class="overflow-y-auto">` (dashboard-shell.tsx). So the lock is a
+ * no-op, nothing follows the anchor, and an open dropdown hangs in space
+ * while the form scrolls behind it.
+ *
+ * With it off, the popup uses ordinary anchored positioning and tracks the
+ * trigger on scroll, which is also the behaviour people expect from a
+ * dropdown on the web. Pass `alignItemWithTrigger` explicitly for a select
+ * that lives outside a scroll container and wants the native look.
+ */
 function SelectContent({
   className,
   children,
@@ -63,7 +83,7 @@ function SelectContent({
   sideOffset = 4,
   align = "center",
   alignOffset = 0,
-  alignItemWithTrigger = true,
+  alignItemWithTrigger = false,
   ...props
 }: SelectPrimitive.Popup.Props &
   Pick<
