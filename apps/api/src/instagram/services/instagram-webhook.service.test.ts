@@ -704,8 +704,26 @@ describe('InstagramWebhookService — attachments', () => {
     );
   });
 
-  it('maps a shared reel to a video message', async () => {
-    const { service } = makeService(prisma);
+  /**
+   * The `data` of the first messages.create, typed.
+   *
+   * The mock is `any`, so reaching into it directly spreads
+   * unsafe-member-access through every assertion. One cast here keeps
+   * the tests below readable and checked.
+   */
+  function createdMessage(client: typeof prisma): Record<string, unknown> {
+    const create = client.messages.create as unknown as {
+      mock: { calls: Array<[{ data: Record<string, unknown> }]> };
+    };
+    return create.mock.calls[0][0].data;
+  }
+
+  it('keeps a shared reel as a link and never copies the video', async () => {
+    // `payload.url` on a reel share is a PERMALINK, not a media file.
+    // Storing it in media_url is what made the inbox render
+    // <video src="https://www.instagram.com/reel/…"> and paint empty
+    // player chrome forever.
+    const { service, mediaMirror } = makeService(prisma);
     await runWebhook(
       service,
       envelope({
@@ -714,15 +732,77 @@ describe('InstagramWebhookService — attachments', () => {
         message: {
           mid: 'mid.reel',
           attachments: [
-            { type: 'ig_reel', payload: { url: 'https://cdn/reel.mp4' } },
+            {
+              type: 'ig_reel',
+              payload: {
+                url: 'https://www.instagram.com/reel/DbBDpvIpiv_/',
+                title: 'Can Your Thaali Chain Cause Neck Darkening?',
+              },
+            },
           ],
         },
       }),
     );
 
-    expect(prisma.messages.create.mock.calls[0][0].data.content_type).toBe(
-      'video',
+    const data = createdMessage(prisma);
+    expect(data.content_type).toBe('share');
+    // The whole point: Instagram is already hosting it. A busy account
+    // forwarding reels must not grow our storage.
+    expect(data.media_url).toBeNull();
+    expect(mediaMirror.mirror).not.toHaveBeenCalled();
+    expect(data.metadata).toMatchObject({
+      ig_attachment_type: 'ig_reel',
+      ig_permalink: 'https://www.instagram.com/reel/DbBDpvIpiv_/',
+    });
+  });
+
+  it('does not copy bytes for an attachment type it does not recognise', async () => {
+    // The expensive bug. Anything Meta invented since we last looked
+    // fell through to kind:'file' and had up to 30 MB mirrored — then
+    // rendered as a bare paragraph, so nobody ever saw what we paid for.
+    const { service, mediaMirror } = makeService(prisma);
+    await runWebhook(
+      service,
+      envelope({
+        sender: { id: CUSTOMER_IGSID },
+        recipient: { id: IG_USER_ID },
+        message: {
+          mid: 'mid.unknown',
+          attachments: [
+            { type: 'some_new_thing', payload: { url: 'https://cdn/x.mp4' } },
+          ],
+        },
+      }),
     );
+
+    const data = createdMessage(prisma);
+    expect(data.content_type).toBe('unsupported');
+    expect(data.media_url).toBeNull();
+    expect(mediaMirror.mirror).not.toHaveBeenCalled();
+  });
+
+  it('still copies a genuine attachment the customer sent', async () => {
+    // The allowlist must not throw the baby out: a photo sent into the
+    // thread has an expiring URL and no id to re-resolve it from, so
+    // not copying it means losing it.
+    const { service, mediaMirror } = makeService(prisma);
+    mediaMirror.mirror.mockResolvedValue('https://storage/mirrored.jpg');
+    await runWebhook(
+      service,
+      envelope({
+        sender: { id: CUSTOMER_IGSID },
+        recipient: { id: IG_USER_ID },
+        message: {
+          mid: 'mid.photo',
+          attachments: [
+            { type: 'image', payload: { url: 'https://cdn/photo.jpg' } },
+          ],
+        },
+      }),
+    );
+
+    expect(mediaMirror.mirror).toHaveBeenCalled();
+    expect(createdMessage(prisma).media_url).toBe('https://storage/mirrored.jpg');
   });
 });
 

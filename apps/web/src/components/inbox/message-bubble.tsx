@@ -12,6 +12,8 @@ import {
   Clock,
   Check,
   CheckCheck,
+  Clapperboard,
+  Image as ImageIcon,
   XCircle,
   FileText,
   MapPin,
@@ -352,6 +354,84 @@ function MessageContent({
           )}
         </div>
       );
+
+    /**
+     * A forwarded Instagram post or reel.
+     *
+     * Deliberately a link card and not a player. Meta hands us a
+     * permalink here, not a media file — the old code put that
+     * permalink in `media_url` and rendered `<video src="…/reel/…">`,
+     * which is why these showed as empty player chrome. We also keep no
+     * copy of the video: it is Instagram's content, they are already
+     * hosting it, and mirroring every forwarded reel would grow storage
+     * without bound for something one click away.
+     */
+    case "share": {
+      const permalink = message.metadata?.ig_permalink;
+      const isReel = message.metadata?.ig_attachment_type === "ig_reel";
+      const label = isReel ? "Reel" : "Post";
+      const title = message.metadata?.title || message.content_text;
+
+      const body = (
+        <>
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "flex size-9 shrink-0 items-center justify-center rounded-lg",
+                onPrimary ? "bg-primary-foreground/20" : "bg-muted"
+              )}
+            >
+              {isReel ? (
+                <Clapperboard className="size-4" />
+              ) : (
+                <ImageIcon className="size-4" />
+              )}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs font-medium">
+                Shared {label.toLowerCase()}
+              </span>
+              <span
+                className={cn(
+                  "block text-xs",
+                  onPrimary
+                    ? "text-primary-foreground/70"
+                    : "text-muted-foreground"
+                )}
+              >
+                {permalink ? `Open on Instagram` : "Link unavailable"}
+              </span>
+            </span>
+          </div>
+          {title && (
+            <p className="mt-2 line-clamp-4 text-sm whitespace-pre-wrap break-words">
+              {title}
+            </p>
+          )}
+        </>
+      );
+
+      const shell = cn(
+        "block max-w-60 rounded-lg px-3 py-2 transition-colors",
+        onPrimary
+          ? "bg-primary-foreground/10 hover:bg-primary-foreground/20"
+          : "bg-muted/50 hover:bg-muted"
+      );
+
+      // A share with no permalink still renders — just not as a link.
+      return permalink ? (
+        <a
+          href={permalink}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={shell}
+        >
+          {body}
+        </a>
+      ) : (
+        <div className={shell}>{body}</div>
+      );
+    }
 
     case "audio":
       return (

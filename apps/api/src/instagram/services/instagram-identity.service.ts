@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { contacts, conversations } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { getUserProfile } from '../ig-api.util';
+import { InstagramMediaMirrorService } from './instagram-media-mirror.service';
 
 export interface IgContactOutcome {
   contact: contacts;
@@ -53,7 +54,10 @@ export class InstagramIdentityService {
   private static readonly PROFILE_RETRY_COOLDOWN_MS = 15 * 60 * 1000;
   private static readonly MAX_TRACKED_LOOKUPS = 5_000;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mediaMirror: InstagramMediaMirrorService,
+  ) {}
 
   /**
    * Find or create the contact behind an IGSID.
@@ -126,7 +130,11 @@ export class InstagramIdentityService {
           ig_scoped_id: args.igsid,
           ig_username: username ?? null,
           name: displayName,
-          avatar_url: profile?.profilePictureUrl ?? null,
+          avatar_url: await this.mirrorAvatar(
+            args.accountId,
+            args.igsid,
+            profile?.profilePictureUrl,
+          ),
           source: 'instagram',
         },
       });
@@ -190,7 +198,12 @@ export class InstagramIdentityService {
           name: displayName,
           ig_username: username,
           // Never trade an avatar we already have for nothing.
-          avatar_url: profile?.profilePictureUrl ?? contact.avatar_url,
+          avatar_url:
+            (await this.mirrorAvatar(
+              contact.account_id,
+              igsid,
+              profile?.profilePictureUrl,
+            )) ?? contact.avatar_url,
           updated_at: new Date(),
         },
       });
@@ -209,6 +222,39 @@ export class InstagramIdentityService {
    *   unresolvable. False for one-off callers, where there is no repeat
    *   to pace and a stamp only sabotages the next genuine attempt.
    */
+  /**
+   * Copy a profile picture into our own storage and return that URL.
+   *
+   * WHY THIS IS NOT JUST STORED AS-IS
+   *   `profile_pic` is a signed CDN URL with roughly a four-day life —
+   *   the `oe=` parameter is its expiry. Stored verbatim it renders
+   *   perfectly for a few days and then 403s forever, so the inbox
+   *   slowly fills with broken images while nothing appears to have
+   *   changed. There is no id to re-resolve later the way WhatsApp
+   *   media has, so copying the bytes is the only durable option.
+   *
+   *   Keyed by IGSID rather than by URL hash: the same face returns
+   *   under a freshly-signed URL on every refresh, and hashing the URL
+   *   would leave a new orphaned object behind each time.
+   *
+   * Falls back to the original CDN URL when mirroring is unavailable —
+   * an avatar that works for four days beats no avatar at all.
+   */
+  private async mirrorAvatar(
+    accountId: string,
+    igsid: string,
+    sourceUrl: string | undefined,
+  ): Promise<string | null> {
+    if (!sourceUrl) return null;
+    const mirrored = await this.mediaMirror.mirror({
+      accountId,
+      sourceUrl,
+      kind: 'avatar',
+      key: igsid,
+    });
+    return mirrored ?? sourceUrl;
+  }
+
   private async fetchProfileQuietly(
     igsid: string,
     accessToken: string,

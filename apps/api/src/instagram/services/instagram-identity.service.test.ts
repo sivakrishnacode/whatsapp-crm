@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { contacts } from '@prisma/client';
 import { InstagramIdentityService } from './instagram-identity.service';
 import type { PrismaService } from '../../prisma/prisma.service';
+import type { InstagramMediaMirrorService } from './instagram-media-mirror.service';
 import { getUserProfile } from '../ig-api.util';
 
 vi.mock('../ig-api.util', () => ({ getUserProfile: vi.fn() }));
@@ -30,10 +31,27 @@ function makeService() {
         ),
     },
   };
+  const mirror = makeMirror();
   const service = new InstagramIdentityService(
     prisma as unknown as PrismaService,
+    mirror as unknown as InstagramMediaMirrorService,
   );
-  return { service, prisma };
+  return { service, prisma, mirror };
+}
+
+/**
+ * Mirroring is on by default here because that is production: an
+ * account with storage configured stores our own durable URL, not the
+ * four-day CDN one.
+ */
+function makeMirror() {
+  return {
+    mirror: vi
+      .fn()
+      .mockImplementation(({ key }: { key?: string }) =>
+        Promise.resolve(`https://storage.test/avatar/${key ?? 'x'}.jpg`),
+      ),
+  };
 }
 
 describe('InstagramIdentityService.upgradePlaceholderName', () => {
@@ -58,7 +76,9 @@ describe('InstagramIdentityService.upgradePlaceholderName', () => {
     expect(prisma.contacts.update).toHaveBeenCalledOnce();
     expect(result.name).toBe('Aster');
     expect(result.ig_username).toBe('getaster');
-    expect(result.avatar_url).toBe('https://cdn/pic.jpg');
+    // Our mirrored copy, not the CDN URL Meta handed us — that one
+    // expires in about four days. See the profile-pictures block below.
+    expect(result.avatar_url).toBe(`https://storage.test/avatar/${IGSID}.jpg`);
   });
 
   it('falls back to @handle when the profile has no name', async () => {
@@ -153,6 +173,67 @@ describe('InstagramIdentityService.upgradePlaceholderName', () => {
   });
 });
 
+describe('InstagramIdentityService — profile pictures', () => {
+  beforeEach(() => {
+    vi.mocked(getUserProfile).mockReset();
+  });
+
+  it('stores our mirrored copy, not Instagram’s expiring CDN URL', async () => {
+    // `profile_pic` is signed and dies in about four days (the `oe=`
+    // parameter is its expiry), and there is no id to re-resolve it
+    // from later. Storing it verbatim is why the inbox filled up with
+    // broken avatars a few days after each contact appeared.
+    const { service, prisma, mirror } = makeService();
+    vi.mocked(getUserProfile).mockResolvedValue({
+      igsid: IGSID,
+      name: 'Dhivya',
+      username: 'dhivya',
+      profilePictureUrl: 'https://scontent.cdninstagram.com/v/pic.jpg?oe=68B0',
+    });
+
+    const result = await service.upgradePlaceholderName({
+      contact: makeContact(),
+      accessToken: TOKEN,
+    });
+
+    expect(mirror.mirror).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceUrl: 'https://scontent.cdninstagram.com/v/pic.jpg?oe=68B0',
+        kind: 'avatar',
+        // Keyed by person, so a refresh overwrites one object rather
+        // than orphaning the previous copy every few days.
+        key: IGSID,
+      }),
+    );
+    expect(result.avatar_url).toBe(`https://storage.test/avatar/${IGSID}.jpg`);
+    expect(prisma.contacts.update).toHaveBeenCalled();
+  });
+
+  it('falls back to the CDN URL when mirroring is unavailable', async () => {
+    // No storage configured. Four working days beats a grey circle.
+    const { service } = makeService();
+    const mirror = { mirror: vi.fn().mockResolvedValue(null) };
+    const bare = new InstagramIdentityService(
+      (service as unknown as { prisma: PrismaService }).prisma,
+      mirror as unknown as InstagramMediaMirrorService,
+    );
+    vi.mocked(getUserProfile).mockResolvedValue({
+      igsid: IGSID,
+      name: 'Dhivya',
+      profilePictureUrl: 'https://scontent.cdninstagram.com/v/pic.jpg',
+    });
+
+    const result = await bare.upgradePlaceholderName({
+      contact: makeContact(),
+      accessToken: TOKEN,
+    });
+
+    expect(result.avatar_url).toBe(
+      'https://scontent.cdninstagram.com/v/pic.jpg',
+    );
+  });
+});
+
 describe('InstagramIdentityService — a contact born from our own outbound', () => {
   beforeEach(() => {
     vi.mocked(getUserProfile).mockReset();
@@ -177,6 +258,7 @@ describe('InstagramIdentityService — a contact born from our own outbound', ()
     };
     const service = new InstagramIdentityService(
       prisma as unknown as PrismaService,
+      makeMirror() as unknown as InstagramMediaMirrorService,
     );
 
     // 1. The echo lands. Meta refuses — a comment is not consent, and

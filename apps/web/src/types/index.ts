@@ -265,6 +265,12 @@ export type ContentType =
   | 'order'
   /** Platform notice — the customer changed their number, etc. */
   | 'system'
+  /**
+   * A forwarded Instagram post or reel. `media_url` is always null —
+   * the content stays on Instagram and we keep only a permalink in
+   * `metadata.ig_permalink`. See migration 065.
+   */
+  | 'share'
   /** WhatsApp itself could not forward what was sent. */
   | 'unsupported';
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
@@ -370,6 +376,11 @@ export interface MessageMetadata {
   ig_attachment_type?: string;
   reel_video_id?: string;
   ig_source_url_expired?: boolean;
+  /**
+   * instagram.com link for a forwarded post or reel. We keep the
+   * reference and never a copy — see migration 065.
+   */
+  ig_permalink?: string;
 }
 
 export type ReactionActor = 'customer' | 'agent';

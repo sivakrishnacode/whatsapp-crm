@@ -778,27 +778,41 @@ export class InstagramWebhookService {
     const attachment = message.attachments?.[0];
     if (!attachment) return base;
 
-    const { contentType, kind } = mapAttachment(attachment);
+    const { contentType, kind, mirror } = mapAttachment(attachment);
     const sourceUrl = attachment.payload?.url ?? null;
 
-    const mediaUrl = sourceUrl
-      ? ((await this.mediaMirror.mirror({
-          accountId: ctx.accountId,
-          sourceUrl,
-          kind,
-        })) ?? sourceUrl)
-      : null;
+    // A reference keeps no bytes and therefore no media_url — not even
+    // the CDN one. Storing that would be worse than storing nothing: it
+    // renders for a few days and then becomes a permanently broken
+    // image with no way to tell it apart from a real failure.
+    const mediaUrl =
+      mirror && sourceUrl
+        ? ((await this.mediaMirror.mirror({
+            accountId: ctx.accountId,
+            sourceUrl,
+            kind,
+          })) ?? sourceUrl)
+        : null;
 
     const metadata: Record<string, unknown> = {
       ig_attachment_type: attachment.type,
     };
+
+    // For a reference, `payload.url` is a PERMALINK — an instagram.com
+    // page, not a media file. Storing it in media_url is what made the
+    // inbox render <video src="https://www.instagram.com/reel/…"> and
+    // paint empty player chrome forever. It belongs here, as a link.
+    if (!mirror && sourceUrl) metadata.ig_permalink = sourceUrl;
+
     if (attachment.payload?.title) metadata.title = attachment.payload.title;
     if (attachment.payload?.reel_video_id) {
       metadata.reel_video_id = attachment.payload.reel_video_id;
     }
-    if (sourceUrl && mediaUrl !== sourceUrl) {
+    if (mirror && sourceUrl && mediaUrl !== sourceUrl) {
       // Keep the original for debugging a mirror that looks wrong. It
       // will be dead within hours, which is exactly why we mirrored.
+      // Only meaningful when we tried: a reference never had a copy to
+      // compare against.
       metadata.ig_source_url_expired = true;
     }
     if (message.attachments && message.attachments.length > 1) {
@@ -1034,28 +1048,61 @@ function toDate(timestamp: number | string | undefined): Date {
   return new Date(n);
 }
 
+/**
+ * How to store an attachment, and — crucially — whether to keep a copy.
+ *
+ * MIRRORING IS AN ALLOWLIST, NOT A FALLBACK
+ *   `mirror` used to be implicit: every attachment got its bytes copied
+ *   into our storage, and anything Meta invented since we last looked
+ *   fell through `default` to kind:'file' and was copied too. That
+ *   meant an unrecognised attachment type spent up to 30 MB of storage
+ *   on content the renderer then displayed as a bare paragraph.
+ *
+ *   So the question is now asked explicitly, and the answer for
+ *   anything we do not recognise is no.
+ *
+ * WHAT DESERVES A COPY
+ *   Things the person actually sent into the thread — a photo, a voice
+ *   note, a video, a document. Their CDN URLs expire in days and there
+ *   is no id to re-resolve them from, so not copying means losing them.
+ *
+ * WHAT DOES NOT
+ *   A forwarded post or reel. That is someone else's public content,
+ *   referenced rather than sent: Instagram is still hosting it, we
+ *   would be storing a second copy of a video nobody asked us to keep,
+ *   and a busy account forwarding reels would grow our storage without
+ *   bound. Meta does not even give us a url for `ig_reel` — only a
+ *   title — which is why these used to render as empty video players.
+ */
 function mapAttachment(attachment: IgAttachment): {
   contentType: string;
   kind: string;
+  mirror: boolean;
 } {
   switch (attachment.type) {
     case 'image':
-      return { contentType: 'image', kind: 'image' };
+      return { contentType: 'image', kind: 'image', mirror: true };
     case 'video':
-    case 'ig_reel':
-      return { contentType: 'video', kind: 'video' };
+      return { contentType: 'video', kind: 'video', mirror: true };
     case 'audio':
-      return { contentType: 'audio', kind: 'audio' };
+      return { contentType: 'audio', kind: 'audio', mirror: true };
     case 'file':
-      return { contentType: 'document', kind: 'file' };
+      return { contentType: 'document', kind: 'file', mirror: true };
     case 'story_mention':
       // A story mention is an image (or a video frame) of the story the
-      // business was tagged in.
-      return { contentType: 'image', kind: 'image' };
+      // business was tagged in — genuinely about them, and gone from
+      // Instagram in 24 hours. Worth the copy.
+      return { contentType: 'image', kind: 'image', mirror: true };
+
+    // References. Title and ids only; no bytes, ever.
+    case 'ig_reel':
+    case 'ig_post':
     case 'share':
-      // A shared post or link. The payload URL is a preview image.
-      return { contentType: 'image', kind: 'image' };
+      return { contentType: 'share', kind: 'share', mirror: false };
+
     default:
-      return { contentType: 'text', kind: 'file' };
+      // Unknown to us today. Render it as unsupported and say so,
+      // rather than copying 30 MB of something we cannot draw.
+      return { contentType: 'unsupported', kind: 'unknown', mirror: false };
   }
 }

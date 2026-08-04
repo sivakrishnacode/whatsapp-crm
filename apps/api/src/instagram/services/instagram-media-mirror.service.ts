@@ -75,6 +75,17 @@ export class InstagramMediaMirrorService {
     sourceUrl: string;
     /** 'image' | 'video' | 'audio' | 'file' — only used for the path. */
     kind: string;
+    /**
+     * Stable object name, replacing the source-URL hash.
+     *
+     * For attachments the URL IS the identity, so hashing it is right.
+     * A profile picture is the opposite: the same face comes back under
+     * a freshly-signed URL every few days, so hashing the URL would
+     * write a new object on every refresh and never reclaim the old
+     * one. Passing the IGSID here means one object per person, updated
+     * in place.
+     */
+    key?: string;
   }): Promise<string | null> {
     const client = this.getClient();
     if (!client) return null;
@@ -127,13 +138,16 @@ export class InstagramMediaMirrorService {
     }
 
     // Content-addressed by source URL so a redelivered webhook
-    // overwrites the same object instead of accumulating duplicates.
-    const hash = crypto
-      .createHash('sha256')
-      .update(args.sourceUrl)
-      .digest('hex')
-      .slice(0, 32);
-    const path = `${args.accountId}/${args.kind}/${hash}${extensionFor(contentType)}`;
+    // overwrites the same object instead of accumulating duplicates —
+    // unless the caller supplied its own stable name.
+    const name =
+      args.key ??
+      crypto
+        .createHash('sha256')
+        .update(args.sourceUrl)
+        .digest('hex')
+        .slice(0, 32);
+    const path = `${args.accountId}/${args.kind}/${name}${extensionFor(contentType)}`;
 
     try {
       const { error } = await client.storage
