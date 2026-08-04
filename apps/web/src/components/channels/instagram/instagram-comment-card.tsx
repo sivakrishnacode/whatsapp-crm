@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   CornerDownRight,
   EyeOff,
   Eye,
+  Gift,
   Loader2,
   MessageCircle,
   Send,
@@ -30,6 +31,7 @@ import {
 import {
   formatAbsolute,
   formatRelative,
+  funnelStateLabel,
   handleTint,
   privateReplyBlock,
   privateReplyBlockReason,
@@ -44,6 +46,22 @@ const MAX_REPLY_CHARS = 2200;
 
 type Mode = 'public' | 'private' | null;
 
+/**
+ * What the list can drive from the keyboard.
+ *
+ * Imperative rather than lifted state: the composer's draft, its saved
+ * replies and its busy flag are private to a card, and hoisting them
+ * into the list so a keystroke could reach them would make the list own
+ * the editing state of 25 cards at once.
+ */
+export interface CommentCardHandle {
+  openPublicReply: () => void;
+  openPrivateReply: () => void;
+  toggleHide: () => void;
+  /** True while the composer is open, so the list stops claiming keys. */
+  isComposing: () => boolean;
+}
+
 export interface InstagramCommentCardProps {
   comment: IgComment;
   onChange: () => void;
@@ -52,6 +70,10 @@ export interface InstagramCommentCardProps {
   onSelectedChange?: (selected: boolean) => void;
   /** The post thumbnail. Redundant when the list is already one post. */
   showMedia?: boolean;
+  /** Keyboard cursor is on this card. */
+  focused?: boolean;
+  /** Called on mount/unmount so the list can drive this card by key. */
+  registerHandle?: (handle: CommentCardHandle | null) => void;
 }
 
 export function InstagramCommentCard({
@@ -60,18 +82,27 @@ export function InstagramCommentCard({
   selected,
   onSelectedChange,
   showMedia = true,
+  focused = false,
+  registerHandle,
 }: InstagramCommentCardProps) {
   const [mode, setMode] = useState<Mode>(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const savedReplies = useSavedReplies();
+  const rootRef = useRef<HTMLLIElement>(null);
 
   const block = privateReplyBlock(comment);
   const isHidden = comment.status === 'hidden';
   const isDeleted = comment.status === 'deleted';
   const handle = comment.from_username ?? 'unknown';
   const selectable = onSelectedChange !== undefined;
+
+  // Bring the cursor into view on j/k. `nearest` rather than `center`
+  // so paging through a queue does not jerk the viewport on every step.
+  useEffect(() => {
+    if (focused) rootRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [focused]);
 
   async function act(path: string, body?: unknown, successMessage?: string) {
     setBusy(true);
@@ -105,11 +136,40 @@ export function InstagramCommentCard({
     );
   }
 
+  function toggleHide() {
+    if (busy || isDeleted) return;
+    void act('/hide', { hidden: !isHidden }, isHidden ? 'Unhidden.' : 'Hidden.');
+  }
+
+  // Re-registered whenever the closed-over state a handler reads
+  // changes, so a keystroke never fires a stale closure — `toggleHide`
+  // in particular reads `isHidden` and `busy`.
+  useEffect(() => {
+    if (!registerHandle) return;
+    registerHandle({
+      openPublicReply: () => {
+        if (!isDeleted) setMode('public');
+      },
+      openPrivateReply: () => {
+        if (!isDeleted && !block) setMode('private');
+      },
+      toggleHide,
+      isComposing: () => mode !== null,
+    });
+    return () => registerHandle(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerHandle, mode, isDeleted, isHidden, busy, block]);
+
   return (
     <li
+      ref={rootRef}
       className={cn(
         'bg-card rounded-xl border p-4 transition-colors',
         selected ? 'border-primary/60 bg-primary/[0.03]' : 'border-border',
+        // Focus is the keyboard cursor, distinct from selection: a ring
+        // rather than a fill, so a card can be both at once and still
+        // read as two different things.
+        focused && 'ring-primary/70 ring-2 ring-offset-0',
         isDeleted && 'opacity-60'
       )}
     >
@@ -202,7 +262,54 @@ export function InstagramCommentCard({
             </ul>
           )}
 
-          {comment.private_reply_conversation_id && (
+          {/* What the funnel did, if one answered this comment. The
+              queue otherwise shows a comment that looks untouched but
+              has already had a whole conversation attached to it. */}
+          {comment.funnel_run && (
+            <div className="border-border bg-muted/30 mt-2 rounded-lg border px-3 py-2">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span className="text-foreground inline-flex items-center gap-1 font-medium">
+                  <Gift className="size-3" />
+                  {comment.funnel_run.funnel?.name ?? 'Comment funnel'}
+                </span>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1',
+                    comment.funnel_run.state === 'delivered'
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : comment.funnel_run.state === 'failed'
+                        ? 'text-destructive'
+                        : 'text-muted-foreground'
+                  )}
+                >
+                  {funnelStateLabel(comment.funnel_run.state)}
+                </span>
+                {/* Only meaningful once the gate has actually run. */}
+                {comment.funnel_run.was_following !== null && (
+                  <span className="text-muted-foreground">
+                    ·{' '}
+                    {comment.funnel_run.was_following
+                      ? 'already followed'
+                      : 'was not following'}
+                  </span>
+                )}
+              </div>
+              {comment.funnel_run.conversation_id && (
+                <Link
+                  href={`/inbox?c=${comment.funnel_run.conversation_id}`}
+                  className="text-primary mt-1 inline-flex items-center gap-1 text-xs hover:underline"
+                >
+                  <MessageCircle className="size-3" />
+                  Open the DM thread
+                </Link>
+              )}
+            </div>
+          )}
+
+          {/* Suppressed when a funnel run is shown — it carries the same
+              link, and two "Open the DM thread" rows on one card is just
+              noise. */}
+          {comment.private_reply_conversation_id && !comment.funnel_run && (
             <Link
               href={`/inbox?c=${comment.private_reply_conversation_id}`}
               className="text-primary mt-2 inline-flex items-center gap-1 text-xs hover:underline"
@@ -334,13 +441,7 @@ export function InstagramCommentCard({
                   size="sm"
                   variant="ghost"
                   disabled={busy}
-                  onClick={() =>
-                    act(
-                      '/hide',
-                      { hidden: !isHidden },
-                      isHidden ? 'Unhidden.' : 'Hidden.'
-                    )
-                  }
+                  onClick={toggleHide}
                 >
                   {isHidden ? (
                     <Eye className="size-4" />
@@ -377,7 +478,7 @@ export function InstagramCommentCard({
 
           {block && !mode && !isDeleted && (
             <p className="text-muted-foreground mt-2 text-xs">
-              {privateReplyBlockReason(block)}
+              {privateReplyBlockReason(block, comment.funnel_run?.funnel?.name)}
             </p>
           )}
         </div>

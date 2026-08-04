@@ -152,7 +152,7 @@ export class InstagramCommentsController {
     const mediaIds = [...new Set(rows.map((r) => r.ig_media_id))];
     const commentIds = rows.map((r) => r.ig_comment_id);
 
-    const [media, replies, contacts] = await Promise.all([
+    const [media, replies, contacts, funnelRuns] = await Promise.all([
       this.prisma.instagram_media.findMany({
         where: {
           account_id: account.accountId,
@@ -170,9 +170,30 @@ export class InstagramCommentsController {
         account.accountId,
         rows.map((r) => r.contact_id),
       ),
+      // Which of these comments a Comment Funnel already answered.
+      // Without it the queue shows an enabled "Send DM" on a comment
+      // whose single private reply the funnel has already spent — the
+      // agent clicks, Meta refuses, and nothing explains why.
+      this.prisma.instagram_comment_funnel_runs.findMany({
+        where: {
+          account_id: account.accountId,
+          ig_comment_id: { in: commentIds },
+        },
+        select: {
+          ig_comment_id: true,
+          state: true,
+          was_following: true,
+          delivered_at: true,
+          conversation_id: true,
+          funnel: { select: { id: true, name: true } },
+        },
+      }),
     ]);
 
     const mediaByIgId = new Map(media.map((m) => [m.ig_media_id, m]));
+    const funnelByCommentId = new Map(
+      funnelRuns.map((run) => [run.ig_comment_id, run]),
+    );
     const repliesByParent = new Map<string, typeof replies>();
     for (const reply of replies) {
       const parent = reply.parent_comment_id;
@@ -188,6 +209,7 @@ export class InstagramCommentsController {
         media: mediaByIgId.get(r.ig_media_id) ?? null,
         replies: repliesByParent.get(r.ig_comment_id) ?? [],
         contact: r.contact_id ? (contacts.get(r.contact_id) ?? null) : null,
+        funnel_run: funnelByCommentId.get(r.ig_comment_id) ?? null,
       })),
       total,
       counts,

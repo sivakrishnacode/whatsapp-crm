@@ -1,4 +1,4 @@
-import type { IgComment, IgMedia } from './types';
+import type { IgComment, IgFunnelRunState, IgMedia } from './types';
 
 /** Meta allows one private reply per comment, within 7 days of it. */
 export const PRIVATE_REPLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -105,7 +105,11 @@ export function mediaPreviewUrl(media: IgMedia): string | null {
   );
 }
 
-export type PrivateReplyBlock = 'already-replied' | 'window-closed' | null;
+export type PrivateReplyBlock =
+  | 'already-replied'
+  | 'funnel-claimed'
+  | 'window-closed'
+  | null;
 
 /**
  * Why a private reply is unavailable, or `null` if it is available.
@@ -115,18 +119,44 @@ export type PrivateReplyBlock = 'already-replied' | 'window-closed' | null;
  * that the API will reject.
  */
 export function privateReplyBlock(comment: IgComment): PrivateReplyBlock {
-  if (comment.private_replied_at) return 'already-replied';
+  // A funnel spends the same single private reply an agent would, so
+  // this is the same block — named separately only because "already
+  // sent" reads as an accusation when nobody on the team sent anything.
+  if (comment.private_replied_at) {
+    return comment.funnel_run ? 'funnel-claimed' : 'already-replied';
+  }
   if (!comment.commented_at) return null;
   const age = Date.now() - new Date(comment.commented_at).getTime();
   return age > PRIVATE_REPLY_WINDOW_MS ? 'window-closed' : null;
 }
 
-export function privateReplyBlockReason(block: PrivateReplyBlock): string {
+export function privateReplyBlockReason(
+  block: PrivateReplyBlock,
+  funnelName?: string | null,
+): string {
   if (block === 'already-replied')
     return 'A private reply was already sent — Instagram allows only one per comment.';
+  if (block === 'funnel-claimed')
+    return funnelName
+      ? `The “${funnelName}” funnel used this comment’s one private reply.`
+      : 'A comment funnel used this comment’s one private reply.';
   if (block === 'window-closed')
     return 'Too old for a private reply — Instagram allows 7 days.';
   return '';
+}
+
+/** Plain-language stage label for a funnel run. */
+export function funnelStateLabel(state: IgFunnelRunState): string {
+  switch (state) {
+    case 'awaiting_optin':
+      return 'DM sent — waiting for them to tap';
+    case 'awaiting_follow':
+      return 'Asked them to follow';
+    case 'delivered':
+      return 'Reward delivered';
+    case 'failed':
+      return 'Funnel failed';
+  }
 }
 
 /**

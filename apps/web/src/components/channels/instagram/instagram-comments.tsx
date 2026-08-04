@@ -5,8 +5,11 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
   ArrowDownUp,
+  Check,
   EyeOff,
   Eye,
+  Image as ImageIcon,
+  Keyboard,
   Loader2,
   MessageCircle,
   RefreshCw,
@@ -19,6 +22,12 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -31,10 +40,13 @@ import type {
   IgComment,
   IgCommentListResponse,
   IgCommentStatus,
+  IgMedia,
+  IgMediaListResponse,
 } from '@/lib/instagram/types';
 import { cn } from '@/lib/utils';
 
 import { InstagramCommentCard } from './instagram-comment-card';
+import type { CommentCardHandle } from './instagram-comment-card';
 
 const PAGE_SIZE = 25;
 
@@ -54,7 +66,23 @@ const STATUS_TABS = [
   { id: '', label: 'All', countKey: 'all' },
 ] as const;
 
-type BulkAction = 'hide' | 'unhide' | 'delete';
+/**
+ * `resolve` is the odd one out — local bookkeeping that clears a
+ * handled comment out of "Needs reply" without touching Instagram.
+ */
+type BulkAction = 'hide' | 'unhide' | 'delete' | 'resolve';
+
+const SHORTCUTS: ReadonlyArray<{ keys: string; description: string }> = [
+  { keys: 'j / ↓', description: 'Next comment' },
+  { keys: 'k / ↑', description: 'Previous comment' },
+  { keys: 'r', description: 'Reply publicly' },
+  { keys: 'd', description: 'Send a DM' },
+  { keys: 'h', description: 'Hide or unhide' },
+  { keys: 'x', description: 'Select for a bulk action' },
+  { keys: '⌘↵', description: 'Send (while writing)' },
+  { keys: 'Esc', description: 'Close the composer, then the cursor' },
+  { keys: '?', description: 'This list' },
+];
 
 export function InstagramComments() {
   const [comments, setComments] = useState<IgComment[]>([]);
@@ -72,11 +100,20 @@ export function InstagramComments() {
   const [live, setLive] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState<BulkAction | null>(null);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [posts, setPosts] = useState<IgMedia[]>([]);
 
   // Set when arriving from a post card on the Posts page. Narrows the
   // queue to that post so "12 comments waiting" leads somewhere exact
-  // rather than dumping the agent into the full list.
-  const mediaId = useSearchParams().get('media_id');
+  // rather than dumping the agent into the full list. Held in state as
+  // well so the in-page picker can change it without a navigation.
+  const mediaIdParam = useSearchParams().get('media_id');
+  const [mediaId, setMediaId] = useState<string | null>(mediaIdParam);
+  useEffect(() => setMediaId(mediaIdParam), [mediaIdParam]);
+
+  // Cards register themselves so a keystroke can drive the focused one.
+  const handlesRef = useRef(new Map<string, CommentCardHandle>());
 
   useEffect(() => {
     const timer = setTimeout(
@@ -147,6 +184,120 @@ export function InstagramComments() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Posts for the in-page filter. One request, cached for the session:
+  // the picker only needs enough to name a post and show its backlog,
+  // and re-fetching on every filter change would be a request per
+  // keystroke for a list that barely changes.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/instagram/media?limit=100', {
+          cache: 'no-store',
+        });
+        const data: IgMediaListResponse = await res.json();
+        if (!cancelled) setPosts(data.media ?? []);
+      } catch {
+        // Non-fatal: the picker degrades to "All posts" and the queue
+        // still works. Not worth a toast on a page load.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The cursor is an index, so it has to come back in range whenever the
+  // list gets shorter — otherwise `r` fires on nothing after a filter
+  // change or a delete.
+  useEffect(() => {
+    setFocusedIndex((current) =>
+      current >= comments.length ? comments.length - 1 : current
+    );
+  }, [comments.length]);
+
+  /**
+   * Queue shortcuts.
+   *
+   * Bound to the window rather than a container, because the cursor has
+   * to survive clicking a button — an agent who hides a comment with the
+   * mouse and then presses `j` means "next", not "nothing happened".
+   */
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // Never steal a key from something being typed into. The composer
+      // owns ⌘↵ and Esc itself.
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.isContentEditable ||
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      ) {
+        return;
+      }
+      // A card with an open composer keeps its keys, even if focus has
+      // wandered off the textarea.
+      const focused = comments[focusedIndex];
+      const handle = focused
+        ? handlesRef.current.get(focused.id)
+        : undefined;
+      if (handle?.isComposing()) return;
+
+      switch (event.key) {
+        case 'j':
+        case 'ArrowDown':
+          event.preventDefault();
+          setFocusedIndex((i) => Math.min(i + 1, comments.length - 1));
+          return;
+        case 'k':
+        case 'ArrowUp':
+          event.preventDefault();
+          // -1 parks the cursor above the list rather than wrapping,
+          // which is how you get out without reaching for the mouse.
+          setFocusedIndex((i) => Math.max(i - 1, comments.length ? 0 : -1));
+          return;
+        case 'Escape':
+          setFocusedIndex(-1);
+          return;
+        case '?':
+          event.preventDefault();
+          setShowShortcuts((open) => !open);
+          return;
+      }
+
+      if (!focused || !handle) return;
+
+      switch (event.key) {
+        case 'r':
+          event.preventDefault();
+          handle.openPublicReply();
+          break;
+        case 'd':
+          event.preventDefault();
+          handle.openPrivateReply();
+          break;
+        case 'h':
+          event.preventDefault();
+          handle.toggleHide();
+          break;
+        case 'x':
+          event.preventDefault();
+          setSelected((current) => {
+            const next = new Set(current);
+            if (next.has(focused.id)) next.delete(focused.id);
+            else next.add(focused.id);
+            return next;
+          });
+          break;
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [comments, focusedIndex]);
 
   // `load` is re-created on every filter change, so keep the poll on a
   // ref instead of restarting the interval each time.
@@ -264,10 +415,19 @@ export function InstagramComments() {
 
   const filterSummary = useMemo(() => {
     const parts: string[] = [];
-    if (mediaId) parts.push('one post');
+    if (mediaId) {
+      const post = posts.find((p) => p.ig_media_id === mediaId);
+      parts.push(post ? postLabel(post) : 'one post');
+    }
     if (search) parts.push(`“${search}”`);
     return parts.join(' · ');
-  }, [mediaId, search]);
+  }, [mediaId, search, posts]);
+
+  function clearFilters() {
+    setSearchInput('');
+    setMediaId(null);
+    setFocusedIndex(-1);
+  }
 
   return (
     <div className="space-y-4">
@@ -284,7 +444,7 @@ export function InstagramComments() {
               <Link
                 href="/channels/instagram/comments"
                 className="text-primary hover:underline"
-                onClick={() => setSearchInput('')}
+                onClick={clearFilters}
               >
                 clear
               </Link>
@@ -310,6 +470,16 @@ export function InstagramComments() {
               )}
             />
             Live
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowShortcuts(true)}
+            title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
+          >
+            <Keyboard className="size-4" />
           </Button>
 
           <Button
@@ -386,6 +556,49 @@ export function InstagramComments() {
         </div>
 
         <Select
+          value={mediaId ?? 'all'}
+          onValueChange={(value) => {
+            setMediaId(value === 'all' ? null : value);
+            setSelected(new Set());
+            setFocusedIndex(-1);
+          }}
+        >
+          <SelectTrigger className="w-[190px]">
+            <ImageIcon className="text-muted-foreground size-4" />
+            <SelectValue>
+              {() => {
+                if (!mediaId) return 'All posts';
+                const post = posts.find((p) => p.ig_media_id === mediaId);
+                return post ? postLabel(post) : 'One post';
+              }}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent className="max-h-80">
+            <SelectItem value="all">All posts</SelectItem>
+            {posts.map((post) => (
+              <SelectItem key={post.ig_media_id} value={post.ig_media_id}>
+                <span className="flex items-center gap-2">
+                  {post.thumbnail_url || post.media_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={post.thumbnail_url ?? post.media_url ?? ''}
+                      alt=""
+                      className="size-6 shrink-0 rounded object-cover"
+                    />
+                  ) : (
+                    <span className="bg-muted size-6 shrink-0 rounded" />
+                  )}
+                  <span className="truncate">{postLabel(post)}</span>
+                  {post.open_comments > 0 && (
+                    <Badge variant="secondary">{post.open_comments}</Badge>
+                  )}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
           value={sort}
           onValueChange={(value) =>
             setSort(value === 'oldest' ? 'oldest' : 'newest')
@@ -427,6 +640,20 @@ export function InstagramComments() {
 
           {selected.size > 0 && (
             <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={bulkBusy !== null}
+                onClick={() => runBulk('resolve')}
+                title="Clear these out of Needs reply. Local only — nothing is sent to Instagram."
+              >
+                {bulkBusy === 'resolve' ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Check className="size-4" />
+                )}
+                Mark replied
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -492,11 +719,16 @@ export function InstagramComments() {
       ) : (
         <>
           <ul className="space-y-3">
-            {comments.map((comment) => (
+            {comments.map((comment, index) => (
               <InstagramCommentCard
                 key={comment.id}
                 comment={comment}
                 onChange={() => void load(true)}
+                focused={index === focusedIndex}
+                registerHandle={(handle) => {
+                  if (handle) handlesRef.current.set(comment.id, handle);
+                  else handlesRef.current.delete(comment.id);
+                }}
                 selected={selected.has(comment.id)}
                 onSelectedChange={(next) =>
                   setSelected((current) => {
@@ -523,8 +755,60 @@ export function InstagramComments() {
               </Button>
             </div>
           )}
+
+          <p className="text-muted-foreground text-center text-xs">
+            Press <Kbd>j</Kbd> / <Kbd>k</Kbd> to move through the queue,{' '}
+            <Kbd>?</Kbd> for the rest.
+          </p>
         </>
       )}
+
+      <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
+        <DialogContent className="border-border bg-popover sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-popover-foreground">
+              Keyboard shortcuts
+            </DialogTitle>
+          </DialogHeader>
+          <ul className="space-y-2">
+            {SHORTCUTS.map((shortcut) => (
+              <li
+                key={shortcut.keys}
+                className="flex items-center justify-between gap-4 text-sm"
+              >
+                <span className="text-muted-foreground">
+                  {shortcut.description}
+                </span>
+                <Kbd>{shortcut.keys}</Kbd>
+              </li>
+            ))}
+          </ul>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+function Kbd({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="border-border bg-muted text-foreground rounded border px-1.5 py-0.5 font-mono text-xs">
+      {children}
+    </kbd>
+  );
+}
+
+/**
+ * A post named for a dropdown row.
+ *
+ * Captions are the only human-readable thing Instagram gives a post, and
+ * plenty of posts have none — hence the media-type fallback, so the
+ * picker never renders a row of blanks.
+ */
+function postLabel(post: IgMedia): string {
+  const caption = post.caption?.trim().replace(/\s+/g, ' ');
+  if (caption) {
+    return caption.length > 40 ? `${caption.slice(0, 40)}…` : caption;
+  }
+  const kind = post.media_product_type || post.media_type || 'Post';
+  return kind.charAt(0) + kind.slice(1).toLowerCase().replace(/_/g, ' ');
 }

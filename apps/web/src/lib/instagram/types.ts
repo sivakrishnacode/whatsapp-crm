@@ -77,6 +77,32 @@ export interface IgComment {
   /** Answers already posted under this comment, oldest first. */
   replies: IgCommentReply[];
   contact: { id: string; name: string | null } | null;
+  /** Set when a Comment Funnel answered this comment. See IgFunnelRun. */
+  funnel_run: IgFunnelRun | null;
+}
+
+/** awaiting_optin → awaiting_follow → delivered. `failed` is terminal. */
+export type IgFunnelRunState =
+  | 'awaiting_optin'
+  | 'awaiting_follow'
+  | 'delivered'
+  | 'failed';
+
+/**
+ * One commenter's journey through a funnel, as far as the queue needs
+ * to know: which funnel, how far they got, and where the DM thread is.
+ */
+export interface IgFunnelRun {
+  ig_comment_id: string;
+  state: IgFunnelRunState;
+  /**
+   * `is_user_follow_business` when the gate was evaluated. NULL means it
+   * was never determined — the lookup failed, or the gate was off.
+   */
+  was_following: boolean | null;
+  delivered_at: string | null;
+  conversation_id: string | null;
+  funnel: { id: string; name: string } | null;
 }
 
 export interface IgCommentListResponse {

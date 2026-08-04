@@ -4,9 +4,11 @@ import {
   PRIVATE_REPLY_WINDOW_MS,
   formatCount,
   formatCountLabel,
+  funnelStateLabel,
   mediaKind,
   mediaPreviewUrl,
   privateReplyBlock,
+  privateReplyBlockReason,
 } from './format';
 import type { IgComment, IgMedia } from './types';
 
@@ -48,6 +50,7 @@ function comment(overrides: Partial<IgComment> = {}): IgComment {
     media: null,
     replies: [],
     contact: null,
+    funnel_run: null,
     ...overrides,
   };
 }
@@ -180,5 +183,50 @@ describe('privateReplyBlock', () => {
     // An unknown age is not evidence the window closed; let Meta be the
     // one to refuse it rather than hiding the affordance on a guess.
     expect(privateReplyBlock(comment({ commented_at: null }))).toBeNull();
+  });
+
+  it('blames the funnel when a funnel spent the private reply', () => {
+    // Same block, different story. "A private reply was already sent"
+    // reads as an accusation when nobody on the team sent anything.
+    const block = privateReplyBlock(
+      comment({
+        private_replied_at: '2026-01-01T00:00:00Z',
+        funnel_run: {
+          ig_comment_id: 'c1',
+          state: 'delivered',
+          was_following: false,
+          delivered_at: '2026-01-01T00:00:00Z',
+          conversation_id: 'conv-1',
+          funnel: { id: 'f1', name: 'Reel - AI lab' },
+        },
+      })
+    );
+
+    expect(block).toBe('funnel-claimed');
+    expect(privateReplyBlockReason(block, 'Reel - AI lab')).toContain(
+      'Reel - AI lab'
+    );
+  });
+
+  it('still names a cause when the funnel has been deleted', () => {
+    expect(privateReplyBlockReason('funnel-claimed', null)).toBe(
+      'A comment funnel used this comment’s one private reply.'
+    );
+  });
+});
+
+describe('funnelStateLabel', () => {
+  it('describes every state a run can be in', () => {
+    // Exhaustive on purpose: a new state added to the union without a
+    // label here would otherwise render as blank text in the queue.
+    const states = [
+      'awaiting_optin',
+      'awaiting_follow',
+      'delivered',
+      'failed',
+    ] as const;
+    for (const state of states) {
+      expect(funnelStateLabel(state)).toBeTruthy();
+    }
   });
 });
