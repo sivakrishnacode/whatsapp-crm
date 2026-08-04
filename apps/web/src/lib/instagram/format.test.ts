@@ -7,6 +7,7 @@ import {
   funnelStateLabel,
   mediaKind,
   mediaPreviewUrl,
+  postLabel,
   privateReplyBlock,
   privateReplyBlockReason,
 } from './format';
@@ -124,6 +125,44 @@ describe('mediaKind', () => {
     expect(
       mediaKind({ media_type: null, media_product_type: null }).label
     ).toBe('Photo');
+  });
+});
+
+describe('postLabel', () => {
+  it('names a post by its caption', () => {
+    expect(postLabel(media({ caption: '  New   drop 🔥  ' }))).toBe(
+      'New drop 🔥'
+    );
+  });
+
+  it('truncates a caption that would blow out a dropdown row', () => {
+    const label = postLabel(media({ caption: 'a'.repeat(80) }));
+    expect(label).toHaveLength(41);
+    expect(label.endsWith('…')).toBe(true);
+  });
+
+  it('falls back to the kind rather than rendering a blank row', () => {
+    expect(postLabel(media({ caption: null, media_product_type: 'REELS' }))).toBe(
+      'Reels'
+    );
+    expect(
+      postLabel(
+        media({
+          caption: '   ',
+          media_product_type: null,
+          media_type: 'CAROUSEL_ALBUM',
+        })
+      )
+    ).toBe('Carousel album');
+  });
+
+  it('never falls back to the media id', () => {
+    // An 18-digit number identifies nothing to a human.
+    const label = postLabel(
+      media({ caption: null, media_product_type: null, media_type: null })
+    );
+    expect(label).toBe('Post');
+    expect(label).not.toContain('m1');
   });
 });
 

@@ -8,7 +8,6 @@ import {
   Check,
   EyeOff,
   Eye,
-  Image as ImageIcon,
   Keyboard,
   Loader2,
   MessageCircle,
@@ -36,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { postLabel } from '@/lib/instagram/format';
 import type {
   IgComment,
   IgCommentListResponse,
@@ -45,6 +45,7 @@ import type {
 } from '@/lib/instagram/types';
 import { cn } from '@/lib/utils';
 
+import { InstagramPostPicker } from './instagram-post-picker';
 import { InstagramCommentCard } from './instagram-comment-card';
 import type { CommentCardHandle } from './instagram-comment-card';
 
@@ -555,48 +556,16 @@ export function InstagramComments() {
           )}
         </div>
 
-        <Select
-          value={mediaId ?? 'all'}
-          onValueChange={(value) => {
-            setMediaId(value === 'all' ? null : value);
+        <InstagramPostPicker
+          posts={posts}
+          value={mediaId}
+          onChange={(next) => {
+            setMediaId(next);
             setSelected(new Set());
             setFocusedIndex(-1);
           }}
-        >
-          <SelectTrigger className="w-[190px]">
-            <ImageIcon className="text-muted-foreground size-4" />
-            <SelectValue>
-              {() => {
-                if (!mediaId) return 'All posts';
-                const post = posts.find((p) => p.ig_media_id === mediaId);
-                return post ? postLabel(post) : 'One post';
-              }}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent className="max-h-80">
-            <SelectItem value="all">All posts</SelectItem>
-            {posts.map((post) => (
-              <SelectItem key={post.ig_media_id} value={post.ig_media_id}>
-                <span className="flex items-center gap-2">
-                  {post.thumbnail_url || post.media_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={post.thumbnail_url ?? post.media_url ?? ''}
-                      alt=""
-                      className="size-6 shrink-0 rounded object-cover"
-                    />
-                  ) : (
-                    <span className="bg-muted size-6 shrink-0 rounded" />
-                  )}
-                  <span className="truncate">{postLabel(post)}</span>
-                  {post.open_comments > 0 && (
-                    <Badge variant="secondary">{post.open_comments}</Badge>
-                  )}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          className="w-[190px]"
+        />
 
         <Select
           value={sort}
@@ -797,18 +766,3 @@ function Kbd({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * A post named for a dropdown row.
- *
- * Captions are the only human-readable thing Instagram gives a post, and
- * plenty of posts have none — hence the media-type fallback, so the
- * picker never renders a row of blanks.
- */
-function postLabel(post: IgMedia): string {
-  const caption = post.caption?.trim().replace(/\s+/g, ' ');
-  if (caption) {
-    return caption.length > 40 ? `${caption.slice(0, 40)}…` : caption;
-  }
-  const kind = post.media_product_type || post.media_type || 'Post';
-  return kind.charAt(0) + kind.slice(1).toLowerCase().replace(/_/g, ' ');
-}

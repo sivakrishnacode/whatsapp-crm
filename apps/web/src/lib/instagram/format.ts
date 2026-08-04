@@ -94,6 +94,27 @@ export function mediaKind(media: {
   return { label: 'Photo', isVideo: false, isCarousel: false };
 }
 
+/**
+ * A post named for a dropdown row.
+ *
+ * Captions are the only human-readable thing Instagram gives a post, and
+ * plenty of posts have none — hence the media-type fallback, so a picker
+ * never renders a column of blanks. Never the media id: an 18-digit
+ * number identifies nothing to a human.
+ */
+export function postLabel(post: {
+  caption: string | null;
+  media_product_type: string | null;
+  media_type: string | null;
+}): string {
+  const caption = post.caption?.trim().replace(/\s+/g, ' ');
+  if (caption) {
+    return caption.length > 40 ? `${caption.slice(0, 40)}…` : caption;
+  }
+  const kind = post.media_product_type || post.media_type || 'Post';
+  return kind.charAt(0) + kind.slice(1).toLowerCase().replace(/_/g, ' ');
+}
+
 /** Best available preview URL, largest first. */
 export function mediaPreviewUrl(media: IgMedia): string | null {
   return (

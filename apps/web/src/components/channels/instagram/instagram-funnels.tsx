@@ -19,7 +19,14 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 
 import { REPLY_DELAY_OPTIONS } from '@/lib/instagram/automation';
-import type { IgFunnel, IgFunnelDraft } from '@/lib/instagram/types';
+import type {
+  IgFunnel,
+  IgFunnelDraft,
+  IgMedia,
+  IgMediaListResponse,
+} from '@/lib/instagram/types';
+
+import { InstagramPostPicker } from './instagram-post-picker';
 
 type Funnel = IgFunnel;
 type Draft = IgFunnelDraft;
@@ -299,10 +306,40 @@ function FunnelEditor({
 }) {
   const [form, setForm] = useState<Draft>(draft);
   const [saving, setSaving] = useState(false);
+  const [posts, setPosts] = useState<IgMedia[]>([]);
+  const [loadingPosts, setLoadingPosts] = useState(true);
 
   // `reward_buttons` is nullable on the wire (a row written before the
   // column had a default), and the editor treats it as a list throughout.
   const rewardButtons = form.reward_buttons ?? [];
+
+  // Loaded here rather than in the list above: the picker is the only
+  // thing that needs them, and the list is the common case.
+  //
+  // One page of 100, newest first — enough to pick from without paging a
+  // dropdown. A funnel already scoped to something older than that is not
+  // lost; the picker keeps an unrecognised id as its own row.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/instagram/media?limit=100', {
+          cache: 'no-store',
+        });
+        const data: IgMediaListResponse = await res.json();
+        if (!cancelled) setPosts(data.media ?? []);
+      } catch {
+        // Non-fatal: the picker still offers "All posts" and keeps
+        // whatever this funnel was already scoped to.
+        if (!cancelled) setPosts([]);
+      } finally {
+        if (!cancelled) setLoadingPosts(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -390,16 +427,18 @@ function FunnelEditor({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="media">Post ID</Label>
-          <Input
+          <Label htmlFor="media">Post</Label>
+          <InstagramPostPicker
             id="media"
-            value={form.ig_media_id ?? ''}
-            placeholder="Leave blank for every post"
-            onChange={(e) => set('ig_media_id', e.target.value || null)}
+            posts={posts}
+            loading={loadingPosts}
+            value={form.ig_media_id}
+            onChange={(next) => set('ig_media_id', next)}
+            allLabel="All posts — every post, present and future"
           />
           <p className="text-muted-foreground text-xs">
-            Copy it from the Posts page. A funnel for one post beats a
-            leave-it-on-everything funnel, so both can run at once.
+            A funnel for one post beats the all-posts funnel, so both can run at
+            once — the all-posts one is the fallback.
           </p>
         </div>
 
