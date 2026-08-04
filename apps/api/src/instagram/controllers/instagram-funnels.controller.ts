@@ -50,7 +50,7 @@ export class InstagramFunnelsController {
   async getEnabled(@CurrentAccount() account: SupabaseAccountContext) {
     const config = await this.prisma.instagram_config.findUnique({
       where: { account_id: account.accountId },
-      select: { comment_funnels_enabled: true },
+      select: { comment_funnels_enabled: true, ig_username: true },
     });
     return {
       // No Instagram connection means the feature cannot run, which
@@ -58,6 +58,10 @@ export class InstagramFunnelsController {
       // toggle would have to special-case.
       enabled: config?.comment_funnels_enabled ?? false,
       connected: config != null,
+      // Returned here rather than from a second request: the automation
+      // editor previews the reply under the business's own handle, and
+      // "your_account" in a proof-reading view defeats the point of it.
+      username: config?.ig_username ?? null,
     };
   }
 
@@ -128,7 +132,10 @@ export class InstagramFunnelsController {
         reward_text: body.reward_text,
         reward_buttons: (body.reward_buttons ??
           []) as unknown as Prisma.InputJsonValue,
-        public_reply_text: body.public_reply_text || null,
+        public_reply_texts: normaliseReplyVariants(body.public_reply_texts),
+        ...(body.reply_delay_seconds !== undefined
+          ? { reply_delay_seconds: body.reply_delay_seconds }
+          : {}),
         is_active: body.is_active ?? false,
       },
     });
@@ -188,8 +195,15 @@ export class InstagramFunnelsController {
                 body.reward_buttons as unknown as Prisma.InputJsonValue,
             }
           : {}),
-        ...(body.public_reply_text !== undefined
-          ? { public_reply_text: body.public_reply_text || null }
+        ...(body.public_reply_texts !== undefined
+          ? {
+              public_reply_texts: normaliseReplyVariants(
+                body.public_reply_texts,
+              ),
+            }
+          : {}),
+        ...(body.reply_delay_seconds !== undefined
+          ? { reply_delay_seconds: body.reply_delay_seconds }
           : {}),
         ...(body.is_active !== undefined ? { is_active: body.is_active } : {}),
         updated_at: new Date(),
@@ -291,6 +305,29 @@ export class InstagramFunnelsController {
       );
     }
   }
+}
+
+/**
+ * Trim, drop blanks, de-duplicate exactly.
+ *
+ * Blanks are dropped rather than rejected because the editor lets a
+ * merchant add an empty variant row and then change their mind — losing
+ * the whole save to a row they had already abandoned is a bad trade.
+ * De-duplication is case-SENSITIVE, unlike keywords: "Check your DMs"
+ * and "check your dms" are two legitimately different-looking replies,
+ * and variety is the entire point of the list.
+ */
+function normaliseReplyVariants(variants: string[] | undefined): string[] {
+  if (!variants) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of variants) {
+    const trimmed = raw.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 /** Trim, drop blanks, de-duplicate case-insensitively. */

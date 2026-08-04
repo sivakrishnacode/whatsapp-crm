@@ -1705,8 +1705,13 @@ model instagram_comment_funnels {
   /// Up to 3 {label,url} link-out buttons, sent as a web_url button
   /// template. Not postbacks — tapping one ends the funnel.
   reward_buttons      Json                            @default("[]")
-  /// Optional public reply on the comment itself ("check your DMs").
-  public_reply_text   String?
+  /// Public replies on the comment itself ("check your DMs"), rotated
+  /// per match — hundreds of identical replies under one post is
+  /// Instagram's own comment-spam signal. Empty = answer privately only.
+  public_reply_texts  String[]                        @default([])
+  /// Seconds to wait before the opening DM. 0 sends inline on the
+  /// webhook path; higher parks it on a delayed queue job. Max 3600.
+  reply_delay_seconds Int                             @default(0)
   is_active           Boolean                         @default(false)
   matched_count       Int                             @default(0)
   delivered_count     Int                             @default(0)
@@ -1717,6 +1722,7 @@ model instagram_comment_funnels {
   runs                instagram_comment_funnel_runs[]
 
   @@index([account_id, ig_media_id], map: "idx_ig_comment_funnels_active", where: raw("(is_active = true)"))
+  @@index([account_id, ig_media_id], map: "idx_ig_comment_funnels_account_media")
   @@index([account_id, updated_at(sort: Desc)], map: "idx_ig_comment_funnels_account_updated")
   @@schema("public")
 }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
 
 vi.mock('../ig-api.util', () => ({
   getUserProfile: vi.fn(),
@@ -11,8 +12,10 @@ import {
   matchesKeywords,
   parsePayload,
   parseRewardButtons,
+  pickPublicReply,
 } from './comment-funnel.service';
 import type { PrismaService } from '../../prisma/prisma.service';
+import type { InstagramConnectService } from './instagram-connect.service';
 import type { InstagramSendService } from './instagram-send.service';
 import {
   getUserProfile,
@@ -41,7 +44,9 @@ function makeFunnel(over: Record<string, unknown> = {}) {
     follow_button_label: 'I followed you! ✅',
     reward_text: 'Here you go 🎁',
     reward_buttons: [{ label: 'Click here!', url: 'https://example.com' }],
-    public_reply_text: null,
+    public_reply_texts: [],
+    reply_delay_seconds: 0,
+    matched_count: 0,
     is_active: true,
     ...over,
   };
@@ -60,6 +65,7 @@ function makePrisma(
   const funnelUpdates: Array<Record<string, unknown>> = [];
   const runUpdates: Array<Record<string, unknown>> = [];
   const commentUpdates: Array<Record<string, unknown>> = [];
+  const runCreates: Array<Record<string, unknown>> = [];
 
   const prisma = {
     instagram_config: {
@@ -87,11 +93,12 @@ function makePrisma(
       }),
     },
     instagram_comment_funnel_runs: {
-      create: vi.fn(() =>
-        opts.createThrows
+      create: vi.fn(({ data }: never) => {
+        runCreates.push(data as Record<string, unknown>);
+        return opts.createThrows
           ? Promise.reject(Object.assign(new Error('dup'), opts.createThrows))
-          : Promise.resolve({ id: RUN_ID }),
-      ),
+          : Promise.resolve({ id: RUN_ID });
+      }),
       findFirst: vi.fn(() => Promise.resolve(opts.run ?? null)),
       update: vi.fn(({ data }: never) => {
         runUpdates.push(data as Record<string, unknown>);
@@ -100,7 +107,7 @@ function makePrisma(
     },
   };
 
-  return { prisma, funnelUpdates, runUpdates, commentUpdates };
+  return { prisma, funnelUpdates, runUpdates, commentUpdates, runCreates };
 }
 
 function makeSend() {
@@ -115,10 +122,40 @@ function makeSend() {
   };
 }
 
-function build(prisma: unknown, send: unknown) {
+function makeConnect(
+  config: unknown = { igUserId: 'ig-biz', accessToken: 'tok', userId: OWNER },
+) {
+  return { loadUsableConfig: vi.fn(() => Promise.resolve(config)) };
+}
+
+function makeQueue(addThrows = false) {
+  // Typed on the mock rather than the implementation: a bare
+  // `vi.fn(() => …)` infers a zero-arity signature, so the assertions
+  // could not read `calls[0][1]` — and naming the parameters just to
+  // widen it trips no-unused-vars.
+  const add: Mock<
+    (name: string, data: unknown, opts?: unknown) => Promise<{ id: string }>
+  > = vi.fn();
+  add.mockImplementation(() =>
+    addThrows
+      ? Promise.reject(new Error('redis down'))
+      : Promise.resolve({ id: 'job-1' }),
+  );
+  return { add };
+}
+
+function build(
+  prisma: unknown,
+  send: unknown,
+  extra: { connect?: unknown; queue?: unknown } = {},
+) {
   return new CommentFunnelService(
     prisma as PrismaService,
     send as InstagramSendService,
+    (extra.connect ?? makeConnect()) as InstagramConnectService,
+    // The queue is only reached by funnels with a reply delay; the
+    // default double throws loudly if an undelayed test touches it.
+    (extra.queue ?? makeQueue()) as never,
   );
 }
 
@@ -217,6 +254,36 @@ describe('parseRewardButtons', () => {
   });
 });
 
+describe('pickPublicReply', () => {
+  const variants = ['Sent ✅', 'Check DM 📩', 'DMed you!'];
+
+  it('round-robins through the variants', () => {
+    expect(variants.map((_, i) => pickPublicReply(variants, i))).toEqual(
+      variants,
+    );
+    // And wraps, rather than falling off the end.
+    expect(pickPublicReply(variants, 3)).toBe('Sent ✅');
+    expect(pickPublicReply(variants, 7)).toBe('Check DM 📩');
+  });
+
+  it('means "private only" when there is nothing to post', () => {
+    expect(pickPublicReply([], 0)).toBeNull();
+    expect(pickPublicReply(null, 0)).toBeNull();
+    expect(pickPublicReply(undefined, 4)).toBeNull();
+  });
+
+  it('skips blanks rather than posting one', () => {
+    // A blank entry must not become a turn where nothing is said.
+    expect(pickPublicReply(['', '  ', 'Check DM 📩'], 0)).toBe('Check DM 📩');
+    expect(pickPublicReply(['', '  '], 2)).toBeNull();
+  });
+
+  it('cannot index off the front of the list', () => {
+    expect(pickPublicReply(variants, -1)).toBe('Sent ✅');
+    expect(pickPublicReply(variants, Number.NaN)).toBe('Sent ✅');
+  });
+});
+
 // ============================================================
 // onComment
 // ============================================================
@@ -283,7 +350,7 @@ describe('CommentFunnelService — a comment arrives', () => {
 
   it('posts the public reply when one is configured', async () => {
     const { prisma } = makePrisma({
-      funnels: [makeFunnel({ public_reply_text: 'Check your DMs 📩' })],
+      funnels: [makeFunnel({ public_reply_texts: ['Check your DMs 📩'] })],
     });
     await build(prisma, makeSend()).onComment(commentArgs());
 
@@ -292,12 +359,30 @@ describe('CommentFunnelService — a comment arrives', () => {
     );
   });
 
+  it('rotates the public reply on the funnel’s match count', async () => {
+    // Two funnels differing only in how many times they have already
+    // matched: the third variant is what the third match must post.
+    const { prisma } = makePrisma({
+      funnels: [
+        makeFunnel({
+          matched_count: 2,
+          public_reply_texts: ['Sent ✅', 'Check DM 📩', 'DMed you!'],
+        }),
+      ],
+    });
+    await build(prisma, makeSend()).onComment(commentArgs());
+
+    expect(vi.mocked(replyToComment)).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'DMed you!' }),
+    );
+  });
+
   it('keeps the DM when the public reply fails', async () => {
     // The private reply is already spent by then; a failed public
     // comment must not roll it back.
     vi.mocked(replyToComment).mockRejectedValue(new Error('rate limited'));
     const { prisma, commentUpdates } = makePrisma({
-      funnels: [makeFunnel({ public_reply_text: 'Check your DMs 📩' })],
+      funnels: [makeFunnel({ public_reply_texts: ['Check your DMs 📩'] })],
     });
 
     const claimed = await build(prisma, makeSend()).onComment(commentArgs());
@@ -319,6 +404,233 @@ describe('CommentFunnelService — a comment arrives', () => {
       state: 'failed',
       last_error: 'comment gone',
     });
+  });
+});
+
+// ============================================================
+// Precedence when two funnels cover the same post
+// ============================================================
+
+describe('CommentFunnelService — two funnels cover one post', () => {
+  it('asks the database for post-scoped funnels FIRST', async () => {
+    // The precedence rule lives in an ORDER BY, so this asserts the query
+    // rather than the result — the other tests in this file stub findMany
+    // and would happily pass with the ordering inverted.
+    //
+    // nulls:'last' is the whole point: ig_media_id is NULL for the
+    // account-wide funnel and Postgres sorts NULLS FIRST on DESC, so a
+    // plain 'desc' silently puts the catch-all in front.
+    const { prisma } = makePrisma();
+    await build(prisma, makeSend()).onComment(commentArgs());
+
+    expect(prisma.instagram_comment_funnels.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [
+          { ig_media_id: { sort: 'desc', nulls: 'last' } },
+          { created_at: 'asc' },
+        ],
+      }),
+    );
+  });
+
+  it('runs the post’s own funnel, not the catch-all', async () => {
+    // Candidates arrive in the DB's order; the post-scoped one is first.
+    const own = makeFunnel({ id: 'own', ig_media_id: MEDIA_ID, keywords: [] });
+    const global = makeFunnel({
+      id: 'global',
+      ig_media_id: null,
+      keywords: ['price'],
+    });
+    const { prisma, funnelUpdates, runCreates } = makePrisma({
+      funnels: [own, global],
+    });
+
+    await build(prisma, makeSend()).onComment(commentArgs('price please'));
+
+    // Both would match "price please" — the post's own funnel takes it.
+    expect(runCreates).toHaveLength(1);
+    expect(runCreates[0].funnel_id).toBe('own');
+    // And only one funnel is credited, so only one DM went out.
+    expect(funnelUpdates).toHaveLength(1);
+  });
+
+  it('falls back to the catch-all when the post’s funnel does not match', async () => {
+    const own = makeFunnel({
+      id: 'own',
+      ig_media_id: MEDIA_ID,
+      keywords: ['link'],
+    });
+    const global = makeFunnel({
+      id: 'global',
+      ig_media_id: null,
+      keywords: ['price'],
+    });
+    const { prisma, runCreates } = makePrisma({ funnels: [own, global] });
+
+    await build(prisma, makeSend()).onComment(commentArgs('price please'));
+
+    expect(runCreates).toHaveLength(1);
+    expect(runCreates[0].funnel_id).toBe('global');
+  });
+
+  it('answers a comment once when neither funnel has keywords', async () => {
+    // The worst conflict: two catch-alls over the same post. One wins,
+    // one private reply is spent, nobody gets two DMs.
+    const own = makeFunnel({ id: 'own', ig_media_id: MEDIA_ID, keywords: [] });
+    const global = makeFunnel({
+      id: 'global',
+      ig_media_id: null,
+      keywords: [],
+    });
+    const { prisma, runCreates } = makePrisma({ funnels: [own, global] });
+
+    await build(prisma, makeSend()).onComment(commentArgs('anything'));
+
+    expect(vi.mocked(sendPrivateReply)).toHaveBeenCalledTimes(1);
+    expect(runCreates).toHaveLength(1);
+  });
+});
+
+// ============================================================
+// The reply delay
+// ============================================================
+
+describe('CommentFunnelService — a delayed funnel', () => {
+  it('parks the DM on the queue instead of sending it', async () => {
+    const { prisma } = makePrisma({
+      funnels: [makeFunnel({ reply_delay_seconds: 30 })],
+    });
+    const queue = makeQueue();
+
+    const claimed = await build(prisma, makeSend(), { queue }).onComment(
+      commentArgs(),
+    );
+
+    // Claimed, so the older automation cannot answer the same comment
+    // during the wait — but nothing has been sent yet.
+    expect(claimed).toBe(true);
+    expect(vi.mocked(sendPrivateReply)).not.toHaveBeenCalled();
+    expect(queue.add).toHaveBeenCalledWith(
+      'optin',
+      expect.objectContaining({ runId: RUN_ID, accountId: ACCOUNT }),
+      expect.objectContaining({ delay: 30_000, jobId: `optin:${RUN_ID}` }),
+    );
+  });
+
+  it('never puts the access token in the job payload', async () => {
+    // The job sits in Redis for up to an hour. A decrypted long-lived
+    // token in that payload is a credential nobody is auditing.
+    const { prisma } = makePrisma({
+      funnels: [makeFunnel({ reply_delay_seconds: 60 })],
+    });
+    const queue = makeQueue();
+
+    await build(prisma, makeSend(), { queue }).onComment(commentArgs());
+
+    expect(JSON.stringify(queue.add.mock.calls[0][1])).not.toContain('tok');
+  });
+
+  it('sends immediately when the queue is unreachable', async () => {
+    // A dropped job means someone commented, was claimed, and never
+    // heard back. Sooner than configured beats never.
+    const { prisma } = makePrisma({
+      funnels: [makeFunnel({ reply_delay_seconds: 30 })],
+    });
+
+    const claimed = await build(prisma, makeSend(), {
+      queue: makeQueue(true),
+    }).onComment(commentArgs());
+
+    expect(claimed).toBe(true);
+    expect(vi.mocked(sendPrivateReply)).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the parked DM when the delay elapses', async () => {
+    const { prisma, commentUpdates } = makePrisma({
+      run: { id: RUN_ID, state: 'awaiting_optin', funnel: makeFunnel() },
+    });
+
+    await build(prisma, makeSend()).runDelayedOptin({
+      runId: RUN_ID,
+      accountId: ACCOUNT,
+      commentRowId: COMMENT_ROW,
+      igCommentId: IG_COMMENT_ID,
+    });
+
+    expect(vi.mocked(sendPrivateReply)).toHaveBeenCalledTimes(1);
+    expect(commentUpdates[0].private_replied_at).toBeInstanceOf(Date);
+  });
+
+  it('does not send when the funnel was paused during the wait', async () => {
+    const { prisma, runUpdates } = makePrisma({
+      run: {
+        id: RUN_ID,
+        state: 'awaiting_optin',
+        funnel: makeFunnel({ is_active: false }),
+      },
+    });
+
+    await build(prisma, makeSend()).runDelayedOptin({
+      runId: RUN_ID,
+      accountId: ACCOUNT,
+      commentRowId: COMMENT_ROW,
+      igCommentId: IG_COMMENT_ID,
+    });
+
+    expect(vi.mocked(sendPrivateReply)).not.toHaveBeenCalled();
+    expect(runUpdates[0]).toMatchObject({ state: 'failed' });
+  });
+
+  it('does not spend a private reply an agent already used', async () => {
+    const { prisma, runUpdates } = makePrisma({
+      privateRepliedAt: new Date(),
+      run: { id: RUN_ID, state: 'awaiting_optin', funnel: makeFunnel() },
+    });
+
+    await build(prisma, makeSend()).runDelayedOptin({
+      runId: RUN_ID,
+      accountId: ACCOUNT,
+      commentRowId: COMMENT_ROW,
+      igCommentId: IG_COMMENT_ID,
+    });
+
+    expect(vi.mocked(sendPrivateReply)).not.toHaveBeenCalled();
+    expect(runUpdates[0]).toMatchObject({ state: 'failed' });
+  });
+
+  it('is silent about a run that already advanced', async () => {
+    // A tap can beat the delay. Not a fault, and not worth a failed row.
+    const { prisma, runUpdates } = makePrisma({
+      run: { id: RUN_ID, state: 'delivered', funnel: makeFunnel() },
+    });
+
+    await build(prisma, makeSend()).runDelayedOptin({
+      runId: RUN_ID,
+      accountId: ACCOUNT,
+      commentRowId: COMMENT_ROW,
+      igCommentId: IG_COMMENT_ID,
+    });
+
+    expect(vi.mocked(sendPrivateReply)).not.toHaveBeenCalled();
+    expect(runUpdates).toHaveLength(0);
+  });
+
+  it('parks a run whose connection died during the wait', async () => {
+    const { prisma, runUpdates } = makePrisma({
+      run: { id: RUN_ID, state: 'awaiting_optin', funnel: makeFunnel() },
+    });
+
+    await build(prisma, makeSend(), {
+      connect: makeConnect(null),
+    }).runDelayedOptin({
+      runId: RUN_ID,
+      accountId: ACCOUNT,
+      commentRowId: COMMENT_ROW,
+      igCommentId: IG_COMMENT_ID,
+    });
+
+    expect(vi.mocked(sendPrivateReply)).not.toHaveBeenCalled();
+    expect(runUpdates[0]).toMatchObject({ state: 'failed' });
   });
 });
 

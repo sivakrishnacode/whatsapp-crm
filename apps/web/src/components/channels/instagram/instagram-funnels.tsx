@@ -18,32 +18,11 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 
-interface RewardButton {
-  label: string;
-  url: string;
-}
+import { REPLY_DELAY_OPTIONS } from '@/lib/instagram/automation';
+import type { IgFunnel, IgFunnelDraft } from '@/lib/instagram/types';
 
-interface Funnel {
-  id: string;
-  name: string;
-  ig_media_id: string | null;
-  keywords: string[];
-  optin_text: string;
-  optin_button_label: string;
-  follow_gate_enabled: boolean;
-  follow_ask_text: string | null;
-  follow_button_label: string;
-  reward_text: string;
-  reward_buttons: RewardButton[];
-  public_reply_text: string | null;
-  is_active: boolean;
-  matched_count: number;
-  delivered_count: number;
-}
-
-type Draft = Omit<Funnel, 'id' | 'matched_count' | 'delivered_count'> & {
-  id?: string;
-};
+type Funnel = IgFunnel;
+type Draft = IgFunnelDraft;
 
 const BLANK: Draft = {
   name: '',
@@ -57,7 +36,8 @@ const BLANK: Draft = {
   follow_button_label: 'I followed you! ✅',
   reward_text: "🎁 Awesome! Here's everything you need!",
   reward_buttons: [{ label: 'Click here!', url: '' }],
-  public_reply_text: null,
+  public_reply_texts: ['Check your DMs 📩'],
+  reply_delay_seconds: 0,
   is_active: false,
 };
 
@@ -320,6 +300,10 @@ function FunnelEditor({
   const [form, setForm] = useState<Draft>(draft);
   const [saving, setSaving] = useState(false);
 
+  // `reward_buttons` is nullable on the wire (a row written before the
+  // column had a default), and the editor treats it as a list throughout.
+  const rewardButtons = form.reward_buttons ?? [];
+
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
@@ -340,10 +324,13 @@ function FunnelEditor({
         // Half-typed rows are dropped rather than sent — the API rejects
         // a blank URL, and losing the whole save to one empty row the
         // merchant had already abandoned is a miserable way to find out.
-        reward_buttons: form.reward_buttons.filter(
+        reward_buttons: rewardButtons.filter(
           (b) => b.label.trim() && b.url.trim()
         ),
-        public_reply_text: form.public_reply_text || null,
+        public_reply_texts: form.public_reply_texts
+          .map((t) => t.trim())
+          .filter(Boolean),
+        reply_delay_seconds: form.reply_delay_seconds,
         is_active: form.is_active,
       };
 
@@ -478,16 +465,49 @@ function FunnelEditor({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="public-reply">Public reply (optional)</Label>
+          <Label htmlFor="public-reply">Public replies (optional)</Label>
           <Input
             id="public-reply"
-            value={form.public_reply_text ?? ''}
-            placeholder="Check your DMs 📩"
-            onChange={(e) => set('public_reply_text', e.target.value || null)}
+            value={form.public_reply_texts.join(' | ')}
+            placeholder="Check your DMs 📩 | Sent ✅ | DMed you!"
+            onChange={(e) =>
+              set(
+                'public_reply_texts',
+                e.target.value
+                  .split('|')
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              )
+            }
           />
           <p className="text-muted-foreground text-xs">
             Posted under the post as a normal reply. Everyone else reading the
             comments sees it, which is most of why this pattern works.
+            Pipe-separated — several wordings are rotated one per comment, so a
+            busy post is not carrying a hundred identical replies.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Reply delay</Label>
+          <div className="flex flex-wrap gap-2">
+            {REPLY_DELAY_OPTIONS.map((option) => (
+              <Button
+                key={option.value}
+                size="sm"
+                variant={
+                  form.reply_delay_seconds === option.value
+                    ? 'secondary'
+                    : 'outline'
+                }
+                onClick={() => set('reply_delay_seconds', option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-muted-foreground text-xs">
+            Answering within a second is the tell that a robot did it.
           </p>
         </div>
       </section>
@@ -557,7 +577,7 @@ function FunnelEditor({
 
         <div className="space-y-2">
           <Label>Link buttons</Label>
-          {form.reward_buttons.map((button, i) => (
+          {rewardButtons.map((button, i) => (
             <div key={i} className="flex flex-wrap gap-2">
               <Input
                 className="w-40"
@@ -567,7 +587,7 @@ function FunnelEditor({
                 onChange={(e) =>
                   set(
                     'reward_buttons',
-                    form.reward_buttons.map((b, j) =>
+                    rewardButtons.map((b, j) =>
                       j === i ? { ...b, label: e.target.value } : b
                     )
                   )
@@ -580,7 +600,7 @@ function FunnelEditor({
                 onChange={(e) =>
                   set(
                     'reward_buttons',
-                    form.reward_buttons.map((b, j) =>
+                    rewardButtons.map((b, j) =>
                       j === i ? { ...b, url: e.target.value } : b
                     )
                   )
@@ -592,7 +612,7 @@ function FunnelEditor({
                 onClick={() =>
                   set(
                     'reward_buttons',
-                    form.reward_buttons.filter((_, j) => j !== i)
+                    rewardButtons.filter((_, j) => j !== i)
                   )
                 }
               >
@@ -600,13 +620,13 @@ function FunnelEditor({
               </Button>
             </div>
           ))}
-          {form.reward_buttons.length < 3 && (
+          {rewardButtons.length < 3 && (
             <Button
               size="sm"
               variant="outline"
               onClick={() =>
                 set('reward_buttons', [
-                  ...form.reward_buttons,
+                  ...rewardButtons,
                   { label: '', url: '' },
                 ])
               }

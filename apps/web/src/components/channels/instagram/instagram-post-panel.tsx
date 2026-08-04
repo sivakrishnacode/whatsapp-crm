@@ -18,6 +18,7 @@ import {
   PanelRight,
   Play,
   RefreshCw,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -38,6 +39,13 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Switch } from '@/components/ui/switch';
+import {
+  type PostAutomation,
+  automationActionLabel,
+  automationStateHint,
+  automationStateLabel,
+  triggerSummary,
+} from '@/lib/instagram/automation';
 import {
   formatAbsolute,
   formatCount,
@@ -80,6 +88,8 @@ export function InstagramPostPanel({
   open,
   onOpenChange,
   onChanged,
+  automation,
+  onAutomate,
 }: {
   media: IgMedia | null;
   open: boolean;
@@ -90,6 +100,10 @@ export function InstagramPostPanel({
    * an optimistic local state — so returning the reload promise matters.
    */
   onChanged: () => void | Promise<void>;
+  /** Resolved by the grid, which owns the funnel list. Null hides the row. */
+  automation?: PostAutomation | null;
+  /** Opens the full-screen automation editor for this post. */
+  onAutomate?: () => void;
 }) {
   const router = useRouter();
   const [comments, setComments] = useState<IgComment[]>([]);
@@ -446,6 +460,48 @@ export function InstagramPostPanel({
           Refresh
         </Button>
       </div>
+
+      {/* Automation before the comment switch: what answers this post's
+          comments is a bigger fact about it than whether comments are
+          allowed, and it is the reason most people opened the post. */}
+      {automation && onAutomate && (
+        <div
+          className={cn(
+            'flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2',
+            automation.state === 'live'
+              ? 'border-primary/30 bg-primary/5'
+              : 'border-border bg-muted/30'
+          )}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <Zap
+              className={cn(
+                'size-4 shrink-0',
+                automation.state === 'live'
+                  ? 'text-primary fill-current'
+                  : 'text-muted-foreground'
+              )}
+            />
+            <div className="min-w-0">
+              <p className="text-foreground text-sm">
+                {automationStateLabel(automation.state)}
+                {automation.funnel && (
+                  <span className="text-muted-foreground">
+                    {' · '}
+                    {triggerSummary(automation.funnel.keywords)}
+                  </span>
+                )}
+              </p>
+              <p className="text-muted-foreground text-xs">
+                {automationStateHint(automation)}
+              </p>
+            </div>
+          </div>
+          <Button size="sm" variant="outline" onClick={onAutomate}>
+            {automationActionLabel(automation)}
+          </Button>
+        </div>
+      )}
 
       <div className="border-border bg-muted/30 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">

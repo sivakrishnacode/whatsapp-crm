@@ -1,7 +1,10 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import type { instagram_comment_funnels } from '@prisma/client';
+import type { Queue } from 'bullmq';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { InstagramConnectService } from './instagram-connect.service';
 import { InstagramSendService } from './instagram-send.service';
 import {
   getUserProfile,
@@ -17,7 +20,35 @@ import {
  */
 const PAYLOAD_PREFIX = 'c2dm';
 
+/** Delayed opening DMs. See `reply_delay_seconds`. */
+export const IG_FUNNEL_QUEUE = 'ig-comment-funnel';
+
 export type FunnelStep = 'optin' | 'followed';
+
+/**
+ * A parked opening DM.
+ *
+ * Ids only — deliberately no access token. A delayed job sits in Redis
+ * for up to an hour, and a decrypted long-lived Instagram token in a
+ * queue payload is a credential at rest in a place nobody is auditing.
+ * The worker re-reads and re-decrypts it at send time, which also means
+ * a token refreshed during the wait is the one that gets used.
+ */
+export interface FunnelOptinJob {
+  runId: string;
+  accountId: string;
+  commentRowId: string;
+  igCommentId: string;
+}
+
+/** What `sendOptin` needs, whether it runs inline or from the worker. */
+interface OptinSendArgs {
+  accountId: string;
+  igUserId: string;
+  accessToken: string;
+  commentRowId: string;
+  igCommentId: string;
+}
 
 export interface FunnelCommentArgs {
   accountId: string;
@@ -80,6 +111,14 @@ export interface FunnelPostbackArgs {
  *   invisible, so failures are logged and parked on the run row
  *   (`state='failed'`, `last_error`) where the funnel's stats panel can
  *   show them.
+ *
+ * THE DELAY IS A QUEUE, NOT A SLEEP
+ *   `reply_delay_seconds` parks the opening DM on a delayed BullMQ job.
+ *   Sleeping on the webhook path would hold a request Meta has already
+ *   been answered on, and lose every pending reply on a deploy. The
+ *   run row is still created synchronously, before the job — it is what
+ *   claims the comment, and the delay must not open a window where two
+ *   funnels both think they have it.
  */
 @Injectable()
 export class CommentFunnelService {
@@ -88,6 +127,8 @@ export class CommentFunnelService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly send: InstagramSendService,
+    private readonly connect: InstagramConnectService,
+    @InjectQueue(IG_FUNNEL_QUEUE) private readonly queue: Queue,
   ) {}
 
   // ------------------------------------------------------------
@@ -159,55 +200,13 @@ export class CommentFunnelService {
         throw err;
       }
 
-      try {
-        await sendPrivateReply({
-          igUserId: args.igUserId,
-          accessToken: args.accessToken,
-          commentId: args.igCommentId,
-          text: funnel.optin_text,
-          quickReplies: [
-            {
-              title: funnel.optin_button_label,
-              payload: `${PAYLOAD_PREFIX}:${run.id}:optin`,
-            },
-          ],
-        });
-      } catch (err) {
-        await this.fail(run.id, err);
-        // Still claimed. The run exists and is visible in the funnel's
-        // stats as a failure; an automation quietly succeeding on top
-        // would hide that the funnel is broken.
-        return true;
-      }
-
-      // Spend the comment's single private reply, and record the send
-      // even though there is no conversation to hang a message on yet —
-      // the thread materialises when they tap.
-      await this.prisma.instagram_comments.update({
-        where: { id: args.commentRowId },
-        data: { private_replied_at: new Date(), updated_at: new Date() },
-      });
-
-      await this.prisma.instagram_comment_funnels.update({
-        where: { id: funnel.id },
-        data: { matched_count: { increment: 1 } },
-      });
-
-      // The public "check your DMs" reply. Non-fatal on purpose: the DM
-      // is the deliverable, and a failed public comment must not roll
-      // back a private reply that has already been spent.
-      if (funnel.public_reply_text?.trim()) {
-        try {
-          await replyToComment({
-            accessToken: args.accessToken,
-            commentId: args.igCommentId,
-            message: funnel.public_reply_text,
-          });
-        } catch (err) {
-          this.logger.warn(
-            `Funnel public reply failed (non-fatal): ${String(err)}`,
-          );
-        }
+      // Claimed either way from here — the run row exists. A delayed
+      // funnel returns before sending anything, which is precisely why
+      // the claim had to happen above it.
+      if (funnel.reply_delay_seconds > 0) {
+        await this.scheduleOptin(run.id, funnel, args);
+      } else {
+        await this.sendOptin(run.id, funnel, args);
       }
 
       return true;
@@ -218,6 +217,181 @@ export class CommentFunnelService {
       // Unclaimed: we do not know how far we got, and leaving the
       // automation path open is the less surprising of the two failures.
       return false;
+    }
+  }
+
+  // ------------------------------------------------------------
+  // The opening DM — inline, or an hour later
+  // ------------------------------------------------------------
+
+  /**
+   * Park the opening DM on the delay queue.
+   *
+   * Falls back to sending immediately when the enqueue fails. A dropped
+   * job means someone commented, was claimed, and never heard back —
+   * strictly worse than a DM that arrives sooner than configured.
+   */
+  private async scheduleOptin(
+    runId: string,
+    funnel: instagram_comment_funnels,
+    args: OptinSendArgs,
+  ): Promise<void> {
+    const job: FunnelOptinJob = {
+      runId,
+      accountId: args.accountId,
+      commentRowId: args.commentRowId,
+      igCommentId: args.igCommentId,
+    };
+
+    try {
+      await this.queue.add('optin', job, {
+        delay: funnel.reply_delay_seconds * 1000,
+        // One job per run, forever. BullMQ rejects a duplicate jobId
+        // while the job is live, which makes a retried webhook delivery
+        // for the same comment a no-op rather than a second DM.
+        jobId: `optin:${runId}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: true,
+        // Kept, briefly: a funnel whose sends are failing is diagnosable
+        // from the queue before the run rows are the only evidence.
+        removeOnFail: 100,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Could not schedule funnel run ${runId} (${String(err)}) — sending now instead`,
+      );
+      await this.sendOptin(runId, funnel, args);
+    }
+  }
+
+  /**
+   * Worker entry point for a delayed run.
+   *
+   * Everything the delay made stale is re-checked here: the funnel may
+   * have been paused or deleted, the account switched off, the token
+   * expired, or an agent may have spent the comment's one private reply
+   * by hand while the job sat in Redis.
+   */
+  async runDelayedOptin(job: FunnelOptinJob): Promise<void> {
+    const run = await this.prisma.instagram_comment_funnel_runs.findFirst({
+      where: { id: job.runId, account_id: job.accountId },
+      include: { funnel: true },
+    });
+
+    // Deleted funnel, deleted run, or a tap that already advanced it.
+    // Silent: none of these are faults, they are the delay working.
+    if (!run) return;
+    if (run.state !== 'awaiting_optin') return;
+
+    if (!run.funnel.is_active) {
+      await this.fail(
+        run.id,
+        new Error('Funnel was paused before the DM went out'),
+      );
+      return;
+    }
+    if (!(await this.isEnabledForAccount(job.accountId))) {
+      await this.fail(
+        run.id,
+        new Error('Comment funnels were switched off before the DM went out'),
+      );
+      return;
+    }
+
+    const comment = await this.prisma.instagram_comments.findUnique({
+      where: { id: job.commentRowId },
+      select: { private_replied_at: true },
+    });
+    if (comment?.private_replied_at) {
+      await this.fail(
+        run.id,
+        new Error('The comment’s one private reply was already spent'),
+      );
+      return;
+    }
+
+    const config = await this.connect.loadUsableConfig(job.accountId);
+    if (!config) {
+      await this.fail(
+        run.id,
+        new Error('No usable Instagram connection when the delay elapsed'),
+      );
+      return;
+    }
+
+    await this.sendOptin(run.id, run.funnel, {
+      accountId: job.accountId,
+      igUserId: config.igUserId,
+      accessToken: config.accessToken,
+      commentRowId: job.commentRowId,
+      igCommentId: job.igCommentId,
+    });
+  }
+
+  /**
+   * Private-reply with the opening button, then spend the budget and
+   * post the public reply.
+   *
+   * Never throws: a send failure is parked on the run row. The caller
+   * has already claimed the comment and cannot un-claim it.
+   */
+  private async sendOptin(
+    runId: string,
+    funnel: instagram_comment_funnels,
+    args: OptinSendArgs,
+  ): Promise<void> {
+    try {
+      await sendPrivateReply({
+        igUserId: args.igUserId,
+        accessToken: args.accessToken,
+        commentId: args.igCommentId,
+        text: funnel.optin_text,
+        quickReplies: [
+          {
+            title: funnel.optin_button_label,
+            payload: `${PAYLOAD_PREFIX}:${runId}:optin`,
+          },
+        ],
+      });
+    } catch (err) {
+      await this.fail(runId, err);
+      return;
+    }
+
+    // Spend the comment's single private reply, and record the send
+    // even though there is no conversation to hang a message on yet —
+    // the thread materialises when they tap.
+    await this.prisma.instagram_comments.update({
+      where: { id: args.commentRowId },
+      data: { private_replied_at: new Date(), updated_at: new Date() },
+    });
+
+    await this.prisma.instagram_comment_funnels.update({
+      where: { id: funnel.id },
+      data: { matched_count: { increment: 1 } },
+    });
+
+    // The public "check your DMs" reply, rotated across the configured
+    // variants. Non-fatal on purpose: the DM is the deliverable, and a
+    // failed public comment must not roll back a private reply that has
+    // already been spent.
+    const publicReply = pickPublicReply(
+      funnel.public_reply_texts,
+      funnel.matched_count,
+    );
+    if (publicReply) {
+      try {
+        await replyToComment({
+          accessToken: args.accessToken,
+          commentId: args.igCommentId,
+          message: publicReply,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Funnel public reply failed (non-fatal): ${String(err)}`,
+        );
+      }
     }
   }
 
@@ -390,10 +564,23 @@ export class CommentFunnelService {
   /**
    * The funnel this comment belongs to, or null.
    *
-   * Post-scoped funnels beat account-wide ones. Someone who built a
+   * EXACTLY ONE funnel ever answers a comment. `.find()` takes the first
+   * match and stops, and the comment's single private reply is spent by
+   * whoever wins — so two active funnels covering the same post can never
+   * both DM the same commenter.
+   *
+   * WHICH one wins: post-scoped beats account-wide. Someone who built a
    * funnel for one launch post and left a catch-all running means the
-   * specific one — the general funnel is the fallback, and ordering it
-   * that way is what makes "all posts" safe to leave on.
+   * specific one — the catch-all is the fallback, and ordering it that way
+   * is what makes "all posts" safe to leave on.
+   *
+   * `nulls: 'last'` is load-bearing, not decoration. `ig_media_id` is
+   * NULL for the account-wide funnel, and Postgres sorts NULLS FIRST on a
+   * DESC ordering — so a plain `{ ig_media_id: 'desc' }` put the catch-all
+   * at the FRONT and inverted the whole precedence rule. It cost the
+   * post-scoped funnel every comment its catch-all's keywords happened to
+   * match, silently, and the unit tests could not see it because they stub
+   * `findMany` and never execute an ORDER BY.
    */
   private async matchFunnel(
     accountId: string,
@@ -406,7 +593,10 @@ export class CommentFunnelService {
         is_active: true,
         OR: [{ ig_media_id: null }, { ig_media_id: igMediaId ?? undefined }],
       },
-      orderBy: [{ ig_media_id: 'desc' }, { created_at: 'asc' }],
+      orderBy: [
+        { ig_media_id: { sort: 'desc', nulls: 'last' } },
+        { created_at: 'asc' },
+      ],
     });
 
     return candidates.find((f) => matchesKeywords(f.keywords, text)) ?? null;
@@ -491,6 +681,34 @@ export function matchesKeywords(
   const haystack = (text ?? '').toLowerCase();
   if (!haystack) return false;
   return keywords.some((k) => haystack.includes(k.toLowerCase()));
+}
+
+/**
+ * Which public reply this match gets, or null for "answer privately
+ * only".
+ *
+ * Round-robin on `matched_count` rather than random: a merchant who
+ * writes three variants can watch their post and see all three, and a
+ * support conversation about "why did it post the same one twice" has a
+ * deterministic answer. Random selection collides ~30% of the time on
+ * three variants, which is exactly the appearance the rotation exists
+ * to avoid.
+ *
+ * Blank entries are filtered rather than skipped in place — an empty
+ * string in the list must not become a turn where nothing is posted.
+ */
+export function pickPublicReply(
+  variants: readonly string[] | null | undefined,
+  matchedCount: number,
+): string | null {
+  const usable = (variants ?? []).filter((v) => v?.trim());
+  if (usable.length === 0) return null;
+  // Modulo of a negative would index off the front of the array. A
+  // counter cannot go negative today, but it is one column default away.
+  const safeCount = Number.isFinite(matchedCount)
+    ? Math.max(0, Math.trunc(matchedCount))
+    : 0;
+  return usable[safeCount % usable.length];
 }
 
 export interface RewardButton {

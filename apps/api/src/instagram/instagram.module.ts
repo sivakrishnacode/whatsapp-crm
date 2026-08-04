@@ -13,12 +13,16 @@ import { InstagramMediaMirrorService } from './services/instagram-media-mirror.s
 import { InstagramWebhookService } from './services/instagram-webhook.service';
 import { InstagramSendService } from './services/instagram-send.service';
 import { InstagramCommentsService } from './services/instagram-comments.service';
-import { CommentFunnelService } from './services/comment-funnel.service';
+import {
+  CommentFunnelService,
+  IG_FUNNEL_QUEUE,
+} from './services/comment-funnel.service';
 import {
   InstagramTokenRefreshService,
   IG_TOKEN_QUEUE,
 } from './services/instagram-token-refresh.service';
 import { InstagramTokenRefreshProcessor } from './processors/instagram-token-refresh.processor';
+import { InstagramFunnelDelayProcessor } from './processors/instagram-funnel-delay.processor';
 
 import { V1Module } from '../v1/v1.module';
 import { AutomationsModule } from '../automations/automations.module';
@@ -46,6 +50,7 @@ import { AiModule } from '../ai/ai.module';
     // and both sides have to declare it.
     forwardRef(() => V1Module),
     BullModule.registerQueue({ name: IG_TOKEN_QUEUE }),
+    BullModule.registerQueue({ name: IG_FUNNEL_QUEUE }),
     forwardRef(() => AutomationsModule),
     forwardRef(() => FlowsModule),
     forwardRef(() => AiModule),
@@ -67,6 +72,7 @@ import { AiModule } from '../ai/ai.module';
     CommentFunnelService,
     InstagramTokenRefreshService,
     InstagramTokenRefreshProcessor,
+    InstagramFunnelDelayProcessor,
   ],
   exports: [
     InstagramConnectService,

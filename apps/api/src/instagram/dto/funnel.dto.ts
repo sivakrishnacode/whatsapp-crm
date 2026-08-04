@@ -4,13 +4,28 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
   IsUrl,
+  Max,
   MaxLength,
+  Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+/**
+ * Longest a funnel may sit on a comment before answering.
+ *
+ * An hour, because Meta's private-reply window is 7 days but a reply
+ * that arrives after the commenter has closed the app is a cold DM, not
+ * an answer — and the delayed job holds a Redis slot the whole time.
+ */
+export const MAX_REPLY_DELAY_SECONDS = 3600;
+
+/** Mirrors instagram_comment_funnels_public_replies_chk. */
+export const MAX_PUBLIC_REPLY_VARIANTS = 10;
 
 /**
  * A link-out button on the reward message.
@@ -92,10 +107,24 @@ export class CreateFunnelDto {
   @Type(() => RewardButtonDto)
   reward_buttons?: RewardButtonDto[];
 
+  /**
+   * Rotated one per match. A list rather than a string because a post
+   * that works carries hundreds of comments, and hundreds of identical
+   * replies from one account is what Instagram's spam filter looks for.
+   */
   @IsOptional()
-  @IsString()
-  @MaxLength(1000)
-  public_reply_text?: string | null;
+  @IsArray()
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(1000, { each: true })
+  @ArrayMaxSize(MAX_PUBLIC_REPLY_VARIANTS)
+  public_reply_texts?: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_REPLY_DELAY_SECONDS)
+  reply_delay_seconds?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -166,9 +195,18 @@ export class UpdateFunnelDto {
   reward_buttons?: RewardButtonDto[];
 
   @IsOptional()
-  @IsString()
-  @MaxLength(1000)
-  public_reply_text?: string | null;
+  @IsArray()
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(1000, { each: true })
+  @ArrayMaxSize(MAX_PUBLIC_REPLY_VARIANTS)
+  public_reply_texts?: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_REPLY_DELAY_SECONDS)
+  reply_delay_seconds?: number;
 
   @IsOptional()
   @IsBoolean()

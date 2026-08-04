@@ -113,3 +113,63 @@ export interface IgCommentListResponse {
   limit: number;
   offset: number;
 }
+
+// ============================================================
+// Comment → DM funnels
+// ============================================================
+
+export interface IgRewardButton {
+  label: string;
+  url: string;
+}
+
+/**
+ * One comment → DM funnel, as `GET /instagram/funnels` returns it.
+ *
+ * Mirrors `instagram_comment_funnels`. The naming is the funnel's, not
+ * the UI's — the Posts page calls this an "automation" because that is
+ * what a merchant looking at a post is thinking about, but there is only
+ * one row type underneath and pretending otherwise would need a mapping
+ * layer in both directions.
+ */
+export interface IgFunnel {
+  id: string;
+  name: string;
+  /** `null` scopes the funnel to every post, present and future. */
+  ig_media_id: string | null;
+  /** Empty = every comment matches. Case-insensitive substring. */
+  keywords: string[];
+  optin_text: string;
+  optin_button_label: string;
+  follow_gate_enabled: boolean;
+  follow_ask_text: string | null;
+  follow_button_label: string;
+  reward_text: string;
+  reward_buttons: IgRewardButton[] | null;
+  /** Rotated one per match, so a busy post is not full of one sentence. */
+  public_reply_texts: string[];
+  /** 0 = answer on the webhook path. See REPLY_DELAY_OPTIONS. */
+  reply_delay_seconds: number;
+  is_active: boolean;
+  matched_count: number;
+  delivered_count: number;
+}
+
+export interface IgFunnelListResponse {
+  funnels: IgFunnel[];
+}
+
+export interface IgFunnelEnabledResponse {
+  /** The account master switch. Off means no funnel runs at all. */
+  enabled: boolean;
+  /** False until Instagram is connected — the switch cannot be armed. */
+  connected: boolean;
+  /** The business's own handle, for the editor's reply preview. */
+  username: string | null;
+}
+
+/** A funnel body on the way to the API. `id` present = PATCH. */
+export type IgFunnelDraft = Omit<
+  IgFunnel,
+  'id' | 'matched_count' | 'delivered_count'
+> & { id?: string };
