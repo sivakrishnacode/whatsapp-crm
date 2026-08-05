@@ -1,0 +1,21 @@
+{
+  "name": "@repo/database",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Converse360 — the single Prisma schema, shared by every app in the monorepo",
+  "license": "MIT",
+  "files": [
+    "prisma"
+  ],
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate": "prisma migrate dev",
+    "push": "prisma db push",
+    "studio": "prisma studio",
+    "validate": "prisma validate"
+  },
+  "devDependencies": {
+    "dotenv": "^17.4.2",
+    "prisma": "^7.8.0"
+  }
+}

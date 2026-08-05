@@ -28,7 +28,11 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "db:generate": "npm run generate --workspace=@repo/database",
+    "db:migrate": "npm run migrate --workspace=@repo/database",
+    "db:push": "npm run push --workspace=@repo/database",
+    "db:studio": "npm run studio --workspace=@repo/database"
   },
   "devDependencies": {
     "turbo": "^2.10.5",

@@ -23,14 +23,17 @@ npm workspaces + **Turborepo**. `packageManager: npm@10.9.7`.
 apps/
   api/                 NestJS backend (REST). Port 8001.
   web/                 Next.js 16 frontend (React 19). Port 3000 (3031 in docker).
+  admin-panel/         Next.js 16 internal billing admin. Port 3002 (3033 in docker).
+  site/                Static marketing site (3032 in docker).
 packages/
   typescript-config/   Shared tsconfig bases.
+  database/            THE Prisma schema + migrations, shared by api and admin-panel.
 supabase/migrations/   SQL migrations (Supabase-managed Postgres, auth + public schemas).
-scripts/               run-migration.sh / run-migration.ts.
+scripts/               run-migration.sh / run-migration.ts, deploy.sh.
 docs/                  public-api.md, razorpay.md, subscription-setup.md.
 notes/                 Reference material (e.g. the official Meta "WhatsApp Cloud API" Postman collection).
-docker-compose.yml     redis + api + web.
-turbo.json             Tasks: build, dev, lint, test, typecheck.
+docker-compose.yml     redis + api + web + site + admin-panel.
+turbo.json             Tasks: build, dev, lint, test, typecheck, generate.
 ```
 
 ## Commands (run from repo root unless noted)
@@ -42,10 +45,14 @@ turbo.json             Tasks: build, dev, lint, test, typecheck.
 | Format | `npm run format` (prettier) |
 | API only | `cd apps/api && npm run dev` (nest watch) |
 | API tests | `cd apps/api && npm test` (**vitest**) |
-| Prisma | `cd apps/api && npm run prisma:generate \| prisma:migrate \| prisma:studio` |
+| Prisma | `npm run db:generate` \| `db:migrate` \| `db:push` \| `db:studio` |
 | Web only | `cd apps/web && npm run dev` |
+| Admin panel only | `npm run dev --workspace=admin-panel` |
 
 Both apps test with **vitest** (not Jest). API lint = eslint + prettier; web lint = `eslint`.
+
+`build` and `typecheck` depend on `^generate`, so a fresh clone generates the
+Prisma client before compiling anything that needs it.
 
 ## Backend — `apps/api` (NestJS)
 
@@ -72,9 +79,21 @@ Both apps test with **vitest** (not Jest). API lint = eslint + prettier; web lin
 - **Flow builder:** `@xyflow/react` + `@dagrejs/dagre` (auto-layout); drag-and-drop via `@dnd-kit/*`.
 - i18n: `next-intl`. Audio (voice notes): `opus-recorder`.
 
+## Admin panel — `apps/admin-panel` (Next.js 16)
+
+Internal billing panel: subscriber accounts, subscription amounts, sales, users. Port **3002**. See `apps/admin-panel/README.md`.
+
+- **No new api endpoints** — reads/writes Postgres directly via Prisma (`@repo/database`). Nothing here calls `apps/api`.
+- **Auth:** one env credential (`ADMIN_USERNAME`/`ADMIN_PASSWORD`), timing-safe compare, HS256 JWT session cookie signed with `ADMIN_SESSION_SECRET`. `proxy.ts` is an optimistic redirect gate; `requireAdmin()` in `lib/auth.ts` is the real check and runs in every page **and every Server Action**.
+- **Structure:** `app/(panel)/*` pages, `app/login`, `lib/{env,session,auth,prisma,format}.ts`, `lib/queries/*` (reads), `lib/actions/*` (writes), `components/{ui,chart,shell,subscriber,plans}`.
+- ⚠️ **Money is derived, not recorded.** There is no payments/invoices table in this database — `user_subscriptions` has no amount column and no history. Every figure is `plan price × subscription`, so MRR/ARR/expected-collections are exact for *today* and historical revenue is unrecoverable (a price edit rewrites the past). The reasoning lives in `lib/queries/sql.ts`; read it before adding a revenue figure. Time series there count subscriptions, never money.
+- `lib/format.ts` is `server-only` on purpose: `ADMIN_CURRENCY` is not public, so client components take pre-formatted strings.
+
 ## Database — Prisma + Postgres (Supabase)
 
-- `apps/api/prisma/schema.prisma`: `provider = postgresql`, **dual schema** `["auth", "public"]` (the `auth.*` models — `users`, `sessions`, `identities`, `mfa_*`, `sso_*`, `oauth_*` — are Supabase's managed auth schema; treat as read-mostly). Client uses `@prisma/adapter-pg` (`pg`). `previewFeatures = ["partialIndexes"]`.
+- **`packages/database` (`@repo/database`) owns the only schema.** `prisma/schema.prisma`: `provider = postgresql`, **dual schema** `["auth", "public"]` (the `auth.*` models — `users`, `sessions`, `identities`, `mfa_*`, `sso_*`, `oauth_*` — are Supabase's managed auth schema; treat as read-mostly). `previewFeatures = ["partialIndexes"]`. Generator is `prisma-client-js`, so both apps import from `@prisma/client` as usual.
+- Each app owns its own connection (lifecycles differ): `apps/api/src/prisma/prisma.service.ts` (Nest module) and `apps/admin-panel/lib/prisma.ts` (globalThis singleton). Both use `@prisma/adapter-pg` (`pg`).
+- The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
 - **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`, `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`.
 
@@ -89,15 +108,20 @@ The app is built on the **official Meta WhatsApp Cloud API** (`https://graph.fac
 
 ## Infra — `docker-compose.yml`
 
-- `redis` (`redis:7-alpine`, `wacrm-redis`).
-- `api` (`wacrm-api`, `8001:8001`, `REDIS_URL=redis://redis:6379`).
-- `web` (`wacrm-web`, `3031:3000`).
+All app ports are bound to **127.0.0.1** deliberately — Docker's port publishing writes iptables rules that sit in front of ufw, so `ufw deny` does *not* close a `0.0.0.0` publish. The host proxy reaches them on loopback.
+
+- `redis` (`redis:7-alpine`, `wacrm-redis`) — no published port at all.
+- `api` (`wacrm-api`, `127.0.0.1:8001:8001`, `REDIS_URL=redis://redis:6379`).
+- `web` (`wacrm-web`, `127.0.0.1:3031:3000`).
+- `site` (`wacrm-site`, `127.0.0.1:3032:80`).
+- `admin-panel` (`wacrm-admin-panel`, `127.0.0.1:3033:3002`) — no `depends_on`; it only needs Postgres.
 
 ## Conventions & gotchas
 
-- **Next.js 16 / React 19** — don't assume older Next APIs; consult the bundled docs first.
+- **Next.js 16 / React 19** — don't assume older Next APIs; consult the bundled docs first. `middleware.ts` is now **`proxy.ts`** (exporting `proxy`); `params`/`searchParams`/`cookies()`/`headers()` are all async.
+- The Prisma schema lives in **`packages/database`** — never add a second copy under an app.
 - Meta API helpers use **named-parameter objects**, not positional args — match that style.
 - Tests are **vitest**.
 - `v1/*` controllers = public API (api-key auth); `whatsapp/*` & dashboard controllers = internal (Supabase cookie auth). Pick the right guard.
 - `auth.*` Prisma models are Supabase-managed — avoid writing to them directly.
-- Enforce **account/tenant scoping** on every query — this is a multi-tenant app.
+- Enforce **account/tenant scoping** on every query — this is a multi-tenant app. The admin panel is the one deliberate exception: it is cross-tenant by design, which is exactly why its auth is separate and its own.

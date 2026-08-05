@@ -1,0 +1,116 @@
+@import 'tailwindcss';
+
+/* ============================================================
+ * Tokens
+ *
+ * Two families, kept separate on purpose:
+ *
+ *  - chrome (plane / surface / ink / line) — the UI
+ *  - data   (series / seq / status)        — the charts
+ *
+ * The data colors are a validated set, not a taste call: the two series hues
+ * clear the lightness band, chroma floor, CVD separation (worst adjacent ΔE
+ * 21.6 light / 19.2 dark, OKLab ×100) and 3:1 contrast against both surfaces in
+ * light and dark. Dark is a *selected* set of steps for the dark surface, not an
+ * automatic flip. If you change a series hex, re-validate the pair rather than
+ * eyeballing it.
+ * ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  --plane: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f2f1ed;
+
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+
+  --line: #e1e0d9; /* gridline hairline */
+  --rule: #c3c2b7; /* baseline / axis */
+  --ring: rgba(11, 11, 11, 0.1);
+
+  --series-1: #2a78d6; /* additions, and the single-series default */
+  --series-2: #e34948; /* losses — the other pole of the diverging pair */
+
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --good-ink: #006300; /* success as *text* needs a darker step */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --plane: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #232322;
+
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+
+    --line: #2c2c2a;
+    --rule: #383835;
+    --ring: rgba(255, 255, 255, 0.1);
+
+    --series-1: #3987e5;
+    --series-2: #e66767;
+
+    --good-ink: #0ca30c;
+  }
+}
+
+@theme inline {
+  --color-plane: var(--plane);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+
+  --color-line: var(--line);
+  --color-rule: var(--rule);
+  --color-ring: var(--ring);
+
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+
+  --color-good: var(--good);
+  --color-warning: var(--warning);
+  --color-serious: var(--serious);
+  --color-critical: var(--critical);
+  --color-good-ink: var(--good-ink);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--plane);
+  color: var(--ink);
+  font-family:
+    var(--font-geist-sans),
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+
+/* Columns of figures align; standalone display numbers do not — proportional
+ * digits keep a hero value from looking loose. */
+th,
+td,
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus that is visible on every surface without being decorative. */
+:where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 2px;
+}

@@ -7,6 +7,7 @@
 #   ./scripts/deploy.sh --skip-checks   # skip typecheck + tests (hotfix path)
 #   ./scripts/deploy.sh --api-only      # rebuild just the api container
 #   ./scripts/deploy.sh --web-only      # rebuild just web + site
+#   ./scripts/deploy.sh --admin-only    # rebuild just the admin panel
 #
 # There is no CI in this repo, so "deploy" means: get the commit onto
 # GitHub, pull it on the box, rebuild the containers. This script is that
@@ -42,6 +43,7 @@ for arg in "$@"; do
     --skip-checks) SKIP_CHECKS=1 ;;
     --api-only)    SERVICES="api" ;;
     --web-only)    SERVICES="web site" ;;
+    --admin-only)  SERVICES="admin-panel" ;;
     -h|--help)     sed -n '3,22p' "${BASH_SOURCE[0]}" | sed 's/^#\{1,\} \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)" >&2; exit 1 ;;
   esac

@@ -79,3 +79,21 @@ services:
       # form/booking pages' server-side fetch.
       - NEST_API_URL=http://api:8001
       - DOCKERIZED=true
+
+  # The internal billing admin panel. Talks to Postgres directly through
+  # @repo/database — no dependency on the api container at all.
+  #
+  # 3033 continues the 3031/3032 block. Loopback only, and this one matters more
+  # than the others: it can change what customers are billed and its login is a
+  # single env credential, so it must never be reachable except through the host
+  # proxy on a hostname you control (and ideally behind an IP allowlist there).
+  admin-panel:
+    build:
+      context: .
+      dockerfile: apps/admin-panel/Dockerfile
+    container_name: wacrm-admin-panel
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3033:3002"
+    env_file:
+      - apps/admin-panel/.env.local
