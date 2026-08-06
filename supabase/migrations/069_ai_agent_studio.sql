@@ -166,103 +166,69 @@ UPDATE ai_configs
    AND embeddings_provider IS NULL;
 
 -- ============================================================
--- 4. Semantic match RPC — filter on the embedding model.
+-- 4. Match RPCs — return document_id, and let the semantic one filter
+--    on which embedding model produced the vector.
 --
--- Same signature plus one argument, so it is additive: the 3-arg form
--- is dropped and replaced by a 4-arg form with a default, and existing
--- callers keep compiling.
+-- BOTH STAY `SECURITY INVOKER`. Migration 032 changed them from
+-- DEFINER to INVOKER to close a cross-tenant read (GHSA-fg5p-2qc3-jmxr):
+-- they are GRANTed to `authenticated`, so as DEFINER any logged-in user
+-- could pass a foreign p_account_id through PostgREST and read another
+-- tenant's knowledge base. As INVOKER the ai_knowledge_chunks SELECT
+-- policy governs that caller, while apps/api (table owner, RLS not
+-- applicable) keeps working. Do not "modernise" these to DEFINER.
 --
--- SECURITY DEFINER, so per CLAUDE.md the authorization lives in the
--- body: a JWT caller may only read its own account's chunks; a server
--- connection (auth.uid() IS NULL — how apps/api connects) may read any.
+-- Recreated with DROP rather than CREATE OR REPLACE because the return
+-- column list changes, which Postgres will not replace in place.
+-- Callers select columns by name, so adding document_id is additive.
 -- ============================================================
 DROP FUNCTION IF EXISTS public.match_ai_knowledge_semantic(uuid, text, integer);
 
-CREATE OR REPLACE FUNCTION public.match_ai_knowledge_semantic(
+CREATE FUNCTION public.match_ai_knowledge_semantic(
   p_account_id       uuid,
   p_query_embedding  text,
-  p_match_count      integer DEFAULT 5,
+  p_match_count      integer,
   p_embedding_model  text DEFAULT NULL
 )
-RETURNS TABLE (
-  id          uuid,
-  document_id uuid,
-  content     text,
-  distance    double precision
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  IF auth.uid() IS NOT NULL AND NOT is_account_member(p_account_id) THEN
-    RAISE EXCEPTION 'not a member of this account';
-  END IF;
-
-  RETURN QUERY
+RETURNS TABLE (id uuid, document_id uuid, content text, distance real) AS $$
   SELECT c.id,
          c.document_id,
          c.content,
          (c.embedding <=> p_query_embedding::vector(1536)) AS distance
-    FROM ai_knowledge_chunks c
-   WHERE c.account_id = p_account_id
-     AND c.embedding IS NOT NULL
-     AND (p_embedding_model IS NULL OR c.embedding_model = p_embedding_model)
-   ORDER BY c.embedding <=> p_query_embedding::vector(1536)
-   LIMIT GREATEST(p_match_count, 1);
-END;
-$$;
+  FROM ai_knowledge_chunks c
+  WHERE c.account_id = p_account_id
+    AND c.embedding IS NOT NULL
+    -- NULL means "don't care" (a caller that has not adopted the
+    -- argument yet); pre-069 rows were backfilled above, so a real
+    -- model name never silently excludes an entire legacy corpus.
+    AND (p_embedding_model IS NULL OR c.embedding_model = p_embedding_model)
+  ORDER BY c.embedding <=> p_query_embedding::vector(1536)
+  LIMIT GREATEST(p_match_count, 0);
+$$ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public;
 
-REVOKE ALL ON FUNCTION public.match_ai_knowledge_semantic(uuid, text, integer, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.match_ai_knowledge_semantic(uuid, text, integer, text) TO authenticated, service_role;
-
--- The lexical RPC gains document_id too, so a reply can name which
--- document grounded it regardless of which path retrieved it.
 DROP FUNCTION IF EXISTS public.match_ai_knowledge_fts(uuid, text, integer);
 
-CREATE OR REPLACE FUNCTION public.match_ai_knowledge_fts(
+CREATE FUNCTION public.match_ai_knowledge_fts(
   p_account_id  uuid,
   p_query       text,
-  p_match_count integer DEFAULT 5
+  p_match_count integer
 )
-RETURNS TABLE (
-  id          uuid,
-  document_id uuid,
-  content     text,
-  rank        double precision
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_query tsquery;
-BEGIN
-  IF auth.uid() IS NOT NULL AND NOT is_account_member(p_account_id) THEN
-    RAISE EXCEPTION 'not a member of this account';
-  END IF;
-
-  -- websearch_to_tsquery never raises on user input (plainto_ can, on
-  -- some punctuation), which matters because this string comes straight
-  -- from a customer's WhatsApp message.
-  v_query := websearch_to_tsquery('simple', p_query);
-  IF v_query IS NULL OR v_query::text = '' THEN
-    RETURN;
-  END IF;
-
-  RETURN QUERY
+RETURNS TABLE (id uuid, document_id uuid, content text, rank real) AS $$
   SELECT c.id,
          c.document_id,
          c.content,
-         ts_rank(c.fts, v_query)::double precision AS rank
-    FROM ai_knowledge_chunks c
-   WHERE c.account_id = p_account_id
-     AND c.fts @@ v_query
-   ORDER BY ts_rank(c.fts, v_query) DESC
-   LIMIT GREATEST(p_match_count, 1);
-END;
-$$;
+         ts_rank(c.fts, websearch_to_tsquery('simple', p_query)) AS rank
+  FROM ai_knowledge_chunks c
+  WHERE c.account_id = p_account_id
+    -- websearch_to_tsquery, not plainto_: this string is a customer's
+    -- raw WhatsApp message, and websearch_ is the variant designed to
+    -- swallow arbitrary punctuation and quoting without raising.
+    AND c.fts @@ websearch_to_tsquery('simple', p_query)
+  ORDER BY rank DESC
+  LIMIT GREATEST(p_match_count, 0);
+$$ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public;
 
+REVOKE ALL ON FUNCTION public.match_ai_knowledge_semantic(uuid, text, integer, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.match_ai_knowledge_semantic(uuid, text, integer, text) TO authenticated, service_role;
 REVOKE ALL ON FUNCTION public.match_ai_knowledge_fts(uuid, text, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.match_ai_knowledge_fts(uuid, text, integer) TO authenticated, service_role;
 

@@ -1,33 +1,17 @@
 // ============================================================
-// Shared types for the AI reply assistant (bring-your-own-key).
+// Shared types for the AI agent (bring-your-own-key).
 //
-// One small provider-agnostic surface so the inbox draft route and the
-// inbound auto-reply bot both talk to `generateReply` without caring
-// whether the account is on OpenAI or Anthropic.
+// The runtime lives in apps/api (src/ai). What remains here is the small
+// surface the web app itself needs: the provider union the settings form
+// renders, and the error shape the inbox draft button branches on.
 // ============================================================
 
-export type AiProvider = 'openai' | 'anthropic'
+export type AiProvider = 'openai' | 'anthropic' | 'gemini'
 
-/**
- * Account AI setup, decrypted and ready to use. Produced by
- * `loadAiConfig` — `apiKey` is the plaintext BYO provider key
- * (stored AES-256-GCM-encrypted at rest).
- */
-export interface AiConfig {
-  provider: AiProvider
-  model: string
-  apiKey: string
-  systemPrompt: string | null
-  isActive: boolean
-  autoReplyEnabled: boolean
-  autoReplyMaxPerConversation: number
-  /** Optional OpenAI-compatible key for embeddings. When set, the
-   *  knowledge base is embedded and semantic retrieval turns on; when
-   *  null, retrieval falls back to lexical full-text search. */
-  embeddingsApiKey: string | null
-}
+/** Providers that can also produce knowledge-base embeddings. */
+export type EmbeddingsProvider = 'openai' | 'gemini'
 
-/** A single conversation turn in the shape both providers accept. */
+/** A single conversation turn in the shape every provider accepts. */
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -43,8 +27,8 @@ export interface GenerateResult {
 
 /**
  * Typed error for every AI failure mode. `status` maps cleanly to an
- * HTTP response in the draft route; `code` lets the UI/tests branch
- * (invalid_key vs rate_limited vs timeout, etc.).
+ * HTTP response; `code` lets the UI branch (invalid_key vs rate_limited
+ * vs timeout, etc.).
  */
 export class AiError extends Error {
   readonly code: string

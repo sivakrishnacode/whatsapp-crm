@@ -2,71 +2,60 @@ import {
   Controller,
   Get,
   Post,
-  Patch,
-  Delete,
   Body,
-  Param,
   Headers,
   HttpStatus,
   HttpException,
+  Delete,
   UseGuards,
 } from '@nestjs/common';
 import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
+import { RequireRole } from '../../auth/decorators/require-role.decorator';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiReplyService } from '../services/ai-reply.service';
+import { AgentRuntimeService } from '../services/agent-runtime.service';
+import { KnowledgeSourceService } from '../services/knowledge-source.service';
 import { encrypt, decrypt } from '../../common/security/encryption.util';
 import { validateAiCredentials } from '../lib/validate';
-import { embedTexts } from '../lib/embeddings';
-import { loadAiConfig, loadEmbeddingsKey } from '../lib/config';
+import { EMBEDDING_MODEL, embedTexts } from '../lib/embeddings';
+import { loadAiConfig } from '../lib/config';
 import { buildConversationContext } from '../lib/context';
-import { retrieveKnowledge, ingestDocument } from '../lib/knowledge';
-import { buildSystemPrompt } from '../lib/defaults';
 import { generateReply } from '../lib/generate';
-import { latestUserMessage } from '../lib/query';
-import { AiError, ChatMessage } from '../lib/types';
+import { AiError, type AiProvider, type ChatMessage, type EmbeddingsProvider } from '../lib/types';
 
+const PROVIDERS: AiProvider[] = ['openai', 'anthropic', 'gemini'];
+const EMBEDDINGS_PROVIDERS: EmbeddingsProvider[] = ['openai', 'gemini'];
+
+function isProvider(value: unknown): value is AiProvider {
+  return PROVIDERS.includes(value as AiProvider);
+}
+
+function isEmbeddingsProvider(value: unknown): value is EmbeddingsProvider {
+  return EMBEDDINGS_PROVIDERS.includes(value as EmbeddingsProvider);
+}
+
+/**
+ * Provider credentials, the inbox draft button, and the test playground.
+ *
+ * The agent's *behaviour* (profile, tone, skills, escalation) lives on
+ * `/ai/agent`, and its knowledge on `/ai/knowledge` — see those
+ * controllers. What stays here is the credential surface plus the two
+ * generate-now endpoints.
+ */
 @Controller('ai')
 export class AiController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiReplyService: AiReplyService,
+    private readonly runtime: AgentRuntimeService,
+    private readonly knowledge: KnowledgeSourceService,
   ) {}
-
-  private async verifyAdmin(userId: string): Promise<void> {
-    const profile = await this.prisma.profile.findUnique({
-      where: { userId },
-      select: { accountRole: true },
-    });
-
-    if (
-      !profile ||
-      (profile.accountRole !== 'admin' && profile.accountRole !== 'owner')
-    ) {
-      throw new HttpException('Insufficient permissions', HttpStatus.FORBIDDEN);
-    }
-  }
-
-  private async verifyAgent(userId: string): Promise<void> {
-    const profile = await this.prisma.profile.findUnique({
-      where: { userId },
-      select: { accountRole: true },
-    });
-
-    if (
-      !profile ||
-      (profile.accountRole !== 'admin' &&
-        profile.accountRole !== 'owner' &&
-        profile.accountRole !== 'agent')
-    ) {
-      throw new HttpException('Insufficient permissions', HttpStatus.FORBIDDEN);
-    }
-  }
 
   /**
    * GET /api/ai/config
-   * Fetch AI provider config (keys stripped for security).
+   * Provider config with the keys stripped.
    */
   @Get('config')
   @UseGuards(SupabaseAuthGuard)
@@ -83,19 +72,22 @@ export class AiController {
           auto_reply_max_per_conversation: true,
           api_key: true,
           embeddings_api_key: true,
+          embeddings_provider: true,
+          embeddings_model: true,
         },
       });
 
-      if (!data) return { configured: false };
+      if (!data) return { configured: false, providers: PROVIDERS };
 
       const { api_key, embeddings_api_key, ...safe } = data;
       return {
         configured: true,
         has_key: !!api_key,
         has_embeddings_key: !!embeddings_api_key,
+        providers: PROVIDERS,
         ...safe,
       };
-    } catch (err) {
+    } catch {
       throw new HttpException(
         'Failed to load AI configuration',
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -105,24 +97,23 @@ export class AiController {
 
   /**
    * POST /api/ai/config
-   * Save AI provider config (admin+ only).
+   * Save the provider, model and key(s). Admin+.
    */
   @Post('config')
   @UseGuards(SupabaseAuthGuard)
+  @RequireRole('admin')
   async saveConfig(
     @CurrentAccount() account: SupabaseAccountContext,
-    @Body() body: any,
+    @Body() body: Record<string, unknown>,
   ) {
-    await this.verifyAdmin(account.userId);
-
     if (!body || typeof body !== 'object') {
       throw new HttpException('Invalid request body', HttpStatus.BAD_REQUEST);
     }
 
     const provider = body.provider;
-    if (provider !== 'openai' && provider !== 'anthropic') {
+    if (!isProvider(provider)) {
       throw new HttpException(
-        'provider must be "openai" or "anthropic"',
+        `provider must be one of: ${PROVIDERS.join(', ')}`,
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -152,7 +143,15 @@ export class AiController {
 
     const existing = await this.prisma.ai_configs.findUnique({
       where: { account_id: account.accountId },
-      select: { id: true, provider: true, model: true, api_key: true },
+      select: {
+        id: true,
+        provider: true,
+        model: true,
+        api_key: true,
+        embeddings_provider: true,
+        embeddings_model: true,
+        embeddings_api_key: true,
+      },
     });
 
     let apiKeyPlain: string;
@@ -179,16 +178,7 @@ export class AiController {
 
     if (credentialsChanged) {
       try {
-        await validateAiCredentials({
-          provider,
-          model,
-          apiKey: apiKeyPlain,
-          systemPrompt,
-          isActive,
-          autoReplyEnabled,
-          autoReplyMaxPerConversation: maxPer,
-          embeddingsApiKey: null,
-        });
+        await validateAiCredentials({ provider, model, apiKey: apiKeyPlain });
       } catch (err) {
         if (err instanceof AiError) {
           throw new HttpException(
@@ -203,9 +193,25 @@ export class AiController {
       }
     }
 
+    // The embeddings provider defaults to whatever the chat provider is,
+    // when that provider can embed — an account on Gemini should not have
+    // to go and find an OpenAI key to get semantic search.
+    const requestedEmbeddingsProvider = isEmbeddingsProvider(
+      body.embeddings_provider,
+    )
+      ? body.embeddings_provider
+      : isEmbeddingsProvider(provider)
+        ? provider
+        : (existing?.embeddings_provider as EmbeddingsProvider | null) ?? 'openai';
+
+    const embeddingsModel = EMBEDDING_MODEL[requestedEmbeddingsProvider];
+
     if (rawEmbeddingsKey) {
       try {
-        await embedTexts(rawEmbeddingsKey, ['ping']);
+        await embedTexts(rawEmbeddingsKey, ['ping'], {
+          provider: requestedEmbeddingsProvider,
+          model: embeddingsModel,
+        });
       } catch (err) {
         if (err instanceof AiError) {
           throw new HttpException(
@@ -221,7 +227,7 @@ export class AiController {
     }
 
     const encryptedKey = rawKey ? encrypt(rawKey) : null;
-    const shared: any = {
+    const shared: Record<string, unknown> = {
       provider,
       model,
       system_prompt: systemPrompt,
@@ -229,11 +235,33 @@ export class AiController {
       auto_reply_enabled: autoReplyEnabled,
       auto_reply_max_per_conversation: maxPer,
     };
+
+    const hasEmbeddingsKeyAfterSave =
+      Boolean(rawEmbeddingsKey) ||
+      (!clearEmbeddingsKey && Boolean(existing?.embeddings_api_key));
+
     if (rawEmbeddingsKey) {
       shared.embeddings_api_key = encrypt(rawEmbeddingsKey);
     } else if (clearEmbeddingsKey) {
       shared.embeddings_api_key = null;
     }
+
+    if (hasEmbeddingsKeyAfterSave) {
+      shared.embeddings_provider = requestedEmbeddingsProvider;
+      shared.embeddings_model = embeddingsModel;
+    } else if (clearEmbeddingsKey) {
+      shared.embeddings_provider = null;
+      shared.embeddings_model = null;
+    }
+
+    // Switching embedding model invalidates every stored vector: they are
+    // not comparable across models, so retrieval filters them out. Mark
+    // the corpus stale so the user is told to reindex instead of watching
+    // a healthy-looking knowledge base answer nothing.
+    const embeddingModelChanged =
+      hasEmbeddingsKeyAfterSave &&
+      Boolean(existing?.embeddings_model) &&
+      existing?.embeddings_model !== embeddingsModel;
 
     if (existing) {
       await this.prisma.ai_configs.update({
@@ -243,31 +271,45 @@ export class AiController {
     } else {
       await this.prisma.ai_configs.create({
         data: {
+          ...shared,
           account_id: account.accountId,
           created_by: account.userId,
           api_key: encryptedKey!,
-          ...shared,
+          provider,
+          model,
         },
       });
     }
 
-    return { success: true };
+    let staleDocuments = 0;
+    if (embeddingModelChanged) {
+      staleDocuments = await this.knowledge.markCorpusStale(account.accountId);
+    }
+
+    return {
+      success: true,
+      ...(staleDocuments > 0
+        ? {
+            warning: `The embeddings model changed, so ${staleDocuments} knowledge document(s) need reindexing before semantic search works again.`,
+            stale_documents: staleDocuments,
+          }
+        : {}),
+    };
   }
 
   /**
    * DELETE /api/ai/config
-   * Delete AI provider config (admin+ only).
    */
   @Delete('config')
   @UseGuards(SupabaseAuthGuard)
+  @RequireRole('admin')
   async deleteConfig(@CurrentAccount() account: SupabaseAccountContext) {
-    await this.verifyAdmin(account.userId);
     try {
       await this.prisma.ai_configs.delete({
         where: { account_id: account.accountId },
       });
       return { success: true };
-    } catch (err) {
+    } catch {
       throw new HttpException(
         'Failed to delete AI configuration',
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -277,24 +319,23 @@ export class AiController {
 
   /**
    * POST /api/ai/test
-   * Test API key connectivity without saving (admin+ only).
+   * Prove a key works without saving it.
    */
   @Post('test')
   @UseGuards(SupabaseAuthGuard)
+  @RequireRole('admin')
   async testConfig(
     @CurrentAccount() account: SupabaseAccountContext,
-    @Body() body: any,
+    @Body() body: Record<string, unknown>,
   ) {
-    await this.verifyAdmin(account.userId);
-
     if (!body || typeof body !== 'object') {
       throw new HttpException('Invalid request body', HttpStatus.BAD_REQUEST);
     }
 
     const provider = body.provider;
-    if (provider !== 'openai' && provider !== 'anthropic') {
+    if (!isProvider(provider)) {
       throw new HttpException(
-        'provider must be "openai" or "anthropic"',
+        `provider must be one of: ${PROVIDERS.join(', ')}`,
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -327,16 +368,7 @@ export class AiController {
     }
 
     try {
-      await validateAiCredentials({
-        provider,
-        model,
-        apiKey: apiKeyPlain,
-        systemPrompt: null,
-        isActive: true,
-        autoReplyEnabled: false,
-        autoReplyMaxPerConversation: 3,
-        embeddingsApiKey: null,
-      });
+      await validateAiCredentials({ provider, model, apiKey: apiKeyPlain });
     } catch (err) {
       if (err instanceof AiError) {
         throw new HttpException(
@@ -355,16 +387,15 @@ export class AiController {
 
   /**
    * POST /api/ai/draft
-   * Suggest reply draft (agent+).
+   * Suggest a reply for a conversation in the inbox. Agent+.
    */
   @Post('draft')
   @UseGuards(SupabaseAuthGuard)
+  @RequireRole('agent')
   async suggestDraft(
     @CurrentAccount() account: SupabaseAccountContext,
     @Body() body: { conversation_id?: string },
   ) {
-    await this.verifyAgent(account.userId);
-
     const conversationId = body?.conversation_id;
     if (!conversationId) {
       throw new HttpException(
@@ -374,18 +405,15 @@ export class AiController {
     }
 
     const conversation = await this.prisma.conversations.findFirst({
-      where: {
-        id: conversationId,
-        account_id: account.accountId,
-      },
-      select: { id: true },
+      where: { id: conversationId, account_id: account.accountId },
+      select: { id: true, contact_id: true },
     });
     if (!conversation) {
       throw new HttpException('Conversation not found', HttpStatus.NOT_FOUND);
     }
 
     const config = await loadAiConfig(this.prisma, account.accountId).catch(
-      (err) => {
+      () => {
         throw new HttpException(
           {
             error: 'Stored API key could not be decrypted.',
@@ -400,7 +428,7 @@ export class AiController {
       throw new HttpException(
         {
           error:
-            'AI assistant is not set up. Enable it in Settings → AI Assistant.',
+            'AI assistant is not set up. Enable it in AI Agents → Provider & key.',
           code: 'ai_not_configured',
         },
         HttpStatus.BAD_REQUEST,
@@ -418,49 +446,66 @@ export class AiController {
       );
     }
 
-    const knowledge = await retrieveKnowledge(
-      this.prisma,
-      account.accountId,
+    const run = await this.runtime.assemble({
       config,
-      latestUserMessage(messages),
-    );
-
-    const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
-      mode: 'draft',
-      knowledge,
+      messages,
+      ctx: {
+        accountId: account.accountId,
+        contactId: conversation.contact_id,
+        actorUserId: account.userId,
+        mode: 'draft',
+      },
     });
 
-    const { text } = await generateReply({ config, systemPrompt, messages });
-    return { draft: text };
+    const { text } = await generateReply({
+      config,
+      systemPrompt: run.systemPrompt,
+      messages,
+      tools: run.tools,
+      executeTool: run.executeTool,
+    });
+
+    return {
+      draft: text,
+      grounded_on: run.knowledge.map((hit) => hit.title).filter(Boolean),
+    };
   }
 
   /**
    * POST /api/ai/playground
-   * Chat interface for playground testing (agent+).
+   * Talk to the agent as a customer would. Agent+.
+   *
+   * Runs the SAME assembly as the auto-reply bot (`AgentRuntimeService`),
+   * and additionally returns what grounded the answer and which tools ran
+   * — a test surface that cannot show its working is not a test surface.
+   *
+   * `contactId` is null here, so contact-scoped tools report honestly that
+   * there is no customer attached rather than reading someone else's data.
    */
   @Post('playground')
   @UseGuards(SupabaseAuthGuard)
+  @RequireRole('agent')
   async playgroundChat(
     @CurrentAccount() account: SupabaseAccountContext,
-    @Body() body: { messages?: ChatMessage[] },
+    @Body() body: { messages?: ChatMessage[]; mode?: string },
   ) {
-    await this.verifyAgent(account.userId);
-
     const rawMessages = body?.messages;
     if (!Array.isArray(rawMessages)) {
       throw new HttpException('messages is required', HttpStatus.BAD_REQUEST);
     }
 
-    const messages = rawMessages
+    const messages: ChatMessage[] = rawMessages
       .filter(
-        (m: any): m is ChatMessage =>
+        (m): m is ChatMessage =>
           !!m &&
           typeof m === 'object' &&
           (m.role === 'user' || m.role === 'assistant') &&
           typeof m.content === 'string' &&
           m.content.trim().length > 0,
       )
+      // Only role + content survive: a client must not be able to inject a
+      // fabricated tool result into the transcript.
+      .map((m) => ({ role: m.role, content: m.content }))
       .slice(-20);
 
     if (messages.length === 0) {
@@ -472,7 +517,7 @@ export class AiController {
 
     const config = await loadAiConfig(this.prisma, account.accountId, {
       requireActive: false,
-    }).catch((err) => {
+    }).catch(() => {
       throw new HttpException(
         {
           error: 'Stored API key could not be decrypted.',
@@ -492,323 +537,52 @@ export class AiController {
       );
     }
 
-    const knowledge = await retrieveKnowledge(
-      this.prisma,
-      account.accountId,
+    const run = await this.runtime.assemble({
       config,
-      latestUserMessage(messages),
-    );
-
-    const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
-      mode: 'auto_reply',
-      knowledge,
-    });
-
-    const { text, handoff } = await generateReply({
-      config,
-      systemPrompt,
       messages,
-    });
-    return { reply: text, handoff };
-  }
-
-  /**
-   * GET /api/ai/knowledge
-   * List all knowledge base documents (member).
-   */
-  @Get('knowledge')
-  @UseGuards(SupabaseAuthGuard)
-  async getKnowledgeBase(@CurrentAccount() account: SupabaseAccountContext) {
-    try {
-      const documents = await this.prisma.ai_knowledge_documents.findMany({
-        where: { account_id: account.accountId },
-        select: { id: true, title: true, updated_at: true },
-        orderBy: { updated_at: 'desc' },
-      });
-      return { documents };
-    } catch (err) {
-      throw new HttpException(
-        'Failed to load knowledge base',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  /**
-   * POST /api/ai/knowledge
-   * Add new knowledge base document (admin+ only).
-   */
-  @Post('knowledge')
-  @UseGuards(SupabaseAuthGuard)
-  async createDocument(
-    @CurrentAccount() account: SupabaseAccountContext,
-    @Body() body: { title?: string; content?: string },
-  ) {
-    await this.verifyAdmin(account.userId);
-
-    const title = typeof body?.title === 'string' ? body.title.trim() : '';
-    const content =
-      typeof body?.content === 'string' ? body.content.trim() : '';
-    if (!title || !content) {
-      throw new HttpException(
-        'title and content are required',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-
-    const doc = await this.prisma.ai_knowledge_documents.create({
-      data: {
-        account_id: account.accountId,
-        created_by: account.userId,
-        title,
-        content,
+      ctx: {
+        accountId: account.accountId,
+        contactId: null,
+        actorUserId: account.userId,
+        mode: body?.mode === 'draft' ? 'draft' : 'auto_reply',
       },
-      select: { id: true },
     });
 
-    const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
-      this.prisma,
-      account.accountId,
-    );
+    const { text, handoff, toolTrace } = await generateReply({
+      config,
+      systemPrompt: run.systemPrompt,
+      messages,
+      tools: run.tools,
+      executeTool: run.executeTool,
+    });
 
-    try {
-      await ingestDocument(
-        this.prisma,
-        account.accountId,
-        { embeddingsApiKey },
-        doc.id,
-        content,
-      );
-    } catch (err) {
-      const message = err instanceof AiError ? err.message : 'indexing failed';
-      return {
-        success: true,
-        id: doc.id,
-        warning: `Saved, but semantic indexing failed (${message}). Lexical search still works; use Reindex to retry.`,
-      };
-    }
-
-    if (corrupt) {
-      return {
-        success: true,
-        id: doc.id,
-        warning:
-          'Saved with keyword search only — your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key).',
-      };
-    }
-
-    return { success: true, id: doc.id };
+    return {
+      reply: text,
+      handoff,
+      grounded_on: run.knowledge.map((hit) => ({
+        document_id: hit.documentId,
+        title: hit.title ?? null,
+        excerpt: hit.content.slice(0, 240),
+      })),
+      tools_available: run.tools.map((t) => t.name),
+      tool_calls: toolTrace,
+    };
   }
 
   /**
-   * GET /api/ai/knowledge/:id
-   * Get single knowledge base document (member).
-   */
-  @Get('knowledge/:id')
-  @UseGuards(SupabaseAuthGuard)
-  async getDocument(
-    @CurrentAccount() account: SupabaseAccountContext,
-    @Param('id') id: string,
-  ) {
-    const document = await this.prisma.ai_knowledge_documents.findFirst({
-      where: {
-        id,
-        account_id: account.accountId,
-      },
-      select: { id: true, title: true, content: true, updated_at: true },
-    });
-
-    if (!document) {
-      throw new HttpException('Not found', HttpStatus.NOT_FOUND);
-    }
-
-    return document;
-  }
-
-  /**
-   * PATCH /api/ai/knowledge/:id
-   * Update knowledge base document (admin+ only).
-   */
-  @Patch('knowledge/:id')
-  @UseGuards(SupabaseAuthGuard)
-  async updateDocument(
-    @CurrentAccount() account: SupabaseAccountContext,
-    @Param('id') id: string,
-    @Body() body: { title?: string; content?: string },
-  ) {
-    await this.verifyAdmin(account.userId);
-
-    const title =
-      typeof body?.title === 'string' ? body.title.trim() : undefined;
-    const content =
-      typeof body?.content === 'string' ? body.content.trim() : undefined;
-
-    if (title === undefined && content === undefined) {
-      throw new HttpException('Nothing to update', HttpStatus.BAD_REQUEST);
-    }
-    if (title !== undefined && !title) {
-      throw new HttpException('title cannot be empty', HttpStatus.BAD_REQUEST);
-    }
-    if (content !== undefined && !content) {
-      throw new HttpException(
-        'content cannot be empty',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-
-    const update: any = {};
-    if (title !== undefined) update.title = title;
-    if (content !== undefined) update.content = content;
-
-    const existing = await this.prisma.ai_knowledge_documents.findFirst({
-      where: {
-        id,
-        account_id: account.accountId,
-      },
-      select: { id: true },
-    });
-    if (!existing) {
-      throw new HttpException('Not found', HttpStatus.NOT_FOUND);
-    }
-
-    await this.prisma.ai_knowledge_documents.update({
-      where: { id },
-      data: update,
-    });
-
-    if (content !== undefined) {
-      const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
-        this.prisma,
-        account.accountId,
-      );
-      try {
-        await ingestDocument(
-          this.prisma,
-          account.accountId,
-          { embeddingsApiKey },
-          id,
-          content,
-        );
-      } catch (err) {
-        const message =
-          err instanceof AiError ? err.message : 'indexing failed';
-        return {
-          success: true,
-          warning: `Updated, but semantic indexing failed (${message}). Lexical search still works; use Reindex to retry.`,
-        };
-      }
-      if (corrupt) {
-        return {
-          success: true,
-          warning:
-            'Updated with keyword search only — your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key).',
-        };
-      }
-    }
-
-    return { success: true };
-  }
-
-  /**
-   * DELETE /api/ai/knowledge/:id
-   * Delete knowledge base document (admin+ only).
-   */
-  @Delete('knowledge/:id')
-  @UseGuards(SupabaseAuthGuard)
-  async deleteDocument(
-    @CurrentAccount() account: SupabaseAccountContext,
-    @Param('id') id: string,
-  ) {
-    await this.verifyAdmin(account.userId);
-
-    const existing = await this.prisma.ai_knowledge_documents.findFirst({
-      where: {
-        id,
-        account_id: account.accountId,
-      },
-      select: { id: true },
-    });
-    if (!existing) {
-      throw new HttpException('Not found', HttpStatus.NOT_FOUND);
-    }
-
-    try {
-      await this.prisma.ai_knowledge_documents.delete({
-        where: { id },
-      });
-      return { success: true };
-    } catch (err) {
-      throw new HttpException(
-        'Failed to delete document',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  /**
-   * POST /api/ai/knowledge/reindex
-   * Reindex all knowledge base documents (admin+ only).
-   */
-  @Post('knowledge/reindex')
-  @UseGuards(SupabaseAuthGuard)
-  async reindexKnowledgeBase(
-    @CurrentAccount() account: SupabaseAccountContext,
-  ) {
-    await this.verifyAdmin(account.userId);
-
-    const docs = await this.prisma.ai_knowledge_documents.findMany({
-      where: { account_id: account.accountId },
-      select: { id: true, content: true },
-    });
-
-    const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
-      this.prisma,
-      account.accountId,
-    );
-
-    if (corrupt) {
-      return {
-        success: false,
-        reindexed: 0,
-        error:
-          'Your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key in Settings → AI Assistant). Nothing was reindexed.',
-      };
-    }
-
-    let reindexed = 0;
-    for (const doc of docs) {
-      try {
-        await ingestDocument(
-          this.prisma,
-          account.accountId,
-          { embeddingsApiKey },
-          doc.id,
-          doc.content,
-        );
-        reindexed += 1;
-      } catch (err) {
-        const message = err instanceof AiError ? err.message : String(err);
-        return {
-          success: false,
-          reindexed,
-          total: docs.length,
-          error: `Reindexed ${reindexed}, then hit an error: ${message}`,
-        };
-      }
-    }
-
-    return { success: true, reindexed };
-  }
-
-  /**
-   * POST /api/internal/ai-reply
+   * POST /api/ai/internal/ai-reply
    * Asynchronous reply bridge (secret auth, no user context needed).
    */
   @Post('internal/ai-reply')
   async internalAiReply(
     @Headers('x-internal-secret') secret: string,
-    @Body() body: any,
+    @Body()
+    body: {
+      accountId?: string;
+      conversationId?: string;
+      contactId?: string;
+      configOwnerUserId?: string;
+    },
   ) {
     if (!secret || secret !== process.env.INTERNAL_API_SECRET) {
       throw new HttpException('Unauthorized', HttpStatus.UNAUTHORIZED);
@@ -822,7 +596,8 @@ export class AiController {
       );
     }
 
-    // Process completely asynchronously, letting webhook return 200 immediately
+    // Process completely asynchronously, letting the webhook return 200
+    // immediately.
     void this.aiReplyService.dispatchInboundToAiReply({
       accountId,
       conversationId,

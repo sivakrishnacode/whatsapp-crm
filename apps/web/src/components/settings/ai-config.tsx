@@ -8,8 +8,6 @@ import { canEditSettings } from '@/lib/auth/roles';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
 import {
   Card,
   CardContent,
@@ -25,41 +23,43 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SettingsPanelHead } from './settings-panel-head';
-import { AiKnowledgeCard } from './ai-knowledge';
-import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
-import type { AiProvider } from '@/lib/ai/types';
+import { AI_PROVIDER_DEFAULT_MODEL, PROVIDER_MODELS } from '@/lib/ai/defaults';
+import type { AiProvider, EmbeddingsProvider } from '@/lib/ai/types';
 
 const MASKED_KEY = '••••••••••••••••';
 
 const PROVIDER_LABEL: Record<AiProvider, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic (Claude)',
+  gemini: 'Google (Gemini)',
 };
 
 const KEY_PLACEHOLDER: Record<AiProvider, string> = {
   openai: 'sk-...',
   anthropic: 'sk-ant-...',
+  gemini: 'AIza… or AQ.…',
 };
 
-const PROVIDER_MODELS: Record<AiProvider, Array<{ value: string; label: string }>> = {
-  openai: [
-    { value: 'gpt-4o-mini', label: 'gpt-4o-mini (Fast & Cost-Efficient)' },
-    { value: 'gpt-4o', label: 'gpt-4o (Flagship Multimodal)' },
-    { value: 'gpt-4-turbo', label: 'gpt-4-turbo (High Intelligence)' },
-    { value: 'gpt-4', label: 'gpt-4 (Legacy Flagship)' },
-    { value: 'gpt-3.5-turbo', label: 'gpt-3.5-turbo (Legacy)' },
-    { value: 'o3-mini', label: 'o3-mini (Reasoning Model)' },
-    { value: 'o1-mini', label: 'o1-mini (Reasoning Model)' },
-    { value: 'o1', label: 'o1 (Reasoning Model)' },
-  ],
-  anthropic: [
-    { value: 'claude-3-5-haiku-latest', label: 'claude-3-5-haiku-latest (Fast & Lightweight)' },
-    { value: 'claude-3-5-sonnet-latest', label: 'claude-3-5-sonnet-latest (Flagship)' },
-    { value: 'claude-3-opus-latest', label: 'claude-3-opus-latest (Complex Reasoning)' },
-  ],
+const KEY_HELP: Record<AiProvider, string> = {
+  openai: 'From platform.openai.com → API keys.',
+  anthropic: 'From console.anthropic.com → API keys.',
+  gemini: 'From aistudio.google.com → API keys.',
 };
 
-export function AiConfig() {
+/** Providers that can also produce knowledge-base embeddings. */
+const EMBEDDINGS_CAPABLE: AiProvider[] = ['openai', 'gemini'];
+
+const EMBEDDINGS_LABEL: Record<EmbeddingsProvider, string> = {
+  openai: 'OpenAI · text-embedding-3-small',
+  gemini: 'Google · gemini-embedding-001',
+};
+
+/**
+ * Provider credentials. Bring-your-own-key: Converse360 calls the
+ * provider directly with this key, so there are no per-seat AI fees and
+ * the conversation never passes through a third party of ours.
+ */
+export function AiConfig({ onSaved }: { onSaved?: () => void } = {}) {
   const { accountId, accountRole, profileLoading } = useAuth();
   const canEdit = accountRole ? canEditSettings(accountRole) : false;
 
@@ -69,8 +69,8 @@ export function AiConfig() {
   const [removing, setRemoving] = useState(false);
 
   const [configured, setConfigured] = useState(false);
-  const [provider, setProvider] = useState<AiProvider>('openai');
-  const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.openai);
+  const [provider, setProvider] = useState<AiProvider>('gemini');
+  const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.gemini);
   const [apiKey, setApiKey] = useState('');
   const [keyEdited, setKeyEdited] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -78,10 +78,8 @@ export function AiConfig() {
   const [embeddingsKey, setEmbeddingsKey] = useState('');
   const [embeddingsKeyEdited, setEmbeddingsKeyEdited] = useState(false);
   const [hasStoredEmbeddingsKey, setHasStoredEmbeddingsKey] = useState(false);
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [isActive, setIsActive] = useState(false);
-  const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
-  const [maxPerConversation, setMaxPerConversation] = useState(3);
+  const [embeddingsProvider, setEmbeddingsProvider] =
+    useState<EmbeddingsProvider>('openai');
 
   // Guard keyed on the account (not a bare boolean) so an in-place
   // account switch — ownership transfer, multi-account membership —
@@ -102,16 +100,18 @@ export function AiConfig() {
         setConfigured(true);
         setProvider(data.provider);
         setModel(data.model);
-        setSystemPrompt(data.system_prompt ?? '');
-        setIsActive(data.is_active);
-        setAutoReplyEnabled(data.auto_reply_enabled);
-        setMaxPerConversation(data.auto_reply_max_per_conversation ?? 3);
         setHasStoredKey(Boolean(data.has_key));
         setApiKey(data.has_key ? MASKED_KEY : '');
         setKeyEdited(false);
         setHasStoredEmbeddingsKey(Boolean(data.has_embeddings_key));
         setEmbeddingsKey(data.has_embeddings_key ? MASKED_KEY : '');
         setEmbeddingsKeyEdited(false);
+        setEmbeddingsProvider(
+          data.embeddings_provider ??
+            (EMBEDDINGS_CAPABLE.includes(data.provider)
+              ? (data.provider as EmbeddingsProvider)
+              : 'openai'),
+        );
       }
     } catch {
       toast.error('Failed to load AI configuration');
@@ -126,10 +126,15 @@ export function AiConfig() {
     void fetchConfig();
   }, [accountId, fetchConfig]);
 
-  // Swap the model default when the provider changes.
+  // Swap the model default when the provider changes, and follow the chat
+  // provider for embeddings when it can embed — an account on Gemini
+  // should not have to go and find an OpenAI key for semantic search.
   const handleProviderChange = (next: AiProvider) => {
     setProvider(next);
     setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
+    if (EMBEDDINGS_CAPABLE.includes(next)) {
+      setEmbeddingsProvider(next as EmbeddingsProvider);
+    }
   };
 
   const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
@@ -137,17 +142,6 @@ export function AiConfig() {
   // undefined = leave unchanged; '' typed = null (clear); text = set.
   const embeddingsKeyPayload = () =>
     embeddingsKeyEdited ? embeddingsKey.trim() || null : undefined;
-
-  const buildBody = () => ({
-    provider,
-    model: model.trim(),
-    api_key: keyPayload(),
-    embeddings_api_key: embeddingsKeyPayload(),
-    system_prompt: systemPrompt.trim() || null,
-    is_active: isActive,
-    auto_reply_enabled: autoReplyEnabled,
-    auto_reply_max_per_conversation: maxPerConversation,
-  });
 
   const handleTest = async () => {
     setTesting(true);
@@ -185,12 +179,20 @@ export function AiConfig() {
       const res = await fetch('/api/ai/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildBody()),
+        body: JSON.stringify({
+          provider,
+          model: model.trim(),
+          api_key: keyPayload(),
+          embeddings_api_key: embeddingsKeyPayload(),
+          embeddings_provider: embeddingsProvider,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
-        toast.success('AI assistant saved.');
+        if (data.warning) toast.warning(data.warning);
+        else toast.success('Provider saved.');
         await fetchConfig();
+        onSaved?.();
       } else {
         toast.error(data.error ?? 'Failed to save.');
       }
@@ -202,6 +204,13 @@ export function AiConfig() {
   };
 
   const handleRemove = async () => {
+    if (
+      !window.confirm(
+        'Remove the AI provider? The agent stops replying, but your knowledge base, skills and actions are kept.',
+      )
+    ) {
+      return;
+    }
     setRemoving(true);
     try {
       const res = await fetch('/api/ai/config', { method: 'DELETE' });
@@ -211,9 +220,7 @@ export function AiConfig() {
         setHasStoredKey(false);
         setApiKey('');
         setKeyEdited(false);
-        setIsActive(false);
-        setAutoReplyEnabled(false);
-        setSystemPrompt('');
+        onSaved?.();
       } else {
         const data = await res.json();
         toast.error(data.error ?? 'Failed to remove.');
@@ -228,18 +235,19 @@ export function AiConfig() {
   if (loading || profileLoading) {
     return (
       <div className="flex items-center justify-center py-16 text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+        <Loader2 className="mr-2 size-4 animate-spin" /> Loading…
       </div>
     );
   }
 
   const disabled = !canEdit || saving;
+  const models = PROVIDER_MODELS[provider];
 
   return (
     <div>
       <SettingsPanelHead
-        title="Agent setup"
-        description="Bring your own OpenAI or Anthropic key. Converse360 calls the provider directly with your key — no per-seat AI fees, and your data stays yours. This powers AI-drafted replies in the inbox, the auto-reply bot, and the Playground."
+        title="Provider & key"
+        description="Bring your own OpenAI, Anthropic or Google key. Converse360 calls the provider directly with it — no per-seat AI fees, and your conversations are not routed through anyone else. This powers AI-drafted replies in the inbox, the auto-reply agent, and the test panel."
       />
 
       {!canEdit && (
@@ -248,11 +256,11 @@ export function AiConfig() {
         </p>
       )}
 
-      <div className="space-y-6">
+      <div className="max-w-3xl space-y-6">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="h-4 w-4 text-primary" /> Provider & key
+              <Sparkles className="size-4 text-primary" /> Model
             </CardTitle>
             <CardDescription>
               Your key is encrypted at rest (AES-256-GCM) and never shown again
@@ -272,10 +280,11 @@ export function AiConfig() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="openai">{PROVIDER_LABEL.openai}</SelectItem>
-                    <SelectItem value="anthropic">
-                      {PROVIDER_LABEL.anthropic}
-                    </SelectItem>
+                    {(Object.keys(PROVIDER_LABEL) as AiProvider[]).map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {PROVIDER_LABEL[p]}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -293,15 +302,13 @@ export function AiConfig() {
                     <SelectValue placeholder="Select a model" />
                   </SelectTrigger>
                   <SelectContent>
-                    {PROVIDER_MODELS[provider].map((m) => (
+                    {models.map((m) => (
                       <SelectItem key={m.value} value={m.value}>
                         {m.label}
                       </SelectItem>
                     ))}
-                    {!PROVIDER_MODELS[provider].some((m) => m.value === model) && model && (
-                      <SelectItem value={model}>
-                        {model}
-                      </SelectItem>
+                    {model && !models.some((m) => m.value === model) && (
+                      <SelectItem value={model}>{model}</SelectItem>
                     )}
                   </SelectContent>
                 </Select>
@@ -337,9 +344,9 @@ export function AiConfig() {
                     tabIndex={-1}
                   >
                     {showKey ? (
-                      <EyeOff className="h-4 w-4" />
+                      <EyeOff className="size-4" />
                     ) : (
-                      <Eye className="h-4 w-4" />
+                      <Eye className="size-4" />
                     )}
                   </button>
                 </div>
@@ -349,22 +356,60 @@ export function AiConfig() {
                   disabled={disabled || testing}
                 >
                   {testing ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="size-4 animate-spin" />
                   ) : (
-                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    <CheckCircle2 className="size-4" />
                   )}
                   Test key
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">
+                {KEY_HELP[provider]} Saving also makes one small call to check it
+                works.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Knowledge-base search</CardTitle>
+            <CardDescription>
+              Optional. With an embeddings key the agent finds passages that
+              mean the same thing as the question; without one it falls back to
+              keyword search, which misses paraphrases.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Embeddings provider</Label>
+              <Select
+                value={embeddingsProvider}
+                onValueChange={(v) => setEmbeddingsProvider(v as EmbeddingsProvider)}
+                disabled={disabled}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(EMBEDDINGS_LABEL) as EmbeddingsProvider[]).map(
+                    (p) => (
+                      <SelectItem key={p} value={p}>
+                        {EMBEDDINGS_LABEL[p]}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Changing this invalidates the vectors already stored — your
+                documents stay, but they need a reindex from the Knowledge tab
+                before meaning-based search works again.
+              </p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="ai-embeddings-key">
-                Embeddings key{' '}
-                <span className="font-normal text-muted-foreground">
-                  (optional — enables semantic knowledge-base search)
-                </span>
-              </Label>
+              <Label htmlFor="ai-embeddings-key">Embeddings key</Label>
               <Input
                 id="ai-embeddings-key"
                 type="password"
@@ -379,112 +424,19 @@ export function AiConfig() {
                     setEmbeddingsKeyEdited(true);
                   }
                 }}
-                placeholder="sk-... (OpenAI)"
+                placeholder={KEY_PLACEHOLDER[embeddingsProvider]}
                 disabled={disabled}
                 autoComplete="off"
               />
               <p className="text-xs text-muted-foreground">
-                An OpenAI key used only to embed your knowledge base
-                (text-embedding-3-small)
-                {provider === 'openai' ? ' — can be the same key as above' : ''}.
-                Leave blank to use keyword search instead. Clear it to turn
-                semantic search off.
+                {embeddingsProvider === provider
+                  ? 'Can be the same key as above.'
+                  : `A ${PROVIDER_LABEL[embeddingsProvider]} key, used only to index your knowledge base.`}{' '}
+                Clear it to turn meaning-based search off.
               </p>
             </div>
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Behaviour</CardTitle>
-            <CardDescription>
-              Tell the assistant about your business — products, tone, what it
-              may and may not promise. This context feeds both drafts and
-              auto-replies.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="ai-prompt">Business context & instructions</Label>
-              <Textarea
-                id="ai-prompt"
-                value={systemPrompt}
-                onChange={(e) => setSystemPrompt(e.target.value)}
-                placeholder="e.g. We are Acme, a coffee-equipment store. Be warm and concise. Never quote prices or delivery dates — hand off to a human for those."
-                rows={5}
-                disabled={disabled}
-              />
-            </div>
-
-            <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
-              <div>
-                <p className="text-sm font-medium text-foreground">
-                  Enable AI assistant
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Master switch. Turns on the “Draft with AI” button in the
-                  inbox.
-                </p>
-              </div>
-              <Switch
-                checked={isActive}
-                onCheckedChange={setIsActive}
-                disabled={disabled}
-              />
-            </div>
-
-            <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
-              <div>
-                <p className="text-sm font-medium text-foreground">
-                  Auto-reply to inbound messages
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  The bot answers new inbound messages automatically (only when
-                  no flow handles them and no agent is assigned). Hands off to a
-                  human when it can’t help.
-                </p>
-              </div>
-              <Switch
-                checked={autoReplyEnabled}
-                onCheckedChange={setAutoReplyEnabled}
-                disabled={disabled || !isActive}
-              />
-            </div>
-
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <Label htmlFor="ai-max">Max auto-replies per conversation</Label>
-                <p className="text-xs text-muted-foreground">
-                  After this many bot replies in one thread, the bot goes quiet.
-                </p>
-              </div>
-              <Input
-                id="ai-max"
-                type="number"
-                min={1}
-                max={20}
-                value={maxPerConversation}
-                onChange={(e) =>
-                  setMaxPerConversation(
-                    Math.min(20, Math.max(1, Number(e.target.value) || 1)),
-                  )
-                }
-                disabled={disabled || !autoReplyEnabled}
-                className="w-20"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <AiKnowledgeCard
-          accountId={accountId}
-          canEdit={canEdit}
-          hasEmbeddingsKey={
-            embeddingsKeyEdited
-              ? embeddingsKey.trim().length > 0
-              : hasStoredEmbeddingsKey
-          }
-        />
 
         <div className="flex items-center justify-between">
           {configured ? (
@@ -495,9 +447,9 @@ export function AiConfig() {
               className="text-destructive hover:text-destructive"
             >
               {removing ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="size-4 animate-spin" />
               ) : (
-                <Trash2 className="mr-2 h-4 w-4" />
+                <Trash2 className="size-4" />
               )}
               Remove
             </Button>
@@ -506,7 +458,7 @@ export function AiConfig() {
           )}
 
           <Button onClick={handleSave} disabled={disabled}>
-            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {saving && <Loader2 className="size-4 animate-spin" />}
             Save
           </Button>
         </div>

@@ -1,4 +1,4 @@
-import { AiError, type ChatMessage } from '../types';
+import { AiError, type ChatMessage, type ToolCall, type ToolDefinition } from '../types';
 
 export interface ProviderArgs {
   apiKey: string;
@@ -6,6 +6,18 @@ export interface ProviderArgs {
   systemPrompt: string;
   messages: ChatMessage[];
   timeoutMs: number;
+  /** Omitted or empty = plain completion, no tool machinery at all. */
+  tools?: ToolDefinition[];
+}
+
+/**
+ * One provider turn. Either the model produced text, or it asked to run
+ * tools — both can be present, and both must survive the round-trip or
+ * the follow-up call loses the model's own reasoning.
+ */
+export interface ProviderTurn {
+  text: string;
+  toolCalls: ToolCall[];
 }
 
 export function toNetworkError(err: unknown): AiError {
@@ -59,15 +71,48 @@ export async function providerHttpError(
   });
 }
 
+/**
+ * Collapse consecutive same-role turns, which Anthropic rejects and the
+ * others merely handle badly.
+ *
+ * Tool turns are never merged: each one answers a specific tool call id,
+ * and losing that pairing breaks the follow-up request. Assistant turns
+ * carrying tool calls are likewise left alone.
+ */
 export function mergeConsecutive(messages: ChatMessage[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const m of messages) {
     const last = out[out.length - 1];
-    if (last && last.role === m.role) {
+    const mergeable =
+      last &&
+      last.role === m.role &&
+      m.role !== 'tool' &&
+      !last.toolCalls?.length &&
+      !m.toolCalls?.length;
+    if (mergeable) {
       last.content = `${last.content}\n\n${m.content}`;
     } else {
-      out.push({ role: m.role, content: m.content });
+      out.push({ ...m });
     }
   }
   return out;
+}
+
+/** Parse a provider's tool arguments (JSON string or object) without trusting it. */
+export function parseToolArguments(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw !== 'string' || !raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    // A model that emits malformed JSON gets an empty argument object,
+    // and the tool's own required-argument check then rejects the call —
+    // strictly better than throwing away the whole reply.
+    return {};
+  }
 }

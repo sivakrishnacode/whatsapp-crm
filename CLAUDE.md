@@ -95,7 +95,7 @@ Internal billing panel: subscriber accounts, subscription amounts, sales, users.
 - Each app owns its own connection (lifecycles differ): `apps/api/src/prisma/prisma.service.ts` (Nest module) and `apps/admin-panel/lib/prisma.ts` (globalThis singleton). Both use `@prisma/adapter-pg` (`pg`).
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`, `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`.
+- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`.
 
 ## Auth & signup
 
@@ -136,6 +136,63 @@ The app is built on the **official Meta WhatsApp Cloud API** (`https://graph.fac
 - **`src/whatsapp/meta-api.util.ts`** — thin fetch wrappers (each takes one named-options object): `sendTextMessage`, `sendTemplateMessage`, `sendMediaMessage`, `sendInteractiveButtons`, `sendInteractiveList` (+ shared `INTERACTIVE_LIMITS`), `sendProductMessage`/`sendProductListMessage`, `sendReactionMessage`, `verifyPhoneNumber`, `exchangeEmbeddedSignupCode`, `registerPhoneNumber`, `subscribeWabaToApp`/`getSubscribedApps`, `uploadResumableMedia`, `submit/edit/deleteMessageTemplate`, `getMediaUrl`/`downloadMedia`.
 - **Also implemented across the module:** flows send (`flow-meta-send.service.ts`), template management (`controllers/whatsapp-templates.controller.ts`), media proxy (`controllers/whatsapp-media.controller.ts`), inbound webhook (`services/whatsapp-webhook.service.ts` — parses messages + delivery/read statuses), account connect/register (`services/connect-account.service.ts`).
 - **In the Postman collection but NOT yet implemented:** outbound *mark-as-read* & *typing indicators*, QR codes, commerce settings, Payments API (SG/IN order messages), analytics, billing, block users, business compliance, deregister, business portfolio. (Read status is only *received* via webhook, not sent.)
+
+## AI agent (`apps/api/src/ai`, `apps/web/src/app/(dashboard)/agents`)
+
+**Bring-your-own-key.** The account's own OpenAI / Anthropic / **Google Gemini** key is
+stored AES-256-GCM-encrypted and used to call the provider directly — no per-seat AI
+fee, no conversation routed through a third party of ours. Everything below is
+account-scoped configuration on `ai_configs` (one row per workspace).
+
+- **One assembly, three entry points.** `AgentRuntimeService.assemble()` retrieves
+  knowledge, gathers tools and composes the prompt; the inbox draft button, the
+  playground and the auto-reply bot all call it. **Keep it that way** — a test panel
+  that assembles differently from production teaches users to trust behaviour they
+  will not get.
+- **Prompt order is load-bearing** (`lib/defaults.ts`): role → safety → identity →
+  what the business does → **ground rules** → voice → skills → tools → escalation →
+  knowledge (last, so it is freshest when the model answers). Ground rules sit above
+  skills deliberately: "never promise same-day delivery" must outrank anything a skill
+  or a retrieved document implies. `ai_configs.system_prompt` is the pre-069 free-text
+  field — still appended, never dropped, because older accounts have everything in it.
+- **Skills are a registry** (`lib/skills.ts`), one entry each: a prompt fragment plus
+  the built-in tools it unlocks. The row stores only `{enabled, config}` per id, so a
+  new skill is one entry and zero migrations. Built-in tools (`lib/tools/builtin.ts`)
+  read this database and are scoped to the account **and** the contact — `lookup_orders`
+  must not become an order-lookup oracle for the tenant.
+- **Custom API actions** (`ai_agent_actions`) are user-defined HTTP tools. The model
+  supplies declared parameter VALUES only; endpoint, method and headers are what an
+  admin configured, so a prompt-injected "call your action against evil.test" is not
+  expressible. Headers are encrypted and never returned — the UI shows header *names*.
+- ⚠️ **`lib/http-guard.ts` is the SSRF boundary** for the two features that fetch a
+  user-supplied URL (page crawling, custom actions): scheme allowlist, no credentials
+  in the URL, every resolved address must be publicly routable, redirects followed
+  manually and re-validated each hop, response bytes capped. Loosening any of it is a
+  security change, not a refactor. Known residual: DNS rebinding (documented in-file).
+- ⚠️ **Embedding vectors are model-specific.** `ai_knowledge_chunks.embedding` is
+  `vector(1536)`, so every provider must emit exactly 1536 dims (Gemini's 3072-dim
+  model is asked for 1536 and re-normalised). Each chunk records `embedding_model` and
+  retrieval filters on the account's current one, so switching provider degrades to
+  keyword search and prompts a reindex rather than returning confident nonsense.
+- ⚠️ **Gemini specifics** (`lib/providers/gemini.ts`, verified against the live API):
+  assistant role is `model`; the system prompt is `system_instruction`; the key goes in
+  the `x-goog-api-key` **header**, never `?key=` (query strings land in logs); a
+  function result returns as a `functionResponse` part on a **user** turn; thinking
+  tokens count against `maxOutputTokens`, so the budget carries headroom or a reply
+  comes back empty with `finishReason: MAX_TOKENS`; and a thinking model's
+  `thoughtSignature` must be echoed back with the call it belongs to.
+- **Test mode** (`test_mode` + up to 3 `test_numbers`, E.164) is the honest "try before
+  you go live": the bot answers only those numbers and leaves everyone else for a
+  human. There is deliberately **no message quota** — the provider bills the customer
+  directly, so a cap we invented would be theatre.
+- **Match RPCs stay `SECURITY INVOKER`** (migration 032 fixed a cross-tenant read by
+  changing them from DEFINER). They are granted to `authenticated`; as DEFINER any
+  signed-in user could pass a foreign `p_account_id` through PostgREST.
+- Web: `components/agents/agent-studio.tsx` — tabs are Persona / Knowledge / Skills /
+  Actions / Behaviour / Provider, and the test panel is a **drawer** so it is reachable
+  from whichever form you just edited. `?tab=` is the deep-link contract (`setup` still
+  maps to Provider). Uploads are base64 in JSON (this API has no multipart parser,
+  same as `POST /ads/media`); PDF/DOCX text is extracted with `pdf-parse` / `mammoth`.
 
 ## Meta Ads Manager (`apps/api/src/ads`, `apps/web/src/app/(dashboard)/ads`) — BUILT, UNRELEASED
 
