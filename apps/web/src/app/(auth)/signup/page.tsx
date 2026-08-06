@@ -21,17 +21,19 @@ import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 /** Supabase's own floor. Stated up front rather than only on failure. */
 const MIN_PASSWORD_LENGTH = 6;
 
-// `useSearchParams` opts the component out of static prerendering
-// unless wrapped in Suspense — same pattern as /login.
+// Only the form reads `useSearchParams`, so only the form sits inside
+// the Suspense boundary — AuthShell prerenders. Same shape as /login.
 export default function SignupPage() {
   return (
-    <Suspense fallback={null}>
-      <SignupPageInner />
-    </Suspense>
+    <AuthShell>
+      <Suspense fallback={<div className="min-h-[34rem]" />}>
+        <SignupForm />
+      </Suspense>
+    </AuthShell>
   );
 }
 
-function SignupPageInner() {
+function SignupForm() {
   const searchParams = useSearchParams();
   // When the user lands here from `/join/<token>` we carry the
   // invite token in the query so it survives the signup → email
@@ -97,143 +99,139 @@ function SignupPageInner() {
 
   if (success) {
     return (
-      <AuthShell>
-        <div className="flex flex-col items-center gap-4 text-center">
-          <div className="flex size-12 items-center justify-center rounded-xl bg-primary/10">
-            <CheckCircle className="size-6 text-primary" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <h1 className="font-heading text-2xl font-semibold">
-              {t("checkEmailTitle")}
-            </h1>
-            <p className="text-sm text-muted-foreground text-balance">
-              {t.rich("checkEmailDesc", {
-                email,
-                strong: (chunks) => (
-                  <span className="font-medium text-foreground">{chunks}</span>
-                ),
-              })}
-            </p>
-          </div>
-          <Link
-            href={
-              inviteToken
-                ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                : "/login"
-            }
-            className={cn(buttonVariants({ variant: "outline" }), "h-10 w-full")}
-          >
-            {t("backToSignIn")}
-          </Link>
+      <div className="flex flex-col items-center gap-4 text-center">
+        <div className="flex size-12 items-center justify-center rounded-xl bg-primary/10">
+          <CheckCircle className="size-6 text-primary" />
         </div>
-      </AuthShell>
+        <div className="flex flex-col gap-1">
+          <h1 className="font-heading text-2xl font-semibold">
+            {t("checkEmailTitle")}
+          </h1>
+          <p className="text-sm text-muted-foreground text-balance">
+            {t.rich("checkEmailDesc", {
+              email,
+              strong: (chunks) => (
+                <span className="font-medium text-foreground">{chunks}</span>
+              ),
+            })}
+          </p>
+        </div>
+        <Link
+          href={
+            inviteToken
+              ? `/login?invite=${encodeURIComponent(inviteToken)}`
+              : "/login"
+          }
+          className={cn(buttonVariants({ variant: "outline" }), "h-10 w-full")}
+        >
+          {t("backToSignIn")}
+        </Link>
+      </div>
     );
   }
 
   return (
-    <AuthShell>
-      <div className="flex flex-col gap-6">
-        <div className="flex flex-col items-center gap-1 text-center">
-          <h1 className="font-heading text-2xl font-semibold">
-            {inviteToken ? t("titleJoin") : t("title")}
-          </h1>
-          <p className="text-sm text-muted-foreground text-balance">
-            {inviteToken ? t("descJoin") : t("desc")}
-          </p>
-        </div>
-
-        <form onSubmit={handleSignup} className="flex flex-col gap-4">
-          {error ? <AuthFormError message={error} /> : null}
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="fullName">{t("nameLabel")}</Label>
-            <Input
-              id="fullName"
-              type="text"
-              autoComplete="name"
-              placeholder={t("namePlaceholder")}
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              required
-              className="h-10"
-            />
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="email">{t("emailLabel")}</Label>
-            <Input
-              id="email"
-              type="email"
-              autoComplete="email"
-              placeholder={t("emailPlaceholder")}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="h-10"
-            />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="password">{t("passwordLabel")}</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                minLength={MIN_PASSWORD_LENGTH}
-                placeholder={t("passwordPlaceholder", { min: MIN_PASSWORD_LENGTH })}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="h-10"
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="confirmPassword">{t("confirmLabel")}</Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                autoComplete="new-password"
-                placeholder={t("confirmPlaceholder")}
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                className="h-10"
-              />
-            </div>
-          </div>
-
-          <Button type="submit" disabled={loading} className="h-10 w-full">
-            {loading ? t("creating") : t("createAccount")}
-          </Button>
-        </form>
-
-        <AuthDivider label={t("orContinueWith")} />
-
-        {/* No email verification round-trip on this path: Google has
-            already verified the address, so the user lands straight in
-            the wizard. */}
-        <GoogleSignInButton
-          next={destination}
-          label={t("continueWithGoogle")}
-          onError={setError}
-        />
-
-        <p className="text-center text-sm text-muted-foreground">
-          {t("haveAccount")}{" "}
-          <Link
-            href={
-              inviteToken
-                ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                : "/login"
-            }
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            {t("signIn")}
-          </Link>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col items-center gap-1 text-center">
+        <h1 className="font-heading text-2xl font-semibold">
+          {inviteToken ? t("titleJoin") : t("title")}
+        </h1>
+        <p className="text-sm text-muted-foreground text-balance">
+          {inviteToken ? t("descJoin") : t("desc")}
         </p>
       </div>
-    </AuthShell>
+
+      <form onSubmit={handleSignup} className="flex flex-col gap-4">
+        {error ? <AuthFormError message={error} /> : null}
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="fullName">{t("nameLabel")}</Label>
+          <Input
+            id="fullName"
+            type="text"
+            autoComplete="name"
+            placeholder={t("namePlaceholder")}
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            required
+            className="h-10"
+          />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="email">{t("emailLabel")}</Label>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            placeholder={t("emailPlaceholder")}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            className="h-10"
+          />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="password">{t("passwordLabel")}</Label>
+            <Input
+              id="password"
+              type="password"
+              autoComplete="new-password"
+              minLength={MIN_PASSWORD_LENGTH}
+              placeholder={t("passwordPlaceholder", { min: MIN_PASSWORD_LENGTH })}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="h-10"
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="confirmPassword">{t("confirmLabel")}</Label>
+            <Input
+              id="confirmPassword"
+              type="password"
+              autoComplete="new-password"
+              placeholder={t("confirmPlaceholder")}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              className="h-10"
+            />
+          </div>
+        </div>
+
+        <Button type="submit" disabled={loading} className="h-10 w-full">
+          {loading ? t("creating") : t("createAccount")}
+        </Button>
+      </form>
+
+      <AuthDivider label={t("orContinueWith")} />
+
+      {/* No email verification round-trip on this path: Google has
+          already verified the address, so the user lands straight in
+          the wizard. */}
+      <GoogleSignInButton
+        next={destination}
+        label={t("continueWithGoogle")}
+        onError={setError}
+      />
+
+      <p className="text-center text-sm text-muted-foreground">
+        {t("haveAccount")}{" "}
+        <Link
+          href={
+            inviteToken
+              ? `/login?invite=${encodeURIComponent(inviteToken)}`
+              : "/login"
+          }
+          className="text-primary underline-offset-4 hover:underline"
+        >
+          {t("signIn")}
+        </Link>
+      </p>
+    </div>
   );
 }
