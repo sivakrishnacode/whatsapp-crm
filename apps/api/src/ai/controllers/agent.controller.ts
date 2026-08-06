@@ -45,7 +45,6 @@ export class AgentController {
   ) {
     return this.agentConfig.saveStudio({
       accountId: account.accountId,
-      userId: account.userId,
       body: body ?? {},
     });
   }

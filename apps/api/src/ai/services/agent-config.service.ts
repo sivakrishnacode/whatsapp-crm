@@ -164,10 +164,9 @@ export class AgentConfigService {
    */
   async saveStudio(args: {
     accountId: string;
-    userId: string;
     body: Record<string, unknown>;
   }) {
-    const { accountId, userId, body } = args;
+    const { accountId, body } = args;
 
     const existing = await this.prisma.ai_configs.findUnique({
       where: { account_id: accountId },
@@ -350,12 +349,13 @@ export class AgentConfigService {
       }
     }
 
+    // `created_by` deliberately untouched: it records who first set the
+    // agent up, not who last edited a field.
     await this.prisma.ai_configs.update({
       where: { account_id: accountId },
-      data: { ...data, created_by: undefined },
+      data,
     });
 
-    void userId; // audit of who edited settings is not modelled here yet
     return { success: true, updated: Object.keys(data).length };
   }
 

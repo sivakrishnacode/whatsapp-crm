@@ -122,16 +122,27 @@ export class AiController {
       throw new HttpException('model is required', HttpStatus.BAD_REQUEST);
     }
 
-    const systemPrompt =
-      typeof body.system_prompt === 'string' && body.system_prompt.trim()
-        ? body.system_prompt.trim()
-        : null;
-    const isActive = body.is_active === true;
-    const autoReplyEnabled = body.auto_reply_enabled === true;
-
-    let maxPer = Number(body.auto_reply_max_per_conversation);
-    if (!Number.isFinite(maxPer)) maxPer = 3;
-    maxPer = Math.min(20, Math.max(1, Math.floor(maxPer)));
+    // Behaviour fields are PATCH semantics: absent means "leave alone".
+    // This endpoint is the Provider tab, which does not render them — if
+    // absent meant `false`, saving a new key would silently switch the
+    // agent off and blank the legacy prompt.
+    const behaviour: Record<string, unknown> = {};
+    if (typeof body.is_active === 'boolean') behaviour.is_active = body.is_active;
+    if (typeof body.auto_reply_enabled === 'boolean') {
+      behaviour.auto_reply_enabled = body.auto_reply_enabled;
+    }
+    if ('system_prompt' in body) {
+      behaviour.system_prompt =
+        typeof body.system_prompt === 'string' && body.system_prompt.trim()
+          ? body.system_prompt.trim()
+          : null;
+    }
+    if (body.auto_reply_max_per_conversation !== undefined) {
+      const maxPer = Number(body.auto_reply_max_per_conversation);
+      behaviour.auto_reply_max_per_conversation = Number.isFinite(maxPer)
+        ? Math.min(20, Math.max(1, Math.floor(maxPer)))
+        : 3;
+    }
 
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
 
@@ -230,10 +241,7 @@ export class AiController {
     const shared: Record<string, unknown> = {
       provider,
       model,
-      system_prompt: systemPrompt,
-      is_active: isActive,
-      auto_reply_enabled: autoReplyEnabled,
-      auto_reply_max_per_conversation: maxPer,
+      ...behaviour,
     };
 
     const hasEmbeddingsKeyAfterSave =
@@ -271,6 +279,12 @@ export class AiController {
     } else {
       await this.prisma.ai_configs.create({
         data: {
+          // A first save means someone just connected a provider, so the
+          // master switch goes on (the inbox's "Draft with AI" becomes
+          // usable) while automatic replying stays off until they ask for
+          // it on the Behaviour tab. Explicit values in the body win.
+          is_active: true,
+          auto_reply_enabled: false,
           ...shared,
           account_id: account.accountId,
           created_by: account.userId,
