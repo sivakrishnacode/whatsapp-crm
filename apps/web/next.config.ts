@@ -170,6 +170,13 @@ const nextConfig: NextConfig = {
         { source: "/api/internal/:path*", destination: `${nestApiUrl}/internal/:path*` },
         { source: "/api/ai/:path*", destination: `${nestApiUrl}/ai/:path*` },
         { source: "/api/ctwa/:path*", destination: `${nestApiUrl}/ctwa/:path*` },
+        // Meta Ads Manager. Includes the OAuth callback
+        // (/api/ads/oauth/callback) — unlike the Instagram callback,
+        // which Meta calls on the API's own domain, this one is
+        // registered as a redirect URI on whichever origin the operator
+        // configures in META_ADS_REDIRECT_URI. Proxying it here means
+        // either origin works.
+        { source: "/api/ads/:path*", destination: `${nestApiUrl}/ads/:path*` },
         { source: "/api/campaigns/:path*", destination: `${nestApiUrl}/campaigns/:path*` },
         // Phase 4 — Form builder
         { source: "/api/forms", destination: `${nestApiUrl}/forms` },

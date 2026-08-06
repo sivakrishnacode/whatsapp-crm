@@ -22,7 +22,9 @@ import {
   type NavIcon,
   type PanelGroup,
   type PanelItem,
+  type RailItem,
 } from './channels';
+import { ADS_ENABLED, ADS_RAIL_ITEM } from './ads';
 import {
   RAIL_GROUPS as SETTINGS_RAIL_GROUPS,
   SECTION_META,
@@ -45,24 +47,6 @@ import {
  * place makes it navigable, highlightable and titled at once.
  */
 
-/** Rail rows that are not channels. */
-export interface RailItem {
-  id: string;
-  label: string;
-  icon: NavIcon;
-  href: string;
-  /** Extra prefixes that should mark this row active. */
-  matchPaths?: string[];
-  /**
-   * When true the row only highlights on an exact pathname match.
-   * `/dashboard` needs this — `startsWith` would otherwise light Home up
-   * for every route beginning with it.
-   */
-  exact?: boolean;
-  /** Show the unread-conversations dot (Inbox). */
-  unreadDot?: boolean;
-}
-
 /**
  * The workspace block — between Onboarding and the channels.
  *
@@ -80,6 +64,12 @@ export const RAIL_WORKSPACE: RailItem[] = [
   { id: 'pipelines', label: 'Pipelines', icon: GitBranch, href: '/pipelines' },
   { id: 'automations', label: 'Automations', icon: Zap, href: '/automations' },
   { id: 'agents', label: 'AI Agents & Bots', icon: Bot, href: '/agents' },
+  // Ads Manager sits at the end of the workspace block and is the first
+  // rail row to own a second panel (see `RailItem.panel`). Spliced in
+  // conditionally rather than filtered downstream so the row simply does
+  // not exist when the feature is off — every consumer reads this array,
+  // so one gate covers the rail, the resolver and the tests.
+  ...(ADS_ENABLED ? [ADS_RAIL_ITEM] : []),
 ];
 
 /** Above the first divider, next to the search placeholder. */
@@ -314,7 +304,8 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
     };
   }
 
-  // 3. A plain rail destination — no second panel.
+  // 3. A rail destination. Most have no second panel; one that declares
+  //    `panel` resolves its active row the same way a channel does.
   const railItem =
     [RAIL_ONBOARDING, ...RAIL_WORKSPACE, ...RAIL_BOTTOM].find((i) =>
       matches(pathname, i.href, i.exact) ||
@@ -322,6 +313,22 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
     ) ?? null;
 
   if (railItem) {
+    if (railItem.panel && railItem.panelTitle) {
+      const item = findPanelItem(railItem.panel, pathname, search);
+      return {
+        activeRailId: railItem.id,
+        // Not a channel, so no brand icon or connect screen — the panel
+        // header falls back to the generic settings icon, as it does for
+        // Settings itself.
+        activeChannel: null,
+        panel: railItem.panel,
+        panelTitle: railItem.panelTitle,
+        activePanelItemId: item?.id ?? null,
+        title: item?.label ?? railItem.label,
+        breadcrumb: item ? railItem.panelTitle : null,
+      };
+    }
+
     return {
       ...empty,
       activeRailId: railItem.id,
@@ -343,4 +350,7 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
 }
 
 export { CHANNELS, CHANNEL_ORDER, channelBase, channelLandingHref, isChannelId };
-export type { ChannelDef, ChannelId, NavIcon, PanelGroup, PanelItem };
+// `RailItem` moved to channels.ts (so ads.ts can build one without an
+// import cycle) but is re-exported here: this module stays the single
+// import site for every nav consumer.
+export type { ChannelDef, ChannelId, NavIcon, PanelGroup, PanelItem, RailItem };

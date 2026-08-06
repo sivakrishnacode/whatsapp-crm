@@ -104,6 +104,46 @@ export interface PanelGroup {
   items: PanelItem[];
 }
 
+/**
+ * A primary-rail row that is not a channel.
+ *
+ * Lives here rather than in nav-config.ts so it can reference
+ * `PanelGroup` without an import cycle — `ads.ts` needs both, and
+ * nav-config.ts imports from both.
+ */
+export interface RailItem {
+  id: string;
+  label: string;
+  icon: NavIcon;
+  href: string;
+  /** Extra prefixes that should mark this row active. */
+  matchPaths?: string[];
+  /**
+   * When true the row only highlights on an exact pathname match.
+   * `/dashboard` needs this — `startsWith` would otherwise light Home up
+   * for every route beginning with it.
+   */
+  exact?: boolean;
+  /** Show the unread-conversations dot (Inbox). */
+  unreadDot?: boolean;
+  /**
+   * Second-sidebar panel this row owns.
+   *
+   * Until Ads Manager, only a channel or Settings could own a panel and
+   * both were special-cased in `resolveNavContext`. Generalising it to
+   * any rail row was smaller than adding a third special case, and
+   * avoided the alternative — registering Ads as a fake channel, which
+   * would have polluted `conversations.channel` semantics for a surface
+   * no conversation ever arrives on.
+   *
+   * A row with a panel still behaves like a plain rail destination in
+   * every other respect; `href` should point at the panel's first row.
+   */
+  panel?: PanelGroup[];
+  /** Panel header label. Required in practice whenever `panel` is set. */
+  panelTitle?: string;
+}
+
 export interface ChannelDef {
   id: ChannelId;
   /** Rail + panel header label. */

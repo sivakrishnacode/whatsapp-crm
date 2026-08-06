@@ -57,7 +57,7 @@ Prisma client before compiling anything that needs it.
 ## Backend — `apps/api` (NestJS)
 
 - **Entry** `src/main.ts`: `cookie-parser`, global `ValidationPipe({ whitelist: true, transform: true })`, listens on `PORT ?? 8001`. No global route prefix — controllers own their full path.
-- **Feature modules** (`src/app.module.ts`): `prisma`, `common` (redis, rate-limit, security), `queue` (BullMQ), `auth`, `health`, `automations`, `flows`, `v1`, `whatsapp`, `account`, `integrations`, `ecommerce`, `campaigns`, `subscription`, `onboarding`, `ai`.
+- **Feature modules** (`src/app.module.ts`): `prisma`, `common` (redis, rate-limit, security, messaging, phone), `queue` (BullMQ), `auth`, `health`, `automations`, `flows`, `v1`, `whatsapp`, `instagram`, `web`, `forms`, `account`, `integrations`, `ecommerce`, `campaigns`, `subscription`, `onboarding`, `ai`, `ads`.
 - **Two API surfaces by controller prefix:**
   - `@Controller('v1/...')` — the **public/partner REST API** (`v1/me`, `v1/messages`, `v1/webhooks`, `v1/broadcasts`, `v1/contacts`, `v1/conversations`). Lives in `src/v1/{controllers,services,types,utils}`. See `docs/public-api.md`.
   - `@Controller('whatsapp/...')` — **internal dashboard/webhook** endpoints consumed by the web app.
@@ -95,7 +95,7 @@ Internal billing panel: subscriber accounts, subscription amounts, sales, users.
 - Each app owns its own connection (lifecycles differ): `apps/api/src/prisma/prisma.service.ts` (Nest module) and `apps/admin-panel/lib/prisma.ts` (globalThis singleton). Both use `@prisma/adapter-pg` (`pg`).
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`, `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`.
+- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`, `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`.
 
 ## Auth & signup
 
@@ -127,10 +127,81 @@ The rule of thumb: *if a query runs through Prisma or a SECURITY DEFINER functio
 
 The app is built on the **official Meta WhatsApp Cloud API** (`https://graph.facebook.com/<version>/...`, Bearer-token auth). `notes/WhatsApp Cloud API.postman_collection.json` is Meta's official collection and is a **superset reference** for endpoints — the code implements a subset of it.
 
-- **Version pin:** WhatsApp module uses `v21.0` (`META_API_BASE` in `src/whatsapp/meta-api.util.ts:21` and `whatsapp-templates.controller.ts:63`). ⚠️ The separate Facebook Pages/lead-gen integration (`src/integrations/controllers/facebook.controller.ts`) uses `v20.0` — versions are intentionally distinct surfaces but worth keeping in mind.
+- **Version pins — there are now THREE**, one per independent surface. Intentional (three upgrade risks rather than one shared one), but three things to keep current:
+  | Surface | Version | Constant |
+  |---|---|---|
+  | WhatsApp Cloud API | `v21.0` | `META_API_BASE` in `src/whatsapp/meta-api.util.ts:21`, `whatsapp-templates.controller.ts:63` |
+  | Facebook Pages / lead-gen | `v20.0` | inline in `src/integrations/controllers/facebook.controller.ts` |
+  | Marketing API (Ads Manager) | `v23.0` | `META_MARKETING_VERSION` in `src/ads/marketing-api.util.ts` |
 - **`src/whatsapp/meta-api.util.ts`** — thin fetch wrappers (each takes one named-options object): `sendTextMessage`, `sendTemplateMessage`, `sendMediaMessage`, `sendInteractiveButtons`, `sendInteractiveList` (+ shared `INTERACTIVE_LIMITS`), `sendProductMessage`/`sendProductListMessage`, `sendReactionMessage`, `verifyPhoneNumber`, `exchangeEmbeddedSignupCode`, `registerPhoneNumber`, `subscribeWabaToApp`/`getSubscribedApps`, `uploadResumableMedia`, `submit/edit/deleteMessageTemplate`, `getMediaUrl`/`downloadMedia`.
 - **Also implemented across the module:** flows send (`flow-meta-send.service.ts`), template management (`controllers/whatsapp-templates.controller.ts`), media proxy (`controllers/whatsapp-media.controller.ts`), inbound webhook (`services/whatsapp-webhook.service.ts` — parses messages + delivery/read statuses), account connect/register (`services/connect-account.service.ts`).
 - **In the Postman collection but NOT yet implemented:** outbound *mark-as-read* & *typing indicators*, QR codes, commerce settings, Payments API (SG/IN order messages), analytics, billing, block users, business compliance, deregister, business portfolio. (Read status is only *received* via webhook, not sent.)
+
+## Meta Ads Manager (`apps/api/src/ads`, `apps/web/src/app/(dashboard)/ads`) — BUILT, UNRELEASED
+
+A second, separate Meta surface: the **Marketing API**, not the Cloud API. Design in
+`docs/meta-ads-manager.md`; open setup items in `docs/meta-ads-manager-requirements.md`;
+App Review pack in `docs/meta-ads-app-review.md`. **Read the first two before touching
+this module.**
+
+Complete: connect/Setup, insights sync, the four-step publish wizard, all five ad
+types, Meta lead forms, audiences, events, and spend→deal attribution. Gated off
+pending Meta App Review for `ads_management`.
+
+- **Off by default, twice.** `ADS_MANAGER_ENABLED` (api — `AdsEnabledGuard` 404s every
+  `/ads/*` route) and `NEXT_PUBLIC_ADS_MANAGER_ENABLED` (web — hides the rail row and
+  `notFound()`s the routes via `ads/layout.tsx`). The web flag is a courtesy; the API
+  guard is the actual gate. `ADS_MANAGER_SANDBOX=true` serves `src/ads/sandbox/fixtures.ts`
+  instead of calling Meta, which is what makes the App Review screencast possible before
+  App Review.
+- ⚠️ **Ads run on the CUSTOMER's ad account. There is no wallet, no ad-credit ledger, no
+  money through us** — Meta bills them directly. The reference product's "Buy Credits"
+  header is deliberately absent; its honest equivalent is `meta_ads_config.funding_ok`,
+  read from Meta, which gates publishing. Do not add a credits table without re-opening
+  that decision.
+- ⚠️ **Money is BIGINT minor units everywhere** (₹500 → `50000`), matching both the
+  Marketing API and migration 068. No DECIMAL, no float rupees. One missed conversion is
+  a 100× overspend on a real card, so `ADS_MAX_DAILY_BUDGET_MINOR` is a server-side
+  backstop independent of any UI validation.
+- ⚠️⚠️ **META IS INCONSISTENT ABOUT MONEY UNITS.** Budgets and bids
+  (`daily_budget`, `bid_amount`) are **minor** units as a string — `"50000"` is ₹500.
+  Insights (`spend`, `cpc`, `cpm`) are **major** units as a decimal string — `"500.00"`
+  is ₹500. Same API, often the same screen. `parseBudgetMinor` and `parseSpendMinor` in
+  `marketing-api.util.ts` are the ONLY places that difference is handled; never call
+  `Number()` on a Meta money field directly. Pinned by `marketing-money.test.ts`.
+- **The five ad types are a builder registry** (`services/ad-types/`), one file each,
+  each answering campaign + adset + creative. `AdPublishService` is type-agnostic;
+  adding a sixth type is one file plus one registry line. `whatsapp_status` ships behind
+  its own `ADS_WHATSAPP_STATUS_ENABLED` flag because the placement is unverified.
+- **Reach estimates and previews are advisory, never fatal.** A failed estimate returns
+  a reason, not an exception — Meta rejects estimate specs for reasons (new ad account,
+  throttle) that do not prevent the ad. Meta's real ad preview
+  (`generatePreviews`) is implemented but unused: it returns a facebook.com iframe and
+  the CSP has no `frame-src` for it.
+- **`AdsConfigService` is the only place an ads token is decrypted**, and the only source
+  of the ad account / page / pixel ids. **No route accepts an `ad_account_id` as
+  authority** — see the tenant-scoping section above; here the cost of forgetting is
+  spending another tenant's money rather than leaking their data. `facebook_connections`
+  stores its token in *plaintext*; do not copy that pattern (fixing it is outstanding).
+- **Connect is a server-side OAuth redirect, not the Facebook JS SDK.** An ads token must
+  never exist in page JavaScript, and `connect.facebook.net` is absent from the web app's
+  CSP `script-src` (Report-Only today, so the existing SDK-based lead-ads screen still
+  works — but nothing new should be built on it). The callback (`ads/oauth/callback`) has
+  **no auth guard**: it is a cross-site GET, and authorisation comes from the HMAC-signed
+  `state` carrying the accountId that started the flow.
+- **`common/security/oauth-state.util.ts`** is the shared signed-state mechanism, with
+  per-provider bindings in `instagram/utils/` and `ads/utils/` — each signs with its own
+  app secret so a state minted for one flow cannot be replayed into the other.
+- **Publishing (M3) must be create-all-PAUSED → mirror in one transaction → activate**,
+  with reverse-order rollback. `graphRequest` retries throttled **GETs only**; a retried
+  POST buys a second campaign and Marketing API has no idempotency key. This is pinned by
+  a test in `marketing-api.util.test.ts` — don't "fix" it.
+- **Nav:** Ads Manager is the first primary-rail row to own a second panel, via
+  `RailItem.panel` in `lib/nav/channels.ts`. It is deliberately **not** a channel — a
+  channel is a value of `conversations.channel`, and no conversation arrives on "ads"
+  (a Click-to-WhatsApp click produces a *WhatsApp* conversation).
+- Publishing a Click-to-WhatsApp ad writes a `ctwa_campaigns` row, so existing
+  `ctwa_clicks` attribution and `/channels/whatsapp/ctwa` keep working unchanged.
 
 ## Infra — `docker-compose.yml`
 

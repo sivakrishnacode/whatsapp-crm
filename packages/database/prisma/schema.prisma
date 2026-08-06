@@ -21,7 +21,6 @@ model Account {
   defaultCountry                String                          @default("IN") @map("default_country")
   account_invitations           account_invitations[]
   account_onboarding            account_onboarding?
-  plan_enquiries                plan_enquiries[]
   users                         users                           @relation(fields: [ownerUserId], references: [id], onUpdate: NoAction)
   ai_configs                    ai_configs?
   ai_knowledge_chunks           ai_knowledge_chunks[]
@@ -38,23 +37,33 @@ model Account {
   deals                         deals[]
   flowRuns                      FlowRun[]
   flows                         Flow[]
-  instagram_comments            instagram_comments[]
-  instagram_comment_funnels     instagram_comment_funnels[]
+  form_bookings                 form_bookings[]
+  form_submissions              form_submissions[]
+  forms                         forms[]
   instagram_comment_funnel_runs instagram_comment_funnel_runs[]
+  instagram_comment_funnels     instagram_comment_funnels[]
+  instagram_comments            instagram_comments[]
   instagram_config              instagram_config?
   instagram_media               instagram_media[]
   member_presence               member_presence[]
   message_templates             message_templates[]
+  meta_ad_audiences             meta_ad_audiences[]
+  meta_ads_ads                  meta_ads_ads[]
+  meta_ads_adsets               meta_ads_adsets[]
+  meta_ads_audit                meta_ads_audit[]
+  meta_ads_campaigns            meta_ads_campaigns[]
+  meta_ads_config               meta_ads_config?
+  meta_ads_insights             meta_ads_insights[]
+  meta_ads_media                meta_ads_media[]
+  meta_lead_forms               meta_lead_forms[]
   notifications                 notifications[]
   pipelines                     pipelines[]
+  plan_enquiries                plan_enquiries[]
   profiles                      Profile[]
   tags                          tags[]
-  webhook_endpoints             webhook_endpoints[]
-  forms                         forms[]
-  form_submissions              form_submissions[]
-  form_bookings                 form_bookings[]
   web_config                    web_config?
   web_sessions                  web_sessions[]
+  webhook_endpoints             webhook_endpoints[]
   whatsapp_config               whatsapp_config?
   whatsapp_orders               whatsapp_orders[]
   whatsapp_products             whatsapp_products[]
@@ -505,41 +514,41 @@ model sso_providers {
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model users {
-  instance_id                                                        String?                         @db.Uuid
-  id                                                                 String                          @id @db.Uuid
-  aud                                                                String?                         @db.VarChar(255)
-  role                                                               String?                         @db.VarChar(255)
-  email                                                              String?                         @unique(map: "users_email_partial_key", where: raw("(is_sso_user = false)")) @db.VarChar(255)
-  encrypted_password                                                 String?                         @db.VarChar(255)
-  email_confirmed_at                                                 DateTime?                       @db.Timestamptz(6)
-  invited_at                                                         DateTime?                       @db.Timestamptz(6)
-  confirmation_token                                                 String?                         @unique(map: "confirmation_token_idx", where: raw("((confirmation_token)::text !~ '^[0-9 ]*$'::text)")) @db.VarChar(255)
-  confirmation_sent_at                                               DateTime?                       @db.Timestamptz(6)
-  recovery_token                                                     String?                         @unique(map: "recovery_token_idx", where: raw("((recovery_token)::text !~ '^[0-9 ]*$'::text)")) @db.VarChar(255)
-  recovery_sent_at                                                   DateTime?                       @db.Timestamptz(6)
-  email_change_token_new                                             String?                         @unique(map: "email_change_token_new_idx", where: raw("((email_change_token_new)::text !~ '^[0-9 ]*$'::text)")) @db.VarChar(255)
-  email_change                                                       String?                         @db.VarChar(255)
-  email_change_sent_at                                               DateTime?                       @db.Timestamptz(6)
-  last_sign_in_at                                                    DateTime?                       @db.Timestamptz(6)
+  instance_id                                                        String?                      @db.Uuid
+  id                                                                 String                       @id @db.Uuid
+  aud                                                                String?                      @db.VarChar(255)
+  role                                                               String?                      @db.VarChar(255)
+  email                                                              String?                      @unique(map: "users_email_partial_key", where: raw("(is_sso_user = false)")) @db.VarChar(255)
+  encrypted_password                                                 String?                      @db.VarChar(255)
+  email_confirmed_at                                                 DateTime?                    @db.Timestamptz(6)
+  invited_at                                                         DateTime?                    @db.Timestamptz(6)
+  confirmation_token                                                 String?                      @unique(map: "confirmation_token_idx", where: raw("((confirmation_token)::text !~ '^[0-9 ]*$'::text)")) @db.VarChar(255)
+  confirmation_sent_at                                               DateTime?                    @db.Timestamptz(6)
+  recovery_token                                                     String?                      @unique(map: "recovery_token_idx", where: raw("((recovery_token)::text !~ '^[0-9 ]*$'::text)")) @db.VarChar(255)
+  recovery_sent_at                                                   DateTime?                    @db.Timestamptz(6)
+  email_change_token_new                                             String?                      @unique(map: "email_change_token_new_idx", where: raw("((email_change_token_new)::text !~ '^[0-9 ]*$'::text)")) @db.VarChar(255)
+  email_change                                                       String?                      @db.VarChar(255)
+  email_change_sent_at                                               DateTime?                    @db.Timestamptz(6)
+  last_sign_in_at                                                    DateTime?                    @db.Timestamptz(6)
   raw_app_meta_data                                                  Json?
   raw_user_meta_data                                                 Json?
   is_super_admin                                                     Boolean?
-  created_at                                                         DateTime?                       @db.Timestamptz(6)
-  updated_at                                                         DateTime?                       @db.Timestamptz(6)
-  phone                                                              String?                         @unique
-  phone_confirmed_at                                                 DateTime?                       @db.Timestamptz(6)
-  phone_change                                                       String?                         @default("")
-  phone_change_token                                                 String?                         @default("") @db.VarChar(255)
-  phone_change_sent_at                                               DateTime?                       @db.Timestamptz(6)
-  confirmed_at                                                       DateTime?                       @default(dbgenerated("LEAST(email_confirmed_at, phone_confirmed_at)")) @db.Timestamptz(6)
-  email_change_token_current                                         String?                         @unique(map: "email_change_token_current_idx", where: raw("((email_change_token_current)::text !~ '^[0-9 ]*$'::text)")) @default("") @db.VarChar(255)
-  email_change_confirm_status                                        Int?                            @default(0) @db.SmallInt
-  banned_until                                                       DateTime?                       @db.Timestamptz(6)
-  reauthentication_token                                             String?                         @unique(map: "reauthentication_token_idx", where: raw("((reauthentication_token)::text !~ '^[0-9 ]*$'::text)")) @default("") @db.VarChar(255)
-  reauthentication_sent_at                                           DateTime?                       @db.Timestamptz(6)
-  is_sso_user                                                        Boolean                         @default(false)
-  deleted_at                                                         DateTime?                       @db.Timestamptz(6)
-  is_anonymous                                                       Boolean                         @default(false)
+  created_at                                                         DateTime?                    @db.Timestamptz(6)
+  updated_at                                                         DateTime?                    @db.Timestamptz(6)
+  phone                                                              String?                      @unique
+  phone_confirmed_at                                                 DateTime?                    @db.Timestamptz(6)
+  phone_change                                                       String?                      @default("")
+  phone_change_token                                                 String?                      @default("") @db.VarChar(255)
+  phone_change_sent_at                                               DateTime?                    @db.Timestamptz(6)
+  confirmed_at                                                       DateTime?                    @default(dbgenerated("LEAST(email_confirmed_at, phone_confirmed_at)")) @db.Timestamptz(6)
+  email_change_token_current                                         String?                      @unique(map: "email_change_token_current_idx", where: raw("((email_change_token_current)::text !~ '^[0-9 ]*$'::text)")) @default("") @db.VarChar(255)
+  email_change_confirm_status                                        Int?                         @default(0) @db.SmallInt
+  banned_until                                                       DateTime?                    @db.Timestamptz(6)
+  reauthentication_token                                             String?                      @unique(map: "reauthentication_token_idx", where: raw("((reauthentication_token)::text !~ '^[0-9 ]*$'::text)")) @default("") @db.VarChar(255)
+  reauthentication_sent_at                                           DateTime?                    @db.Timestamptz(6)
+  is_sso_user                                                        Boolean                      @default(false)
+  deleted_at                                                         DateTime?                    @db.Timestamptz(6)
+  is_anonymous                                                       Boolean                      @default(false)
   identities                                                         identities[]
   mfa_factors                                                        mfa_factors[]
   oauth_authorizations                                               oauth_authorizations[]
@@ -548,8 +557,8 @@ model users {
   sessions                                                           sessions[]
   webauthn_challenges                                                webauthn_challenges[]
   webauthn_credentials                                               webauthn_credentials[]
-  account_invitations_account_invitations_accepted_by_user_idTousers account_invitations[]           @relation("account_invitations_accepted_by_user_idTousers")
-  account_invitations_account_invitations_created_by_user_idTousers  account_invitations[]           @relation("account_invitations_created_by_user_idTousers")
+  account_invitations_account_invitations_accepted_by_user_idTousers account_invitations[]        @relation("account_invitations_accepted_by_user_idTousers")
+  account_invitations_account_invitations_created_by_user_idTousers  account_invitations[]        @relation("account_invitations_created_by_user_idTousers")
   accounts                                                           Account?
   ai_configs                                                         ai_configs[]
   ai_knowledge_documents                                             ai_knowledge_documents[]
@@ -567,20 +576,24 @@ model users {
   facebook_pages                                                     facebook_pages[]
   flowRuns                                                           FlowRun[]
   flows                                                              Flow[]
-  instagram_config                                                   instagram_config[]
+  forms                                                              forms[]
   instagram_comment_funnels                                          instagram_comment_funnels[]
+  instagram_config                                                   instagram_config[]
   member_presence                                                    member_presence?
   message_templates                                                  message_templates[]
-  notifications_notifications_actor_user_idTousers                   notifications[]                 @relation("notifications_actor_user_idTousers")
-  notifications_notifications_user_idTousers                         notifications[]                 @relation("notifications_user_idTousers")
+  meta_ads_audit                                                     meta_ads_audit[]
+  meta_ads_campaigns                                                 meta_ads_campaigns[]
+  meta_ads_config                                                    meta_ads_config[]
+  meta_ads_media                                                     meta_ads_media[]
+  notifications_notifications_actor_user_idTousers                   notifications[]              @relation("notifications_actor_user_idTousers")
+  notifications_notifications_user_idTousers                         notifications[]              @relation("notifications_user_idTousers")
   pipelines                                                          pipelines[]
   plan_enquiries                                                     plan_enquiries[]
   profiles                                                           Profile?
   tags                                                               tags[]
   usage_tracking                                                     usage_tracking[]
-  user_subscriptions_user_subscriptions_manually_assigned_byTousers  user_subscriptions[]            @relation("user_subscriptions_manually_assigned_byTousers")
-  user_subscriptions_user_subscriptions_user_idTousers               user_subscriptions?             @relation("user_subscriptions_user_idTousers")
-  forms                                                              forms[]
+  user_subscriptions_user_subscriptions_manually_assigned_byTousers  user_subscriptions[]         @relation("user_subscriptions_manually_assigned_byTousers")
+  user_subscriptions_user_subscriptions_user_idTousers               user_subscriptions?          @relation("user_subscriptions_user_idTousers")
   web_config                                                         web_config[]
   webhook_endpoints                                                  webhook_endpoints[]
   whatsapp_config                                                    whatsapp_config[]
@@ -759,12 +772,12 @@ model AutomationLog {
   triggerEvent      String                       @map("trigger_event")
   stepsExecuted     Json                         @default("[]") @map("steps_executed")
   status            String
-  /// Channel of the triggering conversation. NULL means unknown — for
-  /// time-based runs, the manual entrypoint, and rows predating this.
-  channel           String?
   errorMessage      String?                      @map("error_message")
   createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
   accountId         String                       @map("account_id") @db.Uuid
+  /// Channel of the triggering conversation. NULL means unknown — for
+  /// time-based runs, the manual entrypoint, and rows predating this.
+  channel           String?
   account           Account                      @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   automation        Automation                   @relation(fields: [automationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   contact           contacts?                    @relation(fields: [contactId], references: [id], onUpdate: NoAction)
@@ -839,15 +852,15 @@ model Automation {
   description       String?
   triggerType       String                       @map("trigger_type")
   triggerConfig     Json                         @default("{}") @map("trigger_config")
-  /// Channels this automation runs on. EMPTY = all channels (the
-  /// default). Non-empty restricts it — see automations_channels_chk.
-  channels          String[]                     @default([])
   isActive          Boolean                      @default(false) @map("is_active")
   executionCount    Int                          @default(0) @map("execution_count")
   lastExecutedAt    DateTime?                    @map("last_executed_at") @db.Timestamptz(6)
   createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime                     @default(now()) @map("updated_at") @db.Timestamptz(6)
   accountId         String                       @map("account_id") @db.Uuid
+  /// Channels this automation runs on. EMPTY = all channels (the
+  /// default). Non-empty restricts it — see automations_channels_chk.
+  channels          String[]                     @default([])
   logs              AutomationLog[]
   pendingExecutions AutomationPendingExecution[]
   steps             AutomationStep[]
@@ -991,57 +1004,57 @@ model contact_tags {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model contacts {
-  id                            String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id                       String                          @db.Uuid
+  id                          String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id                     String                          @db.Uuid
   /// Canonical E.164, e.g. "+919791766444" — enforced by
   /// contacts_phone_e164_chk (migration 061). Every write path must run
   /// its input through toE164() first; Meta's digits-only form is a
   /// send-time conversion, never a stored one.
   /// NULL for Instagram-only contacts. See contacts_identity_chk: every
   /// contact must carry a phone OR an ig_scoped_id.
-  phone                         String?
-  name                          String?
-  email                         String?
-  company                       String?
-  avatar_url                    String?
-  created_at                    DateTime?                       @default(now()) @db.Timestamptz(6)
-  updated_at                    DateTime?                       @default(now()) @db.Timestamptz(6)
-  account_id                    String                          @db.Uuid
-  phone_normalized              String?                         @default(dbgenerated("regexp_replace(phone, '\\D'::text, ''::text, 'g'::text)"))
+  phone                       String?
+  name                        String?
+  email                       String?
+  company                     String?
+  avatar_url                  String?
+  created_at                  DateTime?                       @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime?                       @default(now()) @db.Timestamptz(6)
+  account_id                  String                          @db.Uuid
+  phone_normalized            String?                         @default(dbgenerated("regexp_replace(phone, '\\D'::text, ''::text, 'g'::text)"))
   /// Instagram-scoped user ID. App-scoped — the same Instagram user has a
   /// different IGSID under a different Meta app.
-  ig_scoped_id                  String?
+  ig_scoped_id                String?
   /// Cached @handle. Display only; usernames are mutable, never key on them.
-  ig_username                   String?
+  ig_username                 String?
   /// Opaque browser-persisted visitor id for the web widget. Account-scoped
   /// (unlike an IGSID, it means nothing outside this tenant). NULL for every
   /// non-web contact. See contacts_identity_chk: phone OR ig_scoped_id OR this.
-  web_visitor_id                String?
+  web_visitor_id              String?
   /// How this contact first entered the account. Written once at creation
   /// and never updated — it describes a past event, not current state.
   /// Legal values live in contacts_source_chk (migration 056) and are
   /// mirrored in src/common/contacts/contact-source.ts.
-  source                        String                          @default("unknown")
-  automationLogs                AutomationLog[]
-  automationPendingExecutions   AutomationPendingExecution[]
-  broadcast_recipients          broadcast_recipients[]
-  contact_custom_values         contact_custom_values[]
-  contact_notes                 contact_notes[]
-  contact_tags                  contact_tags[]
-  accounts                      Account                         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users                         users                           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  conversations                 conversations[]
-  ctwa_clicks                   ctwa_clicks[]
-  deals                         deals[]
-  ecommerce_orders              ecommerce_orders[]
-  flowRuns                      FlowRun[]
-  notifications                 notifications[]
-  whatsapp_orders               whatsapp_orders[]
-  instagram_comments            instagram_comments[]
-  instagram_funnel_runs         instagram_comment_funnel_runs[]
-  web_sessions                  web_sessions[]
-  form_submissions              form_submissions[]
-  form_bookings                 form_bookings[]
+  source                      String                          @default("unknown")
+  automationLogs              AutomationLog[]
+  automationPendingExecutions AutomationPendingExecution[]
+  broadcast_recipients        broadcast_recipients[]
+  contact_custom_values       contact_custom_values[]
+  contact_notes               contact_notes[]
+  contact_tags                contact_tags[]
+  accounts                    Account                         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                       users                           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  conversations               conversations[]
+  ctwa_clicks                 ctwa_clicks[]
+  deals                       deals[]
+  ecommerce_orders            ecommerce_orders[]
+  flowRuns                    FlowRun[]
+  form_bookings               form_bookings[]
+  form_submissions            form_submissions[]
+  instagram_funnel_runs       instagram_comment_funnel_runs[]
+  instagram_comments          instagram_comments[]
+  notifications               notifications[]
+  web_sessions                web_sessions[]
+  whatsapp_orders             whatsapp_orders[]
 
   @@unique([account_id, phone_normalized], map: "idx_contacts_account_phone_normalized", where: raw("(phone_normalized <> ''::text)"))
   @@unique([account_id, ig_scoped_id], map: "idx_contacts_account_igsid", where: raw("(ig_scoped_id IS NOT NULL)"))
@@ -1055,37 +1068,37 @@ model contacts {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model conversations {
-  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id               String              @db.Uuid
-  contact_id            String              @db.Uuid
-  status                String              @default("open")
-  assigned_agent_id     String?             @db.Uuid
+  id                    String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id               String                          @db.Uuid
+  contact_id            String                          @db.Uuid
+  status                String                          @default("open")
+  assigned_agent_id     String?                         @db.Uuid
   last_message_text     String?
-  last_message_at       DateTime?           @db.Timestamptz(6)
-  unread_count          Int?                @default(0)
-  created_at            DateTime?           @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime?           @default(now()) @db.Timestamptz(6)
-  account_id            String              @db.Uuid
-  ai_autoreply_disabled Boolean             @default(false)
-  ai_reply_count        Int                 @default(0)
+  last_message_at       DateTime?                       @db.Timestamptz(6)
+  unread_count          Int?                            @default(0)
+  created_at            DateTime?                       @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime?                       @default(now()) @db.Timestamptz(6)
+  account_id            String                          @db.Uuid
+  ai_autoreply_disabled Boolean                         @default(false)
+  ai_reply_count        Int                             @default(0)
   /// 'whatsapp' | 'instagram'. Enforced by conversations_channel_chk.
-  channel               String              @default("whatsapp")
+  channel               String                          @default("whatsapp")
   /// Most recent customer-sent message. Drives Instagram's 24h window.
-  last_inbound_at       DateTime?           @db.Timestamptz(6)
-  accounts              Account             @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  contacts              contacts            @relation(fields: [contact_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users                 users               @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  last_inbound_at       DateTime?                       @db.Timestamptz(6)
+  accounts              Account                         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contacts              contacts                        @relation(fields: [contact_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                 users                           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   ctwa_clicks           ctwa_clicks[]
   deals                 deals[]
   flowRuns              FlowRun[]
+  form_bookings         form_bookings[]
+  form_submissions      form_submissions[]
+  instagram_funnel_runs instagram_comment_funnel_runs[]
+  instagram_comments    instagram_comments[]
   message_reactions     message_reactions[]
   messages              messages[]
   notifications         notifications[]
-  instagram_comments    instagram_comments[]
-  instagram_funnel_runs instagram_comment_funnel_runs[]
   web_sessions          web_sessions[]
-  form_submissions      form_submissions[]
-  form_bookings         form_bookings[]
 
   @@index([account_id], map: "idx_conversations_account")
   @@index([account_id, contact_id], map: "idx_conversations_account_contact")
@@ -1305,7 +1318,7 @@ model FlowNode {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   flow      Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([flowId, nodeKey], map: "flow_nodes_flow_id_node_key_key")
+  @@unique([flowId, nodeKey])
   @@index([flowId], map: "idx_flow_nodes_flow")
   @@map("flow_nodes")
   @@schema("public")
@@ -1690,37 +1703,37 @@ model webhook_endpoints {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model instagram_config {
-  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  account_id          String    @unique @db.Uuid
-  user_id             String    @db.Uuid
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id              String    @unique @db.Uuid
+  user_id                 String    @db.Uuid
   /// Globally unique: the inbound webhook has nothing else to route on
   /// (`entry[].id` IS this value).
-  ig_user_id          String    @unique
+  ig_user_id              String    @unique
   /// The same account reports a second, app-scoped id. Which one lands
   /// in a webhook's entry[].id varies, so routing matches either.
-  ig_app_scoped_id    String?
-  ig_username         String?
-  profile_picture_url String?
+  ig_app_scoped_id        String?
+  ig_username             String?
+  profile_picture_url     String?
   /// AES-256-GCM encrypted at rest.
-  access_token        String
+  access_token            String
   /// Instagram long-lived tokens last 60 days and must be actively
   /// refreshed. Read by the daily refresh sweep.
-  token_expires_at    DateTime? @db.Timestamptz(6)
-  token_refreshed_at  DateTime? @db.Timestamptz(6)
+  token_expires_at        DateTime? @db.Timestamptz(6)
+  token_refreshed_at      DateTime? @db.Timestamptz(6)
   /// disconnected | connected | token_expired | error
-  status              String    @default("disconnected")
-  subscribed_fields   String[]  @default([])
-  subscribed_at       DateTime? @db.Timestamptz(6)
-  connected_at        DateTime? @db.Timestamptz(6)
-  last_error          String?
-  created_at          DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime  @default(now()) @db.Timestamptz(6)
+  status                  String    @default("disconnected")
+  subscribed_fields       String[]  @default([])
+  subscribed_at           DateTime? @db.Timestamptz(6)
+  connected_at            DateTime? @db.Timestamptz(6)
+  last_error              String?
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @db.Timestamptz(6)
   /// Master switch for comment → DM funnels. FALSE (default) means no
   /// funnel fires regardless of its own is_active. Off by default
   /// because the feature DMs people who never messaged the business.
-  comment_funnels_enabled Boolean @default(false)
-  accounts            Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users               users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  comment_funnels_enabled Boolean   @default(false)
+  accounts                Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                   users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([account_id], map: "idx_instagram_config_account")
   @@index([token_expires_at], map: "idx_instagram_config_token_expires", where: raw("(token_expires_at IS NOT NULL)"))
@@ -1748,6 +1761,11 @@ model instagram_comment_funnels {
   /// Up to 3 {label,url} link-out buttons, sent as a web_url button
   /// template. Not postbacks — tapping one ends the funnel.
   reward_buttons      Json                            @default("[]")
+  is_active           Boolean                         @default(false)
+  matched_count       Int                             @default(0)
+  delivered_count     Int                             @default(0)
+  created_at          DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime                        @default(now()) @db.Timestamptz(6)
   /// Public replies on the comment itself ("check your DMs"), rotated
   /// per match — hundreds of identical replies under one post is
   /// Instagram's own comment-spam signal. Empty = answer privately only.
@@ -1755,14 +1773,9 @@ model instagram_comment_funnels {
   /// Seconds to wait before the opening DM. 0 sends inline on the
   /// webhook path; higher parks it on a delayed queue job. Max 3600.
   reply_delay_seconds Int                             @default(0)
-  is_active           Boolean                         @default(false)
-  matched_count       Int                             @default(0)
-  delivered_count     Int                             @default(0)
-  created_at          DateTime                        @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime                        @default(now()) @db.Timestamptz(6)
+  runs                instagram_comment_funnel_runs[]
   accounts            Account                         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users               users                           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  runs                instagram_comment_funnel_runs[]
 
   @@index([account_id, ig_media_id], map: "idx_ig_comment_funnels_active", where: raw("(is_active = true)"))
   @@index([account_id, ig_media_id], map: "idx_ig_comment_funnels_account_media")
@@ -1792,13 +1805,10 @@ model instagram_comment_funnel_runs {
   created_at      DateTime                  @default(now()) @db.Timestamptz(6)
   updated_at      DateTime                  @default(now()) @db.Timestamptz(6)
   accounts        Account                   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contacts        contacts?                 @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
+  conversations   conversations?            @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
   funnel          instagram_comment_funnels @relation(fields: [funnel_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  contacts        contacts?                 @relation(fields: [contact_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  conversations   conversations?            @relation(fields: [conversation_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
-  /// One run per person per funnel, forever. A repeat commenter gets
-  /// one DM, not five — Meta's one-private-reply-per-comment rule
-  /// would not have helped, since five comments are five comment ids.
   @@unique([funnel_id, from_igsid])
   @@index([funnel_id, state, created_at(sort: Desc)], map: "idx_ig_funnel_runs_funnel_state")
   @@index([account_id, created_at(sort: Desc)], map: "idx_ig_funnel_runs_account_created")
@@ -1814,10 +1824,13 @@ model instagram_media {
   media_product_type String?
   permalink          String?
   thumbnail_url      String?
+  caption            String?
+  posted_at          DateTime? @db.Timestamptz(6)
+  synced_at          DateTime  @default(now()) @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
   /// Full-size asset. Images populate this and not thumbnail_url;
   /// videos populate both. NULL for CAROUSEL_ALBUM — use `children`.
   media_url          String?
-  caption            String?
   like_count         Int?
   /// Instagram's own total, including replies and comments made before
   /// we connected. NOT the moderation backlog.
@@ -1827,9 +1840,6 @@ model instagram_media {
   is_comment_enabled Boolean?
   /// Carousel items as [{id, media_type, media_url, thumbnail_url}].
   children           Json?
-  posted_at          DateTime? @db.Timestamptz(6)
-  synced_at          DateTime  @default(now()) @db.Timestamptz(6)
-  created_at         DateTime  @default(now()) @db.Timestamptz(6)
   accounts           Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([account_id, ig_media_id])
@@ -1896,17 +1906,17 @@ model forms {
   notify           Json               @default("{\"emails\": [], \"in_app\": true}")
   /// Denormalised: avoids a COUNT(*) per row of the forms list.
   submission_count Int                @default(0)
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime           @default(now()) @db.Timestamptz(6)
   /// When this form's slot_picker offers slots. NULL = takes no bookings.
   /// Read whole by slot-engine.util.ts; nothing filters on it.
   availability     Json?
-  created_at       DateTime           @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime           @default(now()) @db.Timestamptz(6)
+  bookings         form_bookings[]
+  submissions      form_submissions[]
   accounts         Account            @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users            users              @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  submissions      form_submissions[]
-  bookings         form_bookings[]
-  prechat_for      web_config[]       @relation("web_config_prechat_form")
   offline_for      web_config[]       @relation("web_config_offline_form")
+  prechat_for      web_config[]       @relation("web_config_prechat_form")
 
   @@unique([account_id, slug])
   @@index([account_id, updated_at(sort: Desc)], map: "idx_forms_account_updated")
@@ -1917,35 +1927,34 @@ model forms {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model form_submissions {
-  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  account_id      String         @db.Uuid
-  form_id         String         @db.Uuid
-  contact_id      String?        @db.Uuid
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String          @db.Uuid
+  form_id         String          @db.Uuid
+  contact_id      String?         @db.Uuid
   /// Set only for widget submissions — what lets a form_submitted
   /// automation reply in the thread the visitor is already in.
-  conversation_id String?        @db.Uuid
+  conversation_id String?         @db.Uuid
   /// Answers keyed by field_key. Stays readable after the form is edited:
   /// a submission is a historical record, not a view of the current form.
-  data            Json           @default("{}")
+  data            Json            @default("{}")
   /// referrer, utm, page_url, user_agent, ip_hash (hashed, never raw).
   meta            Json?
   /// hosted | embed | widget | whatsapp_flow | api | automation
-  source          String         @default("hosted")
+  source          String          @default("hosted")
   /// new | read | spam
-  status          String         @default("new")
-  created_at      DateTime       @default(now()) @db.Timestamptz(6)
-  accounts        Account        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  forms           forms          @relation(fields: [form_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  contacts        contacts?      @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
-  conversations   conversations? @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
+  status          String          @default("new")
+  created_at      DateTime        @default(now()) @db.Timestamptz(6)
   bookings        form_bookings[]
+  accounts        Account         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contacts        contacts?       @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
+  conversations   conversations?  @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
+  forms           forms           @relation(fields: [form_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([account_id, created_at(sort: Desc)], map: "idx_form_submissions_account_created")
   @@index([form_id, created_at(sort: Desc)], map: "idx_form_submissions_form_created")
   @@index([contact_id, created_at(sort: Desc)], map: "idx_form_submissions_contact", where: raw("(contact_id IS NOT NULL)"))
   @@schema("public")
 }
-
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -1967,20 +1976,20 @@ model form_bookings {
   status          String            @default("confirmed")
   /// Bearer capability for /book/manage/<token>. Covers reschedule and cancel.
   manage_token    String            @unique
+  notes           String?
+  cancelled_at    DateTime?         @db.Timestamptz(6)
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime          @default(now()) @db.Timestamptz(6)
   /// Denormalised from forms.availability.capacity: an EXCLUDE constraint
   /// cannot join, so the flag it keys on has to live on the row. True exempts
   /// the booking from form_bookings_no_overlap (group bookings overlap by
   /// design) and it is counted transactionally instead.
   capacity_group  Boolean           @default(false)
-  notes           String?
-  cancelled_at    DateTime?         @db.Timestamptz(6)
-  created_at      DateTime          @default(now()) @db.Timestamptz(6)
-  updated_at      DateTime          @default(now()) @db.Timestamptz(6)
   accounts        Account           @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  forms           forms             @relation(fields: [form_id], references: [id], onUpdate: NoAction)
-  submissions     form_submissions? @relation(fields: [submission_id], references: [id], onUpdate: NoAction)
   contacts        contacts?         @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
   conversations   conversations?    @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
+  forms           forms             @relation(fields: [form_id], references: [id], onUpdate: NoAction)
+  submissions     form_submissions? @relation(fields: [submission_id], references: [id], onUpdate: NoAction)
 
   @@index([form_id, starts_at], map: "idx_form_bookings_form_starts")
   @@index([account_id, starts_at(sort: Desc)], map: "idx_form_bookings_account_starts")
@@ -1991,47 +2000,47 @@ model form_bookings {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model web_config {
-  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  account_id     String        @unique @db.Uuid
-  user_id        String        @db.Uuid
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String    @unique @db.Uuid
+  user_id         String    @db.Uuid
   /// PUBLIC. Ships inside a <script> tag on the customer's own site, so treat
   /// as world-readable: it locates the account, it authorises nothing.
   /// Globally unique — the bootstrap endpoint has nothing else to route on.
-  widget_key     String        @unique
+  widget_key      String    @unique
   /// SECRET, AES-256-GCM encrypted at rest. Signs visitor session tokens and
   /// verifies identity-verification HMACs. Never included in any response.
-  widget_secret  String
+  widget_secret   String
   /// Origins permitted to embed the widget. EMPTY DENIES EVERYTHING — the
   /// opposite of automations.channels, deliberately: a default-open allowlist
   /// would make every new account an open relay.
-  allowed_origins String[]     @default([])
+  allowed_origins String[]  @default([])
   /// disconnected | connected | disabled
-  status         String        @default("disconnected")
+  status          String    @default("disconnected")
   /// Set the first time a bootstrap call is served from an allowed origin.
   /// With no OAuth to complete, an observed live load IS what "connected" means.
-  installed_at   DateTime?     @db.Timestamptz(6)
-  last_seen_at   DateTime?     @db.Timestamptz(6)
+  installed_at    DateTime? @db.Timestamptz(6)
+  last_seen_at    DateTime? @db.Timestamptz(6)
   /// Launcher + panel appearance, read and written whole. No query filters on it.
-  appearance     Json          @default("{\"theme\": \"auto\", \"accent\": \"#2D7FF9\", \"title\": \"Chat with us\", \"teaser\": null, \"position\": \"right\", \"greeting\": null, \"subtitle\": \"We typically reply in a few minutes\", \"launcher_icon\": \"chat\", \"teaser_delay_seconds\": 8}")
+  appearance      Json      @default("{\"theme\": \"auto\", \"title\": \"Chat with us\", \"accent\": \"#2D7FF9\", \"teaser\": null, \"greeting\": null, \"position\": \"right\", \"subtitle\": \"We typically reply in a few minutes\", \"launcher_icon\": \"chat\", \"teaser_delay_seconds\": 8}")
   /// Weekly schedule + timezone. NULL = always open.
-  business_hours Json?
-  ai_enabled     Boolean       @default(false)
-  show_branding  Boolean       @default(true)
-  locale         String        @default("en")
-  last_error     String?
+  business_hours  Json?
+  ai_enabled      Boolean   @default(false)
+  show_branding   Boolean   @default(true)
+  locale          String    @default("en")
+  last_error      String?
   /// Form shown before the chat starts. NULL = start chatting immediately.
   /// Capturing a phone or email here is what upgrades an anonymous
   /// web_visitor_id contact into a durable one.
-  prechat_form_id String?      @db.Uuid
+  prechat_form_id String?   @db.Uuid
   /// Form offered instead of live chat outside business hours. NULL = let
   /// the visitor send anyway (it waits in the inbox).
-  offline_form_id String?      @db.Uuid
-  created_at     DateTime      @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime      @default(now()) @db.Timestamptz(6)
-  accounts       Account       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users          users         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  prechat_form   forms?        @relation("web_config_prechat_form", fields: [prechat_form_id], references: [id], onUpdate: NoAction)
-  offline_form   forms?        @relation("web_config_offline_form", fields: [offline_form_id], references: [id], onUpdate: NoAction)
+  offline_form_id String?   @db.Uuid
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
+  accounts        Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  offline_form    forms?    @relation("web_config_offline_form", fields: [offline_form_id], references: [id], onUpdate: NoAction)
+  prechat_form    forms?    @relation("web_config_prechat_form", fields: [prechat_form_id], references: [id], onUpdate: NoAction)
+  users           users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([account_id], map: "idx_web_config_account")
   @@schema("public")
@@ -2077,7 +2086,6 @@ model whatsapp_config {
   user_id                 String    @db.Uuid
   phone_number_id         String    @unique
   waba_id                 String?
-  catalog_id              String?
   access_token            String
   verify_token            String?
   status                  String    @default("disconnected")
@@ -2092,10 +2100,11 @@ model whatsapp_config {
   business_id             String?
   coexistence             Boolean   @default(false)
   token_expires_at        DateTime? @db.Timestamptz(6)
+  catalog_id              String?
+  limits_synced_at        DateTime? @db.Timestamptz(6)
   messaging_limit_tier    String?
   quality_rating          String?
   tier_daily_limit        Int?
-  limits_synced_at        DateTime? @db.Timestamptz(6)
   accounts                Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                   users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -2145,6 +2154,250 @@ model whatsapp_products {
   @@unique([account_id, retailer_id])
   @@index([account_id], map: "idx_whatsapp_products_account")
   @@index([retailer_id], map: "idx_whatsapp_products_retailer")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model meta_ad_audiences {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id         String    @db.Uuid
+  meta_audience_id   String    @unique
+  name               String
+  subtype            String
+  origin             String    @default("meta")
+  approximate_count  BigInt?
+  delivery_status    String?
+  filter_criteria    Json?
+  source_audience_id String?
+  last_synced_at     DateTime? @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @default(now()) @db.Timestamptz(6)
+  accounts           Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_meta_ad_audiences_account")
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model meta_ads_ads {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id       String          @db.Uuid
+  adset_id         String          @db.Uuid
+  meta_ad_id       String          @unique
+  meta_creative_id String?
+  name             String
+  creative         Json            @default("{}")
+  status           String?
+  effective_status String?
+  preview_url      String?
+  synced_at        DateTime?       @db.Timestamptz(6)
+  created_at       DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime        @default(now()) @db.Timestamptz(6)
+  accounts         Account         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  meta_ads_adsets  meta_ads_adsets @relation(fields: [adset_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([account_id], map: "idx_meta_ads_ads_account")
+  @@index([adset_id], map: "idx_meta_ads_ads_adset")
+  @@schema("public")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model meta_ads_adsets {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id         String             @db.Uuid
+  campaign_id        String             @db.Uuid
+  meta_adset_id      String             @unique
+  name               String
+  optimization_goal  String?
+  billing_event      String?
+  bid_strategy       String?
+  bid_amount         BigInt?
+  daily_budget       BigInt?
+  lifetime_budget    BigInt?
+  destination_type   String?
+  targeting          Json               @default("{}")
+  promoted_object    Json?
+  adset_schedule     Json?
+  status             String?
+  effective_status   String?
+  synced_at          DateTime?          @db.Timestamptz(6)
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime           @default(now()) @db.Timestamptz(6)
+  meta_ads_ads       meta_ads_ads[]
+  accounts           Account            @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  meta_ads_campaigns meta_ads_campaigns @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([account_id], map: "idx_meta_ads_adsets_account")
+  @@index([campaign_id], map: "idx_meta_ads_adsets_campaign")
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model meta_ads_audit {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id  String   @db.Uuid
+  user_id     String?  @db.Uuid
+  action      String
+  object_type String?
+  object_id   String?
+  detail      Json?
+  succeeded   Boolean  @default(true)
+  error       String?
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  accounts    Account  @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users       users?   @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_meta_ads_audit_account_created")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model meta_ads_campaigns {
+  id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id            String            @db.Uuid
+  meta_campaign_id      String            @unique
+  ad_type               String
+  name                  String
+  objective             String
+  status                String?
+  effective_status      String?
+  buying_type           String?
+  daily_budget          BigInt?
+  lifetime_budget       BigInt?
+  special_ad_categories String[]          @default([])
+  start_time            DateTime?         @db.Timestamptz(6)
+  stop_time             DateTime?         @db.Timestamptz(6)
+  created_by_user_id    String?           @db.Uuid
+  synced_at             DateTime?         @db.Timestamptz(6)
+  created_at            DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime          @default(now()) @db.Timestamptz(6)
+  meta_ads_adsets       meta_ads_adsets[]
+  accounts              Account           @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                 users?            @relation(fields: [created_by_user_id], references: [id], onUpdate: NoAction)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_meta_ads_campaigns_account_created")
+  @@index([account_id, ad_type], map: "idx_meta_ads_campaigns_account_type")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model meta_ads_config {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id               String    @unique @db.Uuid
+  user_id                  String    @db.Uuid
+  fb_user_id               String
+  fb_user_name             String?
+  access_token             String
+  token_expires_at         DateTime? @db.Timestamptz(6)
+  granted_scopes           String[]  @default([])
+  business_id              String?
+  business_name            String?
+  ad_account_id            String?
+  ad_account_name          String?
+  currency                 String?
+  timezone_name            String?
+  account_status           Int?
+  funding_ok               Boolean   @default(false)
+  page_id                  String?
+  page_name                String?
+  page_access_token        String?
+  whatsapp_phone_number_id String?
+  whatsapp_display_number  String?
+  pixel_id                 String?
+  pixel_name               String?
+  lead_terms_accepted_at   DateTime? @db.Timestamptz(6)
+  status                   String    @default("disconnected")
+  last_error               String?
+  connected_at             DateTime? @db.Timestamptz(6)
+  created_at               DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime  @default(now()) @db.Timestamptz(6)
+  accounts                 Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                    users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([account_id], map: "idx_meta_ads_config_account")
+  @@index([token_expires_at], map: "idx_meta_ads_config_token_expires", where: raw("(token_expires_at IS NOT NULL)"))
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model meta_ads_insights {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id    String   @db.Uuid
+  level         String
+  object_id     String
+  date_start    DateTime @db.Date
+  spend         BigInt   @default(0)
+  impressions   BigInt   @default(0)
+  reach         BigInt   @default(0)
+  clicks        BigInt   @default(0)
+  ctr           Float?
+  cpc           Float?
+  cpm           Float?
+  frequency     Float?
+  actions       Json?
+  action_values Json?
+  currency      String?
+  synced_at     DateTime @default(now()) @db.Timestamptz(6)
+  accounts      Account  @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([account_id, level, object_id, date_start], map: "meta_ads_insights_unique_grain")
+  @@index([account_id, level, date_start(sort: Desc)], map: "idx_meta_ads_insights_lookup")
+  @@index([object_id, date_start(sort: Desc)], map: "idx_meta_ads_insights_object")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model meta_ads_media {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String   @db.Uuid
+  kind            String
+  meta_image_hash String?
+  meta_video_id   String?
+  name            String?
+  width           Int?
+  height          Int?
+  permalink_url   String?
+  uploaded_by     String?  @db.Uuid
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  accounts        Account  @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users           users?   @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
+
+  @@unique([account_id, meta_image_hash], map: "uq_meta_ads_media_image", where: raw("(meta_image_hash IS NOT NULL)"))
+  @@unique([account_id, meta_video_id], map: "uq_meta_ads_media_video", where: raw("(meta_video_id IS NOT NULL)"))
+  @@index([account_id, created_at(sort: Desc)], map: "idx_meta_ads_media_account_created")
+  @@schema("public")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model meta_lead_forms {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id         String    @db.Uuid
+  page_id            String
+  meta_form_id       String    @unique
+  name               String
+  status             String?
+  questions          Json      @default("[]")
+  privacy_policy_url String?
+  thank_you          Json?
+  leads_count        Int       @default(0)
+  synced_at          DateTime? @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @default(now()) @db.Timestamptz(6)
+  accounts           Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_meta_lead_forms_account")
+  @@index([page_id], map: "idx_meta_lead_forms_page")
   @@schema("public")
 }
 

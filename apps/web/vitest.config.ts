@@ -15,6 +15,11 @@ export default defineConfig({
       ENCRYPTION_KEY:
         "0000000000000000000000000000000000000000000000000000000000000000",
       META_APP_SECRET: "test-meta-app-secret",
+      // Ads Manager is off by default in every real environment, but its
+      // nav wiring is only reachable when on — so tests run with it
+      // enabled. The off case is covered explicitly in
+      // lib/nav/ads-nav.test.ts, which re-imports with the flag cleared.
+      NEXT_PUBLIC_ADS_MANAGER_ENABLED: "true",
     },
     clearMocks: true,
   },

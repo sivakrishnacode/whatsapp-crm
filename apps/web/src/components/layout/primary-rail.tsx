@@ -131,6 +131,58 @@ function RailIconSlot({
   );
 }
 
+/**
+ * The active row's panel, inlined beneath it — mobile only.
+ *
+ * On `lg:` the panel is a second column (`SecondaryPanel`); below that
+ * breakpoint the single drawer has to carry both sidebars, so the rows
+ * are nested under whichever rail row owns them.
+ *
+ * Extracted from the channel block when Ads Manager became the first
+ * non-channel rail row to own a panel — two copies of this would have
+ * drifted the moment one gained a state the other did not.
+ */
+function MobileInlinePanel({
+  groups,
+  pathname,
+}: {
+  groups: PanelGroup[];
+  pathname: string;
+}) {
+  return (
+    <div className="mt-1 mb-2 ml-4 border-l border-border pl-3 lg:hidden">
+      {groups.map((group) => (
+        <div key={group.label ?? 'root'} className="mb-2">
+          {group.label ? (
+            <div className="px-3 pt-1.5 pb-1 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
+              {group.label}
+            </div>
+          ) : null}
+          <ul className="flex flex-col gap-0.5">
+            {group.items.map((item) => (
+              <li key={item.id}>
+                <Link href={item.href}>
+                  <span
+                    className={cn(
+                      'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                      pathname === item.href.split('?')[0]
+                        ? 'bg-primary-soft text-primary'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                    )}
+                  >
+                    <item.icon className="size-4 shrink-0" />
+                    <span className="flex-1 truncate">{item.label}</span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface PrimaryRailProps {
   /** Labelled (`lg:w-56`) vs icons-only (`lg:w-14`). Desktop only. */
   expanded: boolean;
@@ -201,7 +253,16 @@ export function PrimaryRail({
         {showDot ? <UnreadDot count={totalUnread} className={labelClass} /> : null}
       </Link>
     );
-    return <li key={item.id}>{withTooltip(row, collapsed ? item.label : null)}</li>;
+    return (
+      <li key={item.id}>
+        {withTooltip(row, collapsed ? item.label : null)}
+        {/* A rail row may own a panel (Ads Manager). On mobile it nests
+            here, exactly as a channel's does. */}
+        {item.panel && isActive && mobilePanel ? (
+          <MobileInlinePanel groups={mobilePanel.groups} pathname={pathname} />
+        ) : null}
+      </li>
+    );
   };
 
   return (
@@ -463,36 +524,10 @@ export function PrimaryRail({
                   {/* Mobile: the active channel's panel inlined here, so
                       the single drawer carries both sidebars. */}
                   {mobilePanel && isActive ? (
-                    <div className="mt-1 mb-2 ml-4 border-l border-border pl-3 lg:hidden">
-                      {mobilePanel.groups.map((group) => (
-                        <div key={group.label ?? 'root'} className="mb-2">
-                          {group.label ? (
-                            <div className="px-3 pt-1.5 pb-1 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-                              {group.label}
-                            </div>
-                          ) : null}
-                          <ul className="flex flex-col gap-0.5">
-                            {group.items.map((item) => (
-                              <li key={item.id}>
-                                <Link href={item.href}>
-                                  <span
-                                    className={cn(
-                                      'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                                      pathname === item.href.split('?')[0]
-                                        ? 'bg-primary-soft text-primary'
-                                        : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                                    )}
-                                  >
-                                    <item.icon className="size-4 shrink-0" />
-                                    <span className="flex-1 truncate">{item.label}</span>
-                                  </span>
-                                </Link>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                    </div>
+                    <MobileInlinePanel
+                      groups={mobilePanel.groups}
+                      pathname={pathname}
+                    />
                   ) : null}
                 </li>
               );

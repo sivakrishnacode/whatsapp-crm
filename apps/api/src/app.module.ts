@@ -19,6 +19,7 @@ import { SubscriptionModule } from './subscription/subscription.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { AiModule } from './ai/ai.module';
 import { FormsModule } from './forms/forms.module';
+import { AdsModule } from './ads/ads.module';
 
 @Module({
   imports: [
@@ -43,6 +44,9 @@ import { FormsModule } from './forms/forms.module';
     SubscriptionModule,
     OnboardingModule,
     AiModule,
+    // Meta Ads Manager. Every route is behind ADS_MANAGER_ENABLED, so
+    // importing it unconditionally is safe — see AdsEnabledGuard.
+    AdsModule,
   ],
 })
 export class AppModule {}
