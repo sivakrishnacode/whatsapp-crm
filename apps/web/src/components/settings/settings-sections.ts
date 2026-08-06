@@ -4,7 +4,6 @@ import {
   KeyRound,
   LayoutGrid,
   Palette,
-  PlugZap,
   Shield,
   Tags,
   User,
@@ -50,7 +49,6 @@ export const SETTINGS_SECTIONS = [
   'profile',
   'security',
   'appearance',
-  'whatsapp',
   'fields',
   'deals',
   'api',
@@ -77,7 +75,6 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   profile: { id: 'profile', label: 'Your profile', icon: User, group: 'account' },
   security: { id: 'security', label: 'Login & security', icon: Shield, group: 'account' },
   appearance: { id: 'appearance', label: 'Appearance', icon: Palette, group: 'account' },
-  whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
@@ -102,6 +99,11 @@ function isSection(value: string | null): value is SettingsSection {
  * flat layout collapse onto their new home (Tags + Custom fields → the
  * merged "Fields & tags" section). Anything unknown falls back to the
  * Overview landing.
+ *
+ * `?tab=whatsapp` is deliberately NOT handled here. WhatsApp setup lives
+ * at /channels/whatsapp/settings — one screen, reached from the channel
+ * rail — and a `redirects()` rule in next.config.ts sends the old query
+ * there before this page ever renders.
  */
 export function resolveSection(raw: string | null): SettingsSection {
   if (raw === 'tags' || raw === 'custom-fields') return 'fields';

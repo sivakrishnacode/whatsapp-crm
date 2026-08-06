@@ -216,13 +216,24 @@ describe('resolveNavContext — settings panel', () => {
     }
   });
 
-  it('points the WhatsApp settings row at the channel route', () => {
-    // One source of truth for the connection form: the Settings panel
-    // deep-links into the channel rather than mounting a second copy.
+  it('has no WhatsApp row — setup lives on the channel, not in Settings', () => {
+    // The row used to exist purely to deep-link into
+    // /channels/whatsapp/settings, which made WhatsApp look like a
+    // Settings section while every other channel was configured from
+    // its own rail. Old ?tab=whatsapp links are redirected by
+    // next.config.ts, not resolved here.
+    const ids = SETTINGS_PANEL.flatMap((g) => g.items).map((i) => i.id);
+    expect(ids).not.toContain('settings-whatsapp');
+  });
+
+  it('keeps billing owner-only', () => {
+    // Stricter than adminOnly: an invited admin runs the workspace but
+    // does not pay for it.
     const row = SETTINGS_PANEL.flatMap((g) => g.items).find(
-      (i) => i.id === 'settings-whatsapp',
+      (i) => i.id === 'settings-pricing',
     );
-    expect(row?.href).toBe('/channels/whatsapp/settings');
+    expect(row?.ownerOnly).toBe(true);
+    expect(row?.label).toBe('Plan & billing');
   });
 });
 

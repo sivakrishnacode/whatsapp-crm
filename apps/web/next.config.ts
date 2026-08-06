@@ -213,11 +213,24 @@ const nextConfig: NextConfig = {
       ["/ecommerce", "/channels/whatsapp/commerce"],
       ["/ctwa", "/channels/whatsapp/ctwa"],
     ];
-    return moved.flatMap(([from, to]) => [
-      { source: from, destination: to, permanent: false },
-      // Nested paths too: /broadcasts/new, /broadcasts/<id>, /whatsapp-flows/<id>.
-      { source: `${from}/:path*`, destination: `${to}/:path*`, permanent: false },
-    ]);
+    return [
+      ...moved.flatMap(([from, to]) => [
+        { source: from, destination: to, permanent: false },
+        // Nested paths too: /broadcasts/new, /broadcasts/<id>, /whatsapp-flows/<id>.
+        { source: `${from}/:path*`, destination: `${to}/:path*`, permanent: false },
+      ]),
+      // WhatsApp setup is no longer a Settings tab — it is one screen at
+      // its channel route, reached from the channel rail. The old
+      // `?tab=whatsapp` query would otherwise fall through
+      // `resolveSection` to the Overview landing, which looks like the
+      // page silently ignored the link.
+      {
+        source: "/settings",
+        has: [{ type: "query" as const, key: "tab", value: "whatsapp" }],
+        destination: "/channels/whatsapp/settings",
+        permanent: false,
+      },
+    ];
   },
   async headers() {
     return [

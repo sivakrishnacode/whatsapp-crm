@@ -133,13 +133,7 @@ function buildSettingsPanel(): PanelGroup[] {
         id: `settings-${s}`,
         label: meta.label,
         icon: meta.icon,
-        // The WhatsApp row is the pointer into the channel panel — one
-        // source of truth for the connection form, which now lives at
-        // its channel route.
-        href:
-          s === 'whatsapp'
-            ? '/channels/whatsapp/settings'
-            : `/settings?tab=${s}`,
+        href: `/settings?tab=${s}`,
         adminOnly: meta.adminOnly,
         ownerOnly: meta.ownerOnly,
       } satisfies PanelItem;
