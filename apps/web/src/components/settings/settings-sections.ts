@@ -68,6 +68,8 @@ export interface SectionMeta {
   icon: LucideIcon;
   group: 'top' | 'account' | 'workspace';
   adminOnly?: boolean;
+  /** Stricter than adminOnly — owner only. See PanelItem.ownerOnly. */
+  ownerOnly?: boolean;
 }
 
 export const SECTION_META: Record<SettingsSection, SectionMeta> = {
@@ -79,7 +81,10 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
-  pricing: { id: 'pricing', label: 'Pricing & plans', icon: CreditCard, group: 'workspace', adminOnly: true },
+  // Owner-only, not admin+. The workspace has one plan and one person
+  // who pays for it; an invited admin has no business reading the
+  // trial end date or opening a checkout against someone else's card.
+  pricing: { id: 'pricing', label: 'Plan & billing', icon: CreditCard, group: 'workspace', ownerOnly: true },
 };
 
 export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[] = [

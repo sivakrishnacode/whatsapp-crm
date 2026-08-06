@@ -1,7 +1,6 @@
 import {
   Bot,
   ClipboardList,
-  CreditCard,
   GitBranch,
   Home,
   Inbox,
@@ -108,13 +107,12 @@ export const RAIL_BOTTOM: RailItem[] = [
 const SETTINGS_EXTRA_ROWS: Record<string, PanelItem[]> = {
   workspace: [
     { id: 'members', label: 'Users & Roles', icon: UsersRound, href: '/members' },
-    {
-      id: 'admin-subscriptions',
-      label: 'Subscriptions',
-      icon: CreditCard,
-      href: '/admin/subscriptions',
-      adminOnly: true,
-    },
+    // No "Subscriptions" row here. It used to point at a per-user
+    // subscription list, which stopped making sense once a plan became
+    // a property of the workspace rather than of each member: the page
+    // showed a "Change Plan" button per teammate for a plan there is
+    // only one of. Billing now lives in exactly one place —
+    // Settings → Plan & billing.
   ],
   developer: [
     {
@@ -143,6 +141,7 @@ function buildSettingsPanel(): PanelGroup[] {
             ? '/channels/whatsapp/settings'
             : `/settings?tab=${s}`,
         adminOnly: meta.adminOnly,
+        ownerOnly: meta.ownerOnly,
       } satisfies PanelItem;
     }),
   }));
@@ -286,8 +285,7 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
   if (
     matches(pathname, '/settings') ||
     matches(pathname, '/members') ||
-    matches(pathname, '/integrations') ||
-    matches(pathname, '/admin/subscriptions')
+    matches(pathname, '/integrations')
   ) {
     // On /settings the tab is authoritative, and `resolveSection` already
     // owns the defaulting (bare /settings → overview) and the legacy
@@ -308,8 +306,8 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
       };
     }
 
-    // /members, /integrations, /admin/subscriptions — own routes, but
-    // they belong to the Settings panel.
+    // /members and /integrations — own routes, but they belong to the
+    // Settings panel.
     const item = findPanelItem(SETTINGS_PANEL, pathname, search);
     return {
       activeRailId: 'settings',
@@ -342,7 +340,7 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
   //    `?tab=pricing`) still need a sane header title.
   const UNLISTED_TITLES: Record<string, string> = {
     '/notifications': 'Notifications',
-    '/pricing': 'Pricing & plans',
+    '/pricing': 'Plan & billing',
   };
   const unlisted = Object.entries(UNLISTED_TITLES).find(([p]) => matches(pathname, p));
   if (unlisted) return { ...empty, title: unlisted[1] };

@@ -111,6 +111,17 @@ Internal billing panel: subscriber accounts, subscription amounts, sales, users.
 - `SubscriptionService.listSelectablePlans()` is the **one** source for the pricing page and the wizard, read live from the table so an admin-panel price edit needs no deploy. Enterprise sorts last explicitly: its `price_monthly` is 0 (meaning "quoted"), which a plain price-ascending sort would put first.
 - Selecting a plan in the wizard starts its trial; no payment is taken. Checkout happens later from `/pricing`.
 - ⚠️ **Enterprise is invisible to MRR.** Revenue is derived as `plan price × subscription` and there is no amount column, so a negotiated price lives only in `plan_enquiries` and contributes nothing to the admin panel's figures.
+- **There is exactly ONE billing surface in the product: Settings → Plan & billing (`?tab=pricing`), and it is owner-only** (`ownerOnly` on `SectionMeta`/`PanelItem` — stricter than `adminOnly`, which admins also pass). `/pricing` is the checkout it hands off to. The old `/admin/subscriptions` page and the `subscription/admin/*` Nest controller are **deleted, not moved** — see below. Cross-tenant billing administration belongs to `apps/admin-panel`.
+- `get_user_subscription()` is `SECURITY DEFINER` and therefore carries **its own authorization** (migration 067): a JWT caller may read only itself; a server connection (`auth.uid() IS NULL`, which is how apps/api connects) may read anyone. Any new SECURITY DEFINER RPC granted to `authenticated` needs the same guard — RLS is bypassed, so the function body is the only check left.
+
+## Tenant-scoping traps (learned the hard way)
+
+Two cross-tenant leaks shipped here before being removed; both share one shape, so check for it in any new code:
+
+- **Prisma bypasses RLS.** `apps/api` connects as the database owner, so a `findMany()` without `where: { account_id }` returns *every tenant's* rows even though the equivalent browser query is correctly scoped by policy. The deleted `subscription/admin/users` endpoint was exactly this — `profile.findMany()`, no filter. Its sibling write endpoints took a `targetUserId` from the body and only checked that the caller was an admin *somewhere*, which let an admin of one workspace rewrite another's subscription.
+- **`SECURITY DEFINER` RPCs bypass RLS too**, and `GRANT EXECUTE ... TO authenticated` means any signed-in user can call them with any argument. Authorization has to be inside the body.
+
+The rule of thumb: *if a query runs through Prisma or a SECURITY DEFINER function, RLS is not protecting you — scope it yourself.*
 
 ## Meta WhatsApp Cloud API integration (core dependency)
 

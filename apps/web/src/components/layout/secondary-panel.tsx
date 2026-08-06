@@ -84,7 +84,7 @@ export function SecondaryPanel({
   open,
   onToggle,
 }: SecondaryPanelProps) {
-  const { canEditSettings } = useAuth();
+  const { canEditSettings, isOwner } = useAuth();
   const statuses = useChannelStatus();
 
   const HeaderIcon = channel?.icon ?? FallbackIcon;
@@ -139,7 +139,12 @@ export function SecondaryPanel({
 
       <nav className="flex-1 overflow-y-auto px-2 pb-3">
         {groups.map((group) => {
-          const items = group.items.filter((i) => !i.adminOnly || canEditSettings);
+          const items = group.items.filter((i) => {
+            // ownerOnly is checked before adminOnly and is stricter:
+            // an admin passes canEditSettings but must not see billing.
+            if (i.ownerOnly) return isOwner;
+            return !i.adminOnly || canEditSettings;
+          });
           if (items.length === 0) return null;
 
           return (

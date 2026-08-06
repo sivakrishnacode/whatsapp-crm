@@ -1,6 +1,16 @@
 /**
- * Pricing settings panel - displays current subscription and plan options
- * Admin-only section
+ * Settings → Plan & billing. The ONE billing surface in the product.
+ *
+ * Owner-only, not admin+: a workspace has a single plan and a single
+ * person paying for it. An invited admin runs the workspace but has no
+ * business reading its trial end date or opening a checkout.
+ *
+ * The subscription shown is `useAuth().subscription`, which is the
+ * signed-in user's row — correct precisely because this renders only
+ * for the owner, and the owner's row IS the workspace's plan (see
+ * OnboardingService). For anyone else that row is empty, which is the
+ * other reason this section stays owner-only rather than rendering a
+ * confusing "no subscription" to a teammate on a paid workspace.
  */
 
 "use client";
@@ -13,18 +23,23 @@ import { formatLimit } from '@/lib/subscription';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Check, Loader2, ExternalLink } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 
 export function PricingSettings() {
-  const { subscription, subscriptionLoading, canEditSettings } = useAuth();
+  const { subscription, subscriptionLoading, isOwner, account } = useAuth();
   const { plans, isLoading: plansLoading } = usePlans();
   const router = useRouter();
 
-  if (!canEditSettings) {
+  // Belt and braces: the nav already hides this row for non-owners, but
+  // ?tab=pricing is typeable.
+  if (!isOwner) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div className="flex flex-col items-center gap-1 py-12 text-center">
         <p className="text-muted-foreground">
-          You don&apos;t have permission to view this section.
+          Only the workspace owner can view billing.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Ask them if you need to change the plan.
         </p>
       </div>
     );
@@ -50,24 +65,24 @@ export function PricingSettings() {
     router.push(`/pricing?plan=${encodeURIComponent(planName)}`);
   };
 
-  const handleManageSubscriptions = () => {
-    router.push('/admin/subscriptions');
-  };
-
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Pricing & Plans</h2>
+        <h2 className="text-2xl font-bold tracking-tight">Plan &amp; billing</h2>
         <p className="text-muted-foreground">
-          Manage your subscription and view plan options
+          {account?.name
+            ? `The plan for ${account.name} and everyone in it.`
+            : 'The plan for this workspace and everyone in it.'}
         </p>
       </div>
 
       {/* Current Subscription */}
       <Card>
         <CardHeader>
-          <CardTitle>Current Subscription</CardTitle>
-          <CardDescription>Your active plan and billing status</CardDescription>
+          <CardTitle>Current plan</CardTitle>
+          <CardDescription>
+            Applies to every member of this workspace
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {subscription ? (
@@ -113,15 +128,12 @@ export function PricingSettings() {
               </div>
             </div>
           ) : (
-            <div className="text-muted-foreground">No subscription found</div>
+            <div className="text-muted-foreground">
+              This workspace has no active plan. Pick one below to
+              restore access.
+            </div>
           )}
         </CardContent>
-        <CardFooter>
-          <Button variant="outline" onClick={handleManageSubscriptions}>
-            <ExternalLink className="h-4 w-4 mr-2" />
-            Manage All Subscriptions
-          </Button>
-        </CardFooter>
       </Card>
 
       {/* Plan Options */}

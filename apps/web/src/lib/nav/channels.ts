@@ -90,6 +90,12 @@ export interface PanelItem {
   matchPaths?: string[];
   /** Hidden from non-admins. Mirrors `SectionMeta.adminOnly`. */
   adminOnly?: boolean;
+  /**
+   * Hidden from everyone but the account owner — stricter than
+   * `adminOnly`, which admins also pass. For billing: an admin runs the
+   * workspace, but the owner is the one who pays for it.
+   */
+  ownerOnly?: boolean;
 }
 
 /** A labelled group of panel rows ("Action", "Assets", "Analytics"). */

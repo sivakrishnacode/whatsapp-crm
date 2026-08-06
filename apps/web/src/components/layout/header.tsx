@@ -37,7 +37,7 @@ interface HeaderProps {
 
 export function Header({ onOpenSidebar, title, breadcrumb }: HeaderProps) {
   const pathname = usePathname();
-  const { profile, signOut } = useAuth();
+  const { profile, account, accountRole, signOut } = useAuth();
   const unreadNotifications = useUnreadNotifications();
 
   const onNotifications = pathname.startsWith("/notifications");
@@ -59,6 +59,31 @@ export function Header({ onOpenSidebar, title, breadcrumb }: HeaderProps) {
         >
           <Menu className="h-5 w-5" />
         </button>
+
+        {/* Which workspace am I in?
+            Multi-tenant apps put this top-left because the same person
+            can own one workspace and be an agent in another — and every
+            number on the page below means something different depending
+            on which. The rail footer shows it too, but the rail
+            collapses and is hidden entirely on mobile, so it cannot be
+            the only place it appears. */}
+        {account?.name ? (
+          <div className="hidden min-w-0 shrink items-center gap-2 border-r border-border pr-3 md:flex">
+            <span
+              aria-hidden
+              className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[11px] font-semibold text-primary"
+            >
+              {account.name.charAt(0).toUpperCase()}
+            </span>
+            <span
+              className="truncate text-sm font-medium text-foreground"
+              title={account.name}
+            >
+              {account.name}
+            </span>
+          </div>
+        ) : null}
+
         <h1 className="flex min-w-0 items-baseline gap-1.5 truncate text-base font-semibold text-foreground sm:text-lg">
           {breadcrumb ? (
             <>
@@ -138,6 +163,16 @@ export function Header({ onOpenSidebar, title, breadcrumb }: HeaderProps) {
             <p className="truncate text-xs text-muted-foreground">
               {profile?.email ?? ""}
             </p>
+            {/* Workspace + role. The role is the useful half: it is the
+                answer to "why can't I see billing / members / settings",
+                and without it that reads as a bug rather than a
+                permission. */}
+            {account?.name ? (
+              <p className="mt-1.5 truncate text-xs text-muted-foreground">
+                <span className="text-foreground">{account.name}</span>
+                {accountRole ? ` · ${accountRole}` : null}
+              </p>
+            ) : null}
           </div>
           <DropdownMenuSeparator className="bg-border" />
           <DropdownMenuItem

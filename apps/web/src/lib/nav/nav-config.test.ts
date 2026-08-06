@@ -208,7 +208,6 @@ describe('resolveNavContext — settings panel', () => {
     for (const [path, id] of [
       ['/members', 'members'],
       ['/integrations', 'integrations'],
-      ['/admin/subscriptions', 'admin-subscriptions'],
     ] as const) {
       const nav = resolveNavContext(path);
       expect(nav.activeRailId).toBe('settings');
