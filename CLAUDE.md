@@ -57,7 +57,7 @@ Prisma client before compiling anything that needs it.
 ## Backend — `apps/api` (NestJS)
 
 - **Entry** `src/main.ts`: `cookie-parser`, global `ValidationPipe({ whitelist: true, transform: true })`, listens on `PORT ?? 8001`. No global route prefix — controllers own their full path.
-- **Feature modules** (`src/app.module.ts`): `prisma`, `common` (redis, rate-limit, security), `queue` (BullMQ), `auth`, `health`, `automations`, `flows`, `v1`, `whatsapp`, `account`, `integrations`, `ecommerce`, `campaigns`, `subscription`, `ai`.
+- **Feature modules** (`src/app.module.ts`): `prisma`, `common` (redis, rate-limit, security), `queue` (BullMQ), `auth`, `health`, `automations`, `flows`, `v1`, `whatsapp`, `account`, `integrations`, `ecommerce`, `campaigns`, `subscription`, `onboarding`, `ai`.
 - **Two API surfaces by controller prefix:**
   - `@Controller('v1/...')` — the **public/partner REST API** (`v1/me`, `v1/messages`, `v1/webhooks`, `v1/broadcasts`, `v1/contacts`, `v1/conversations`). Lives in `src/v1/{controllers,services,types,utils}`. See `docs/public-api.md`.
   - `@Controller('whatsapp/...')` — **internal dashboard/webhook** endpoints consumed by the web app.
@@ -95,7 +95,22 @@ Internal billing panel: subscriber accounts, subscription amounts, sales, users.
 - Each app owns its own connection (lifecycles differ): `apps/api/src/prisma/prisma.service.ts` (Nest module) and `apps/admin-panel/lib/prisma.ts` (globalThis singleton). Both use `@prisma/adapter-pg` (`pg`).
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`, `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`.
+- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`, `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`.
+
+## Auth & signup
+
+- **Providers:** email+password and **Sign in with Google**, both through Supabase. `src/app/auth/callback/route.ts` is the single landing point for every Supabase redirect — it handles both `?code=` (PKCE, used by Google) and `?token_hash=&type=` (email confirmation / recovery). `?next=` is narrowed by `sanitizeNextPath` before use; it is attacker-controlled. Google needs no env var, only dashboard config (see `apps/web/.env.local.example`).
+- **Server-side Supabase:** `src/lib/supabase/server.ts` (per-request, async `cookies()`). The browser client in `client.ts` stays a singleton.
+- **`/welcome` is a hard gate.** Two mandatory steps — workspace name + qualification answers, then a plan. `DashboardShell`'s `AuthGate` calls `GET /api/onboarding` and bounces anywhere in the dashboard to `/welcome` until `step === 'done'`. The check is deliberately **not** in middleware (it would add a DB read to every request) and **fails open** (a broken endpoint must not lock out paying customers).
+- ⚠️ **A plan belongs to the workspace, but `user_subscriptions` is keyed by user.** `OnboardingService` therefore always writes the subscription for `accounts.owner_user_id`, and records completion once per account in `account_onboarding` — otherwise every invited teammate would be asked to buy their own plan. Making subscriptions genuinely account-scoped is unfinished work that would touch the admin panel, both gateways and every webhook.
+- **`/onboarding` (the page) is the channel-connect checklist, not the wizard.** Don't confuse it with the `/api/onboarding` endpoints, which serve `/welcome`.
+
+## Plans & billing
+
+- Selectable plans are **STARTER, GROWTH, ENTERPRISE**. **FREE is retired** (migration 066 set `is_active = false`); it survives only so historical rows can still resolve their `plan_id`. Nothing may offer it again — there is no free tier to downgrade to, so cancellation sets `status = 'cancelled'` and the gate sends the account back to the plan picker.
+- `SubscriptionService.listSelectablePlans()` is the **one** source for the pricing page and the wizard, read live from the table so an admin-panel price edit needs no deploy. Enterprise sorts last explicitly: its `price_monthly` is 0 (meaning "quoted"), which a plain price-ascending sort would put first.
+- Selecting a plan in the wizard starts its trial; no payment is taken. Checkout happens later from `/pricing`.
+- ⚠️ **Enterprise is invisible to MRR.** Revenue is derived as `plan price × subscription` and there is no amount column, so a negotiated price lives only in `plan_enquiries` and contributes nothing to the admin panel's figures.
 
 ## Meta WhatsApp Cloud API integration (core dependency)
 

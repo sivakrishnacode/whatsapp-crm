@@ -159,6 +159,11 @@ const nextConfig: NextConfig = {
         { source: "/api/invitations/:path*", destination: `${nestApiUrl}/invitations/:path*` },
         { source: "/api/subscription", destination: `${nestApiUrl}/subscription` },
         { source: "/api/subscription/:path*", destination: `${nestApiUrl}/subscription/:path*` },
+        // Guided signup (`/welcome`). Note this is the API surface, not
+        // the /onboarding *page*, which is the channel checklist and is
+        // rendered by this app.
+        { source: "/api/onboarding", destination: `${nestApiUrl}/onboarding` },
+        { source: "/api/onboarding/:path*", destination: `${nestApiUrl}/onboarding/:path*` },
         { source: "/api/webhooks/:path*", destination: `${nestApiUrl}/webhooks/:path*` },
         { source: "/api/ecommerce/:path*", destination: `${nestApiUrl}/ecommerce/:path*` },
         { source: "/api/integrations/:path*", destination: `${nestApiUrl}/integrations/:path*` },

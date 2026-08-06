@@ -16,6 +16,7 @@ import { IntegrationsModule } from './integrations/integrations.module';
 import { EcommerceModule } from './ecommerce/ecommerce.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
 import { AiModule } from './ai/ai.module';
 import { FormsModule } from './forms/forms.module';
 
@@ -40,6 +41,7 @@ import { FormsModule } from './forms/forms.module';
     EcommerceModule,
     CampaignsModule,
     SubscriptionModule,
+    OnboardingModule,
     AiModule,
   ],
 })

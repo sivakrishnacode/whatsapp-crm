@@ -26,6 +26,12 @@ const PUBLIC_PREFIXES = [
   // page. Public and authenticated surfaces must not share a prefix.
   '/f/',
   '/book/',
+  // The OAuth / email-link landing point. It must reach its route
+  // handler untouched: the handler is what exchanges the code for a
+  // session, and anything that returns a different response here
+  // (including the signed-in redirect below) throws the code away and
+  // strands the user at a failed sign-in.
+  '/auth/callback',
 ] as const
 
 export async function middleware(request: NextRequest) {
@@ -107,6 +113,9 @@ export async function middleware(request: NextRequest) {
   // channel-scoped destinations under /channels do, hence the entry below.
   const protectedPaths = [
     '/dashboard',
+    // The guided-signup wizard. Protected, not public: it configures a
+    // workspace, so there has to be a session behind it.
+    '/welcome',
     '/onboarding',
     '/inbox',
     '/contacts',

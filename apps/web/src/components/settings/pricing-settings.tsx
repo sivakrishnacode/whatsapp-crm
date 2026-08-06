@@ -5,32 +5,32 @@
 
 "use client";
 
+import { useRouter } from 'next/navigation';
+
 import { useAuth } from '@/hooks/use-auth';
-import { getPlanByName, formatLimit, type PlanName } from '@/lib/subscription';
+import { usePlans } from '@/hooks/use-plans';
+import { formatLimit } from '@/lib/subscription';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Check, Loader2, ExternalLink } from 'lucide-react';
-import { toast } from 'sonner';
-
-const planTiers: Record<PlanName, number> = {
-  'FREE': 0,
-  'STARTER': 1,
-  'GROWTH': 2,
-};
 
 export function PricingSettings() {
-  const { user, subscription, subscriptionLoading, canEditSettings } = useAuth();
+  const { subscription, subscriptionLoading, canEditSettings } = useAuth();
+  const { plans, isLoading: plansLoading } = usePlans();
+  const router = useRouter();
 
   if (!canEditSettings) {
     return (
       <div className="flex items-center justify-center py-12">
-        <p className="text-muted-foreground">You don't have permission to view this section.</p>
+        <p className="text-muted-foreground">
+          You don&apos;t have permission to view this section.
+        </p>
       </div>
     );
   }
 
-  if (subscriptionLoading) {
+  if (subscriptionLoading || plansLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -38,22 +38,20 @@ export function PricingSettings() {
     );
   }
 
-  const plans: PlanName[] = ['FREE', 'STARTER', 'GROWTH'];
-  const currentPlan = subscription?.plan_name || 'FREE';
+  const currentPlan = subscription?.plan_name ?? null;
+  // Plans arrive price-ascending, so index is tier — no second ranking
+  // table to keep in step with the database.
+  const planRank = new Map(plans.map((plan, index) => [plan.name, index]));
 
-  const handleUpgrade = async (planName: PlanName) => {
-    if (planName === 'FREE') {
-      toast.error('Cannot downgrade to FREE plan. Please contact support.');
-      return;
-    }
-
-    // For now, redirect to pricing page
-    // This will be replaced with actual payment integration
-    window.location.href = '/pricing';
+  // The plan cards here are a summary; the actual change (payment
+  // method, checkout) happens on /pricing, and the enquiry form for
+  // Enterprise lives there too.
+  const handleUpgrade = (planName: string) => {
+    router.push(`/pricing?plan=${encodeURIComponent(planName)}`);
   };
 
   const handleManageSubscriptions = () => {
-    window.location.href = '/admin/subscriptions';
+    router.push('/admin/subscriptions');
   };
 
   return (
@@ -130,15 +128,17 @@ export function PricingSettings() {
       <div>
         <h3 className="text-lg font-semibold mb-4">Available Plans</h3>
         <div className="grid md:grid-cols-3 gap-4">
-          {plans.map((planName) => {
-            const plan = getPlanByName(planName);
-            const isCurrentPlan = planName === currentPlan;
-            const isPopular = planName === 'STARTER';
-            const isDowngrade = planTiers[planName] < planTiers[currentPlan];
+          {plans.map((plan) => {
+            const isCurrentPlan = plan.name === currentPlan;
+            const isPopular = planRank.get(plan.name) === 1;
+            const currentRank = currentPlan ? planRank.get(currentPlan) : undefined;
+            const isDowngrade =
+              currentRank !== undefined &&
+              (planRank.get(plan.name) ?? 0) < currentRank;
 
             return (
               <Card
-                key={planName}
+                key={plan.name}
                 className={`relative overflow-visible ${isCurrentPlan ? 'border-primary border-2' : ''} ${
                   isPopular ? 'scale-105' : ''
                 }`}
@@ -151,11 +151,19 @@ export function PricingSettings() {
                   </div>
                 )}
                 <CardHeader>
-                  <CardTitle className="text-xl">{plan.display_name}</CardTitle>
+                  <CardTitle className="text-xl">{plan.displayName}</CardTitle>
                   <CardDescription>{plan.description}</CardDescription>
                   <div className="mt-4">
-                    <span className="text-3xl font-bold">₹{plan.price_monthly}</span>
-                    <span className="text-muted-foreground">/month</span>
+                    {plan.isEnquiryOnly ? (
+                      <span className="text-2xl font-bold">Custom pricing</span>
+                    ) : (
+                      <>
+                        <span className="text-3xl font-bold">
+                          ₹{plan.priceMonthly.toLocaleString()}
+                        </span>
+                        <span className="text-muted-foreground">/month</span>
+                      </>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -173,9 +181,15 @@ export function PricingSettings() {
                     className="w-full"
                     variant={isCurrentPlan ? 'outline' : 'default'}
                     disabled={isCurrentPlan}
-                    onClick={() => handleUpgrade(planName)}
+                    onClick={() => handleUpgrade(plan.name)}
                   >
-                    {isCurrentPlan ? 'Current Plan' : isDowngrade ? 'Downgrade' : 'Upgrade'}
+                    {isCurrentPlan
+                      ? 'Current Plan'
+                      : plan.isEnquiryOnly
+                        ? 'Talk to sales'
+                        : isDowngrade
+                          ? 'Downgrade'
+                          : 'Upgrade'}
                   </Button>
                 </CardFooter>
               </Card>

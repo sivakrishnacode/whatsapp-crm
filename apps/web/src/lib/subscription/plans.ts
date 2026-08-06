@@ -2,7 +2,17 @@
  * Subscription plan definitions and configuration
  */
 
-export type PlanName = 'FREE' | 'STARTER' | 'GROWTH';
+/**
+ * FREE is retained in the union because live subscription rows still
+ * point at it, and `UserSubscription.plan_name` is read straight off
+ * those rows. It is NOT selectable — migration 066 deactivated it, and
+ * nothing may offer it again. Use SELECTABLE_PLANS for anything a user
+ * can choose.
+ */
+export type PlanName = 'FREE' | 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+
+/** Plans a customer can actually choose, cheapest first. */
+export const SELECTABLE_PLANS = ['STARTER', 'GROWTH', 'ENTERPRISE'] as const;
 
 export interface SubscriptionPlan {
   id: string;
@@ -116,6 +126,28 @@ export const DEFAULT_PLANS: Record<PlanName, Omit<SubscriptionPlan, 'id'>> = {
     max_storage_mb: 10240,
     trial_days: 15,
     features: ['10,000 contacts', '50,000 messages/month', '100 broadcasts/month', 'Unlimited flows', '10 team members', '10GB storage', 'Priority support', 'Advanced analytics'],
+    is_active: true,
+  },
+  ENTERPRISE: {
+    name: 'ENTERPRISE',
+    display_name: 'Enterprise',
+    description: 'Custom limits, onboarding support and an SLA for larger teams',
+    // Zero means "quoted", not "free". There is no amount column on
+    // user_subscriptions, so the real figure lives in plan_enquiries and
+    // is settled by a human — see migration 066.
+    price_monthly: 0,
+    price_yearly: 0,
+    stripe_price_id_monthly: null,
+    stripe_price_id_yearly: null,
+    razorpay_plan_id: null,
+    max_contacts: 1000000,
+    max_messages_monthly: 5000000,
+    max_broadcasts_monthly: 10000,
+    max_flows: null, // unlimited
+    max_team_members: 500,
+    max_storage_mb: 1048576,
+    trial_days: 15,
+    features: ['Unlimited contacts', 'Unlimited messages', 'Unlimited broadcasts', 'Unlimited flows', 'Unlimited team members', '1TB storage', 'Dedicated account manager', 'Custom SLA', 'Onboarding & migration support'],
     is_active: true,
   },
 };

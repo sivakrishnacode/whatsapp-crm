@@ -1,38 +1,72 @@
 /**
- * Pricing page - displays subscription plans and allows upgrades
+ * Pricing page — the upgrade surface for an account that is already in
+ * the product. The mandatory first choice happens in the /welcome
+ * wizard; this is where a plan gets changed or a trial converted.
  */
 
 "use client";
 
 import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useRouter } from 'next/navigation';
+import { ArrowLeft, Check, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
+
+import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
-import { getPlanByName, formatLimit, type PlanName } from '@/lib/subscription';
+import { usePlans, type Plan } from '@/hooks/use-plans';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Check, Loader2, ArrowLeft } from 'lucide-react';
-import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useRouter } from 'next/navigation';
+import { EnterpriseEnquiryDialog } from '@/components/onboarding/enterprise-enquiry-dialog';
+import { submitEnquiry, type EnquiryPayload } from '@/lib/onboarding/api';
 
-// Load Razorpay checkout script
+/**
+ * The slice of Razorpay's checkout API this page uses. Typed here
+ * rather than pulled from a package: the SDK ships as a script tag, so
+ * there is no module to import types from.
+ */
+interface RazorpayPaymentResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id?: string;
+  razorpay_signature?: string;
+}
+
+interface RazorpayOptions {
+  key: string;
+  order_id: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  handler: (response: RazorpayPaymentResponse) => void;
+  prefill: { name: string; email: string };
+  theme: { color: string };
+}
+
+interface RazorpayCheckout {
+  open: () => void;
+}
+
 declare global {
   interface Window {
-    Razorpay: any;
+    Razorpay?: new (options: RazorpayOptions) => RazorpayCheckout;
   }
 }
 
-const planTiers: Record<PlanName, number> = {
-  'FREE': 0,
-  'STARTER': 1,
-  'GROWTH': 2,
-};
+/** null on a limit column means unlimited, not zero. */
+function formatLimit(value: number | null): string {
+  return value === null ? 'Unlimited' : value.toLocaleString();
+}
 
 export default function PricingPage() {
   const { user, subscription, subscriptionLoading } = useAuth();
+  const { plans, isLoading: plansLoading, error: plansError } = usePlans();
   const router = useRouter();
-  const [selectedPlan, setSelectedPlan] = useState<PlanName | null>(null);
+
+  const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [enquiryOpen, setEnquiryOpen] = useState(false);
+  const [enquirySubmitting, setEnquirySubmitting] = useState(false);
 
   // Load Razorpay checkout script
   useEffect(() => {
@@ -46,21 +80,27 @@ export default function PricingPage() {
     };
   }, []);
 
-  const plans: PlanName[] = ['FREE', 'STARTER', 'GROWTH'];
-  const currentPlan = subscription?.plan_name || 'FREE';
+  const currentPlan = subscription?.plan_name ?? null;
+
+  // Price order is the tier order — it comes from the API sorted
+  // ascending, so no second ranking table to keep in sync.
+  const planRank = new Map(plans.map((plan, index) => [plan.name, index]));
 
   // Read plan query parameter to trigger upgrade flow automatically
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const planParam = params.get('plan')?.toUpperCase() as PlanName | null;
-      if (planParam && plans.includes(planParam) && planParam !== currentPlan && planParam !== 'FREE') {
-        setSelectedPlan(planParam);
-      }
-    }
-  }, [currentPlan]);
+    if (typeof window === 'undefined' || plans.length === 0) return;
 
-  if (subscriptionLoading) {
+    const params = new URLSearchParams(window.location.search);
+    const planParam = params.get('plan')?.toUpperCase();
+    if (!planParam || planParam === currentPlan) return;
+
+    const target = plans.find((plan) => plan.name === planParam);
+    if (!target) return;
+    if (target.isEnquiryOnly) setEnquiryOpen(true);
+    else setSelectedPlan(planParam);
+  }, [currentPlan, plans]);
+
+  if (subscriptionLoading || plansLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -68,21 +108,34 @@ export default function PricingPage() {
     );
   }
 
-  const handleUpgrade = async (planName: PlanName) => {
+  const handleChoose = (plan: Plan) => {
     if (!user) {
-      toast.error('Please sign in to upgrade your plan');
+      toast.error('Please sign in to change your plan');
       return;
     }
 
-    if (planName === 'FREE') {
-      toast.error('Cannot downgrade to FREE plan. Please contact support.');
+    if (plan.isEnquiryOnly) {
+      setEnquiryOpen(true);
       return;
     }
 
-    setSelectedPlan(planName);
+    setSelectedPlan(plan.name);
   };
 
-  const handleStripeUpgrade = async (planName: PlanName) => {
+  const handleEnquiry = async (payload: EnquiryPayload) => {
+    setEnquirySubmitting(true);
+    try {
+      await submitEnquiry(payload);
+      toast.success("Thanks — we'll be in touch shortly.");
+      setEnquiryOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to send enquiry');
+    } finally {
+      setEnquirySubmitting(false);
+    }
+  };
+
+  const handleStripeUpgrade = async (planName: string) => {
     setPaymentLoading(true);
     try {
       const response = await fetch('/api/subscription/stripe/create-checkout-session', {
@@ -116,7 +169,15 @@ export default function PricingPage() {
     }
   };
 
-  const handleRazorpayUpgrade = async (planName: PlanName) => {
+  const handleRazorpayUpgrade = async (planName: string) => {
+    // Publishable key — safe in the client, but it differs between test
+    // and live and must not be baked into the bundle as a literal.
+    const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
+    if (!razorpayKey) {
+      toast.error('Payments are not configured. Please contact support.');
+      return;
+    }
+
     setPaymentLoading(true);
     try {
       const response = await fetch('/api/subscription/razorpay/create-order', {
@@ -137,14 +198,14 @@ export default function PricingPage() {
         return;
       }
 
-      const options = {
-        key: 'rzp_test_TCs9rejtWDeydM',
+      const options: RazorpayOptions = {
+        key: razorpayKey,
         order_id: data.orderId,
         amount: data.amount,
         currency: data.currency,
-        name: 'WhatsApp CRM',
+        name: 'Converse360',
         description: `${planName} Plan - Monthly`,
-        handler: async function (response: any) {
+        handler: async function (response: RazorpayPaymentResponse) {
           try {
             const confirmResponse = await fetch('/api/subscription/razorpay/confirm-payment', {
               method: 'POST',
@@ -175,13 +236,16 @@ export default function PricingPage() {
           email: user?.email || '',
         },
         theme: {
-          color: '#3b82f6',
+          color: '#00ac55',
         },
       };
 
-      const razorpay = (window as any).Razorpay;
-      const rzp = new razorpay(options);
-      rzp.open();
+      const Razorpay = window.Razorpay;
+      if (!Razorpay) {
+        toast.error('Checkout failed to load. Please refresh and try again.');
+        return;
+      }
+      new Razorpay(options).open();
     } catch (error) {
       console.error('Payment error:', error);
       toast.error('Failed to initiate payment');
@@ -218,18 +282,28 @@ export default function PricingPage() {
           )}
         </div>
 
+        {plansError ? (
+          <p className="text-center text-sm text-destructive">{plansError}</p>
+        ) : null}
+
         <div className="grid md:grid-cols-3 gap-8">
-          {plans.map((planName) => {
-            const plan = getPlanByName(planName);
-            const isCurrentPlan = planName === currentPlan;
-            const isPopular = planName === 'STARTER';
-            const isDowngrade = planTiers[planName] < planTiers[currentPlan];
+          {plans.map((plan) => {
+            const isCurrentPlan = plan.name === currentPlan;
+            // Middle tier of three — the default recommendation.
+            const isPopular = planRank.get(plan.name) === 1;
+            const currentRank = currentPlan ? planRank.get(currentPlan) : undefined;
+            const isDowngrade =
+              currentRank !== undefined &&
+              (planRank.get(plan.name) ?? 0) < currentRank;
 
             return (
               <Card
-                key={planName}
-                className={`relative overflow-visible ${isCurrentPlan ? 'border-primary border-2' : ''
-                  } ${isPopular ? 'scale-105' : ''}`}
+                key={plan.name}
+                className={cn(
+                  'relative overflow-visible',
+                  isCurrentPlan && 'border-primary border-2',
+                  isPopular && 'scale-105',
+                )}
               >
                 {isPopular && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
@@ -239,17 +313,24 @@ export default function PricingPage() {
                   </div>
                 )}
                 <CardHeader>
-                  <CardTitle className="text-2xl">{plan.display_name}</CardTitle>
+                  <CardTitle className="text-2xl">{plan.displayName}</CardTitle>
                   <CardDescription>{plan.description}</CardDescription>
                   <div className="mt-4">
-                    <span className="text-4xl font-bold">
-                      ₹{plan.price_monthly}
-                    </span>
-                    <span className="text-muted-foreground">/month</span>
-                    {plan.price_yearly > 0 && (
-                      <div className="text-sm text-muted-foreground mt-1">
-                        ₹{plan.price_yearly}/year (save {Math.round((1 - plan.price_yearly / (plan.price_monthly * 12)) * 100)}%)
-                      </div>
+                    {plan.isEnquiryOnly ? (
+                      <span className="text-2xl font-bold">Custom pricing</span>
+                    ) : (
+                      <>
+                        <span className="text-4xl font-bold">
+                          ₹{plan.priceMonthly.toLocaleString()}
+                        </span>
+                        <span className="text-muted-foreground">/month</span>
+                        {plan.priceYearly > 0 && (
+                          <div className="text-sm text-muted-foreground mt-1">
+                            ₹{plan.priceYearly.toLocaleString()}/year (save{' '}
+                            {Math.round((1 - plan.priceYearly / (plan.priceMonthly * 12)) * 100)}%)
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </CardHeader>
@@ -266,15 +347,15 @@ export default function PricingPage() {
                   <div className="pt-4 border-t">
                     <h3 className="font-semibold text-sm mb-2">Limits</h3>
                     <div className="space-y-1 text-sm text-muted-foreground">
-                      <div>Contacts: {formatLimit(plan.max_contacts)}</div>
-                      <div>Messages/month: {formatLimit(plan.max_messages_monthly)}</div>
-                      <div>Broadcasts/month: {formatLimit(plan.max_broadcasts_monthly)}</div>
-                      <div>Flows: {formatLimit(plan.max_flows)}</div>
-                      <div>Team members: {formatLimit(plan.max_team_members)}</div>
-                      <div>Storage: {formatLimit(plan.max_storage_mb)} MB</div>
-                      {plan.trial_days && (
+                      <div>Contacts: {formatLimit(plan.maxContacts)}</div>
+                      <div>Messages/month: {formatLimit(plan.maxMessagesMonthly)}</div>
+                      <div>Broadcasts/month: {formatLimit(plan.maxBroadcastsMonthly)}</div>
+                      <div>Flows: {formatLimit(plan.maxFlows)}</div>
+                      <div>Team members: {formatLimit(plan.maxTeamMembers)}</div>
+                      <div>Storage: {formatLimit(plan.maxStorageMb)} MB</div>
+                      {plan.trialDays && (
                         <div className="text-primary font-medium">
-                          {plan.trial_days} days free trial
+                          {plan.trialDays} days free trial
                         </div>
                       )}
                     </div>
@@ -285,18 +366,20 @@ export default function PricingPage() {
                     className="w-full"
                     variant={isCurrentPlan ? 'outline' : 'default'}
                     disabled={isCurrentPlan}
-                    onClick={() => handleUpgrade(planName)}
+                    onClick={() => handleChoose(plan)}
                   >
-                    {isCurrentPlan ? 'Current Plan' : isDowngrade ? 'Downgrade' : planName === 'FREE' ? 'Get Started' : 'Upgrade'}
+                    {isCurrentPlan
+                      ? 'Current Plan'
+                      : plan.isEnquiryOnly
+                        ? 'Talk to sales'
+                        : isDowngrade
+                          ? 'Downgrade'
+                          : 'Upgrade'}
                   </Button>
                 </CardFooter>
               </Card>
             );
           })}
-        </div>
-
-        <div className="mt-12 text-center text-sm text-muted-foreground">
-          <p>All plans include core CRM features. Need a custom plan? Contact us for enterprise solutions.</p>
         </div>
       </div>
 
@@ -320,9 +403,7 @@ export default function PricingPage() {
               ) : (
                 <>
                   <span className="font-bold text-lg">Stripe</span>
-                  {/* <span className="text-xs text-muted-foreground">Credit/Debit Cards</span> */}
                   <span className="text-xs text-muted-foreground">Currently Not Available</span>
-
                 </>
               )}
             </Button>
@@ -344,6 +425,16 @@ export default function PricingPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <EnterpriseEnquiryDialog
+        open={enquiryOpen}
+        onOpenChange={setEnquiryOpen}
+        defaultName={(user?.user_metadata?.full_name as string) ?? ''}
+        defaultEmail={user?.email ?? ''}
+        companySize={null}
+        submitting={enquirySubmitting}
+        onSubmit={handleEnquiry}
+      />
     </div>
   );
 }

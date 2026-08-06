@@ -231,32 +231,31 @@ export class SubscriptionWebhooksController {
         case 'subscription.cancelled': {
           const subscription = event.payload.subscription.entity;
 
-          // Downgrade to FREE plan
-          const freePlan = await this.prisma.subscription_plans.findUnique({
-            where: { name: 'FREE' },
-            select: { id: true },
+          // There is no free tier to fall back to (migration 066
+          // deactivated FREE), so cancellation ends entitlement rather
+          // than downgrading. `plan_id` is left pointing at whatever
+          // they had: it is the only record of what was cancelled, and
+          // the admin panel's history joins through it.
+          //
+          // The dashboard gate treats a non-active/non-trial
+          // subscription as "must choose a plan" and routes them back
+          // to /welcome.
+          await this.prisma.user_subscriptions.updateMany({
+            where: { razorpay_subscription_id: subscription.id },
+            data: {
+              status: 'cancelled',
+              billing_cycle: null,
+              trial_start_at: null,
+              trial_end_at: null,
+              current_period_end: new Date(),
+              cancel_at_period_end: false,
+              razorpay_subscription_id: null,
+              payment_method: 'manual',
+            },
           });
-
-          if (freePlan) {
-            await this.prisma.user_subscriptions.updateMany({
-              where: { razorpay_subscription_id: subscription.id },
-              data: {
-                plan_id: freePlan.id,
-                status: 'active',
-                billing_cycle: null,
-                trial_start_at: null,
-                trial_end_at: null,
-                current_period_start: null,
-                current_period_end: null,
-                cancel_at_period_end: false,
-                razorpay_subscription_id: null,
-                payment_method: 'manual',
-              },
-            });
-            this.logger.log(
-              `Razorpay subscription cancelled and downgraded: ${subscription.id}`,
-            );
-          }
+          this.logger.log(
+            `Razorpay subscription cancelled: ${subscription.id}`,
+          );
           break;
         }
 
@@ -456,32 +455,23 @@ export class SubscriptionWebhooksController {
         case 'customer.subscription.deleted': {
           const subscription = event.data.object;
 
-          // Downgrade to FREE plan
-          const freePlan = await this.prisma.subscription_plans.findUnique({
-            where: { name: 'FREE' },
-            select: { id: true },
+          // Same reasoning as the Razorpay cancellation above: no free
+          // tier exists to land on, so entitlement ends and the account
+          // is sent back through the plan picker.
+          await this.prisma.user_subscriptions.updateMany({
+            where: { stripe_subscription_id: subscription.id },
+            data: {
+              status: 'cancelled',
+              billing_cycle: null,
+              trial_start_at: null,
+              trial_end_at: null,
+              current_period_end: new Date(),
+              cancel_at_period_end: false,
+              stripe_subscription_id: null,
+              payment_method: 'manual',
+            },
           });
-
-          if (freePlan) {
-            await this.prisma.user_subscriptions.updateMany({
-              where: { stripe_subscription_id: subscription.id },
-              data: {
-                plan_id: freePlan.id,
-                status: 'active',
-                billing_cycle: null,
-                trial_start_at: null,
-                trial_end_at: null,
-                current_period_start: null,
-                current_period_end: null,
-                cancel_at_period_end: false,
-                stripe_subscription_id: null,
-                payment_method: 'manual',
-              },
-            });
-            this.logger.log(
-              `Stripe subscription deleted and downgraded: ${subscription.id}`,
-            );
-          }
+          this.logger.log(`Stripe subscription deleted: ${subscription.id}`);
           break;
         }
 

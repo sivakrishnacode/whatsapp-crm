@@ -85,7 +85,11 @@ export class SubscriptionAdminController {
 
   /**
    * POST /api/subscription/admin/assign-plan
-   * Manually assigns a plan (FREE, STARTER, GROWTH) to a user.
+   * Manually assigns a plan (STARTER, GROWTH, ENTERPRISE) to a user.
+   *
+   * FREE is not assignable — migration 066 retired it. To remove a
+   * user's entitlement, cancel the subscription rather than downgrading
+   * them onto a tier that no longer exists.
    */
   @Post('assign-plan')
   async assignPlan(
@@ -102,7 +106,7 @@ export class SubscriptionAdminController {
       );
     }
 
-    const validPlans = ['FREE', 'STARTER', 'GROWTH'];
+    const validPlans = ['STARTER', 'GROWTH', 'ENTERPRISE'];
     if (!validPlans.includes(planName)) {
       throw new HttpException('Invalid plan name', HttpStatus.BAD_REQUEST);
     }
@@ -136,7 +140,7 @@ export class SubscriptionAdminController {
           user_id: targetUserId,
           plan_id: plan.id,
           status: trialEnd ? 'trial' : 'active',
-          billing_cycle: planName === 'FREE' ? null : 'monthly',
+          billing_cycle: 'monthly',
           trial_start_at: trialStart,
           trial_end_at: trialEnd,
           current_period_start: periodStart,
@@ -150,7 +154,7 @@ export class SubscriptionAdminController {
         update: {
           plan_id: plan.id,
           status: trialEnd ? 'trial' : 'active',
-          billing_cycle: planName === 'FREE' ? null : 'monthly',
+          billing_cycle: 'monthly',
           trial_start_at: trialStart,
           trial_end_at: trialEnd,
           current_period_start: periodStart,
@@ -175,7 +179,13 @@ export class SubscriptionAdminController {
 
   /**
    * POST /api/subscription/admin/cancel
-   * Cancels subscription and downgrades user to FREE.
+   * Ends the user's entitlement.
+   *
+   * Since migration 066 retired FREE there is no tier to downgrade onto,
+   * so this marks the subscription cancelled and leaves plan_id pointing
+   * at what they had — that row is the only record of the cancelled
+   * plan, and the admin panel joins through it. The dashboard gate
+   * routes a cancelled account back to /welcome to choose again.
    */
   @Post('cancel')
   async cancel(
@@ -190,27 +200,14 @@ export class SubscriptionAdminController {
     }
 
     try {
-      // 1. Get FREE plan
-      const freePlan = await this.prisma.subscription_plans.findUnique({
-        where: { name: 'FREE' },
-        select: { id: true },
-      });
-
-      if (!freePlan) {
-        throw new HttpException('FREE plan not found', HttpStatus.NOT_FOUND);
-      }
-
-      // 2. Update subscription to FREE
       await this.prisma.user_subscriptions.update({
         where: { user_id: targetUserId },
         data: {
-          plan_id: freePlan.id,
-          status: 'active',
+          status: 'cancelled',
           billing_cycle: null,
           trial_start_at: null,
           trial_end_at: null,
-          current_period_start: null,
-          current_period_end: null,
+          current_period_end: new Date(),
           cancel_at_period_end: false,
           stripe_subscription_id: null,
           razorpay_subscription_id: null,

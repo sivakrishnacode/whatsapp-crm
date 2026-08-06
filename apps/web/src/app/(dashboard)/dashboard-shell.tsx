@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Settings as SettingsIcon } from "lucide-react";
 
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { useOnboardingGate } from "@/hooks/use-onboarding-gate";
 import { useNavPrefs } from "@/hooks/use-nav-prefs";
 import { ChannelStatusProvider } from "@/hooks/use-channel-status";
 import { PrimaryRail } from "@/components/layout/primary-rail";
@@ -42,13 +43,29 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
 
+  // Only ask once there is a session to ask about; the endpoint is
+  // authenticated and would 401 for a signed-out visitor.
+  const onboarding = useOnboardingGate(Boolean(user) && !loading);
+
   useEffect(() => {
     if (!loading && !user) {
       router.push("/login");
     }
   }, [user, loading, router]);
 
-  if (loading) {
+  useEffect(() => {
+    // replace(), not push(): an un-onboarded account pressing Back
+    // should not be able to step into the dashboard it was just sent
+    // away from.
+    if (onboarding === "required") {
+      router.replace("/welcome");
+    }
+  }, [onboarding, router]);
+
+  // The onboarding check is folded into the same spinner as the session
+  // so a gated user never sees a flash of the dashboard chrome before
+  // being redirected.
+  if (loading || (user && onboarding === "checking")) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
@@ -59,7 +76,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user) return null;
+  if (!user || onboarding === "required") return null;
 
   return <>{children}</>;
 }
