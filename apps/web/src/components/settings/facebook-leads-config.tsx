@@ -335,12 +335,12 @@ export function FacebookLeadsConfig() {
             </div>
 
             {!fbAppId && (
-              <div className="mt-6 flex items-start gap-2 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3.5 text-left text-xs text-yellow-700 dark:text-yellow-400 max-w-lg">
+              <div className="mt-6 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-surface p-3.5 text-left text-xs text-warning max-w-lg">
                 <AlertCircle className="size-4 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-semibold">Facebook App ID not configured</p>
                   <p className="mt-1 text-[11px] leading-normal opacity-90">
-                    To use real OAuth, set the <code className="bg-yellow-500/10 px-1 py-0.5 rounded font-mono">NEXT_PUBLIC_FACEBOOK_APP_ID</code> env variable. Using "Demo Mode" allows you to connect simulated sandbox pages for testing.
+                    To use real OAuth, set the <code className="bg-warning-surface px-1 py-0.5 rounded font-mono">NEXT_PUBLIC_FACEBOOK_APP_ID</code> env variable. Using "Demo Mode" allows you to connect simulated sandbox pages for testing.
                   </p>
                 </div>
               </div>
@@ -351,7 +351,7 @@ export function FacebookLeadsConfig() {
         {/* Features Promo Grid */}
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex flex-col items-center text-center p-4">
-            <div className="flex size-12 items-center justify-center rounded-xl bg-rose-50 dark:bg-rose-950/20 text-rose-500 mb-3 shadow-inner">
+            <div className="flex size-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive mb-3 shadow-inner">
               <Zap className="size-5 fill-rose-500/10" />
             </div>
             <h3 className="text-sm font-semibold text-foreground">Real-time Sync</h3>
@@ -361,7 +361,7 @@ export function FacebookLeadsConfig() {
           </div>
 
           <div className="flex flex-col items-center text-center p-4">
-            <div className="flex size-12 items-center justify-center rounded-xl bg-rose-50 dark:bg-rose-950/20 text-rose-500 mb-3 shadow-inner">
+            <div className="flex size-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive mb-3 shadow-inner">
               <Shield className="size-5" />
             </div>
             <h3 className="text-sm font-semibold text-foreground">Secure Connection</h3>
@@ -371,7 +371,7 @@ export function FacebookLeadsConfig() {
           </div>
 
           <div className="flex flex-col items-center text-center p-4">
-            <div className="flex size-12 items-center justify-center rounded-xl bg-rose-50 dark:bg-rose-950/20 text-rose-500 mb-3 shadow-inner">
+            <div className="flex size-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive mb-3 shadow-inner">
               <Database className="size-5" />
             </div>
             <h3 className="text-sm font-semibold text-foreground">Centralized Data</h3>
@@ -381,7 +381,7 @@ export function FacebookLeadsConfig() {
           </div>
 
           <div className="flex flex-col items-center text-center p-4">
-            <div className="flex size-12 items-center justify-center rounded-xl bg-rose-50 dark:bg-rose-950/20 text-rose-500 mb-3 shadow-inner">
+            <div className="flex size-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive mb-3 shadow-inner">
               <Layers className="size-5" />
             </div>
             <h3 className="text-sm font-semibold text-foreground">Multi Data Support</h3>
@@ -422,7 +422,7 @@ export function FacebookLeadsConfig() {
           <Card className="border-border">
             <CardHeader className="pb-4">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Check className="size-4 text-green-500 bg-green-500/10 p-0.5 rounded-full" />
+                <Check className="size-4 text-success bg-success/10 p-0.5 rounded-full" />
                 Connected Facebook Account
               </CardTitle>
               <CardDescription className="text-xs">
@@ -472,14 +472,14 @@ export function FacebookLeadsConfig() {
                       className="flex items-center justify-between p-4 transition-colors hover:bg-muted/30"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="flex size-9 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-bold text-sm shrink-0">
+                        <div className="flex size-9 items-center justify-center rounded-lg bg-info/10 text-info font-bold text-sm shrink-0">
                           {page.page_name.charAt(0).toUpperCase()}
                         </div>
                         <div>
                           <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                             {page.page_name}
                             {page.is_syncing && (
-                              <span className="flex size-1.5 rounded-full bg-green-500 animate-pulse" />
+                              <span className="flex size-1.5 rounded-full bg-success animate-pulse" />
                             )}
                           </div>
                           <div className="text-[10px] text-muted-foreground">
@@ -563,7 +563,7 @@ export function FacebookLeadsConfig() {
           <Card className="border-border bg-muted/20">
             <CardContent className="p-4 text-xs space-y-2">
               <div className="font-semibold flex items-center gap-1.5 text-foreground">
-                <AlertCircle className="size-3.5 text-blue-500" />
+                <AlertCircle className="size-3.5 text-info" />
                 Testing Meta Leads
               </div>
               <p className="text-[11px] leading-normal text-muted-foreground">
@@ -573,7 +573,7 @@ export function FacebookLeadsConfig() {
                 href="https://developers.facebook.com/tools/lead-ads-testing"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:underline font-semibold pt-1"
+                className="inline-flex items-center gap-1 text-[10px] text-info hover:underline font-semibold pt-1"
               >
                 Lead Ads Testing Tool
                 <ExternalLink className="size-2.5" />

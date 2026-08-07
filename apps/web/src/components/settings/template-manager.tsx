@@ -74,8 +74,8 @@ const CATEGORIES = ['Marketing', 'Utility', 'Authentication'] as const;
 
 const categoryColors: Record<string, string> = {
   Marketing: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
-  Utility: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
-  Authentication: 'bg-amber-600/20 text-amber-400 border-amber-600/30',
+  Utility: 'bg-info-surface text-info border-info/30',
+  Authentication: 'bg-warning-surface text-warning border-warning/30',
 };
 
 const COMMON_LANGUAGE_CODES = [
@@ -465,10 +465,10 @@ export function TemplateManager() {
                         <span
                           className={`text-[10px] uppercase font-medium ${
                             template.quality_score === 'GREEN'
-                              ? 'text-emerald-400'
+                              ? 'text-success'
                               : template.quality_score === 'YELLOW'
-                                ? 'text-yellow-400'
-                                : 'text-red-400'
+                                ? 'text-warning'
+                                : 'text-destructive'
                           }`}
                           title="Meta quality score"
                         >
@@ -485,7 +485,7 @@ export function TemplateManager() {
                       </p>
                     )}
                     {(template.rejection_reason || template.submission_error) && (
-                      <div className="flex items-start gap-1.5 text-xs text-red-400 bg-red-950/20 border border-red-900/40 rounded px-2 py-1.5">
+                      <div className="flex items-start gap-1.5 text-xs text-destructive bg-destructive-surface border border-destructive/30 rounded px-2 py-1.5">
                         <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
                         <span>
                           {template.rejection_reason || template.submission_error}
@@ -545,7 +545,7 @@ export function TemplateManager() {
                           ? 'Delete from Meta and locally'
                           : 'Delete locally'
                       }
-                      className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 h-8 w-8"
+                      className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 h-8 w-8"
                     >
                       {deletingId === template.id ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -609,7 +609,7 @@ export function TemplateManager() {
           </DialogHeader>
 
           {form.category === 'Authentication' && (
-            <div className="flex items-start gap-2 rounded border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+            <div className="flex items-start gap-2 rounded border border-warning/30 bg-warning-surface px-3 py-2 text-xs text-warning">
               <AlertCircle className="size-4 mt-0.5 shrink-0" />
               <p>
                 AUTHENTICATION templates have a fixed body + OTP button shape
@@ -856,7 +856,7 @@ export function TemplateManager() {
                           onClick={() =>
                             setForm({ ...form, header_media_file: null })
                           }
-                          className="size-6 text-muted-foreground hover:bg-red-950/30 hover:text-red-400"
+                          className="size-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                         >
                           <X className="size-3.5" />
                         </Button>
@@ -965,7 +965,7 @@ export function TemplateManager() {
               {warnings.map((w) => (
                 <div
                   key={`${w.code}-${w.message}`}
-                  className="flex items-start gap-2 rounded border border-amber-700/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-300"
+                  className="flex items-start gap-2 rounded border border-warning/30 bg-warning-surface px-3 py-2 text-xs text-warning"
                 >
                   <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
                   <p>{w.message}</p>

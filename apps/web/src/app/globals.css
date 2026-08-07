@@ -27,6 +27,27 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  /* Status colours, two tokens per family: the accent (text, icon,
+   * border) and the wash behind it. Both are mode-tuned in the MODE
+   * blocks below, which is what lets ONE class list — no `dark:`
+   * pair — be correct in both modes. That matters here because this
+   * app switches on `html[data-mode]` and never sets a `.dark`
+   * class, so `dark:` utilities never fire at all.
+   *
+   * The wash is a real token rather than an alpha of the accent
+   * (`bg-success/10`) because alpha only works in one direction: a
+   * tint of a light dark-mode accent LIGHTENS the dark card, pushing
+   * text-on-wash contrast under 4.5:1. Dark mode needs a wash darker
+   * than its accent, light mode needs one lighter. Every pair below
+   * is verified ≥4.5:1 — re-check with the same maths if you retune
+   * one. */
+  --color-success: var(--success);
+  --color-success-surface: var(--success-surface);
+  --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-info: var(--info);
+  --color-info-surface: var(--info-surface);
+  --color-destructive-surface: var(--destructive-surface);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -107,7 +128,17 @@ html[data-mode="dark"] {
   --muted-foreground: oklch(0.65 0.01 260);
   --accent: oklch(0.22 0.01 260);
   --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  /* Accents are light (they carry text on a dark wash); washes are
+   * dark tints of the same hue. Matches the lightness the hand-rolled
+   * `text-red-400` / `bg-red-950/30` pairs these replaced already had. */
+  --destructive: oklch(0.7 0.19 27);
+  --destructive-surface: oklch(0.27 0.07 27);
+  --success: oklch(0.74 0.15 162);
+  --success-surface: oklch(0.26 0.05 162);
+  --warning: oklch(0.8 0.14 78);
+  --warning-surface: oklch(0.27 0.05 78);
+  --info: oklch(0.72 0.13 250);
+  --info-surface: oklch(0.27 0.05 250);
   --border: oklch(0.28 0.01 260);
   --input: oklch(0.28 0.01 260);
   --chart-2: oklch(0.556 0 0);
@@ -122,36 +153,60 @@ html[data-mode="dark"] {
   --sidebar-border: oklch(0.28 0.01 260);
 }
 
+/* The light ramp mirrors the dark one above: chrome is recessed, the
+ * canvas sits above it, cards are the raised surface. The first pass
+ * at this theme put every large surface between L 0.985 and L 1.00 —
+ * a 1.5-point spread over ~90% of the viewport, which reads as one
+ * undifferentiated sheet of max-luminance white and is genuinely
+ * uncomfortable to sit in front of. Dark mode spans 0.13 → 0.28.
+ *
+ * So: canvas recedes to ~0.96 (it is the largest area, so it does most
+ * of the work), white is spent only on cards, borders are strong
+ * enough to read against both, and every neutral carries a little
+ * chroma at hue 260 — a dead-neutral near-white looks fluorescent.
+ * Text softens from L 0.21 (≈17:1, well past AAA and the source of
+ * the halation around glyphs) to 0.26, still comfortably AAA.
+ *
+ * Keep the ramp when editing: sidebar < background < card-2 < card. */
 html[data-mode="light"] {
   color-scheme: light;
   --scrollbar-thumb: oklch(0.55 0.015 260 / 0.32);
   --scrollbar-thumb-hover: oklch(0.45 0.015 260 / 0.5);
-  --background: oklch(0.99 0.002 260);
-  --foreground: oklch(0.21 0.01 260);
-  --card: oklch(1 0 0);
-  --card-2: oklch(0.985 0.002 260);
-  --card-foreground: oklch(0.21 0.01 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.01 260);
-  --secondary: oklch(0.967 0.003 260);
-  --secondary-foreground: oklch(0.25 0.01 260);
-  --muted: oklch(0.967 0.003 260);
-  --muted-foreground: oklch(0.52 0.015 260);
-  --accent: oklch(0.96 0.004 260);
-  --accent-foreground: oklch(0.25 0.01 260);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0.004 260);
-  --input: oklch(0.922 0.004 260);
+  --background: oklch(0.968 0.004 260);
+  --foreground: oklch(0.26 0.012 260);
+  --card: oklch(0.995 0.002 260);
+  --card-2: oklch(0.978 0.004 260);
+  --card-foreground: oklch(0.26 0.012 260);
+  --popover: oklch(0.995 0.002 260);
+  --popover-foreground: oklch(0.26 0.012 260);
+  --secondary: oklch(0.945 0.006 260);
+  --secondary-foreground: oklch(0.3 0.012 260);
+  --muted: oklch(0.945 0.006 260);
+  --muted-foreground: oklch(0.505 0.016 260);
+  --accent: oklch(0.935 0.007 260);
+  --accent-foreground: oklch(0.3 0.012 260);
+  /* Mirror image of dark: accents ~20 points darker so they carry
+   * text on a near-white wash, washes pale tints of the same hue. */
+  --destructive: oklch(0.52 0.2 27);
+  --destructive-surface: oklch(0.955 0.035 27);
+  --success: oklch(0.5 0.12 162);
+  --success-surface: oklch(0.955 0.035 162);
+  --warning: oklch(0.5 0.11 78);
+  --warning-surface: oklch(0.955 0.045 78);
+  --info: oklch(0.5 0.15 250);
+  --info-surface: oklch(0.955 0.03 250);
+  --border: oklch(0.9 0.006 260);
+  --input: oklch(0.9 0.006 260);
   --chart-2: oklch(0.6 0.1 260);
   --chart-3: oklch(0.7 0.06 260);
   --chart-4: oklch(0.8 0.04 260);
   --chart-5: oklch(0.87 0.03 260);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0.002 260);
-  --sidebar-foreground: oklch(0.21 0.01 260);
-  --sidebar-accent: oklch(0.96 0.004 260);
-  --sidebar-accent-foreground: oklch(0.25 0.01 260);
-  --sidebar-border: oklch(0.922 0.004 260);
+  --sidebar: oklch(0.955 0.005 260);
+  --sidebar-foreground: oklch(0.26 0.012 260);
+  --sidebar-accent: oklch(0.925 0.008 260);
+  --sidebar-accent-foreground: oklch(0.3 0.012 260);
+  --sidebar-border: oklch(0.9 0.006 260);
 }
 
 /* ---- ACCENT: primary color ---- */

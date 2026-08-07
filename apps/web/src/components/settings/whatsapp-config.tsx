@@ -434,21 +434,21 @@ export function WhatsAppConfig() {
       <div className="space-y-6">
         {/* Corrupted-token reset banner */}
         {showResetBanner && (
-          <Alert className="bg-amber-950/40 border-amber-600/40">
+          <Alert variant="warning">
             <div className="flex items-start gap-3">
-              <AlertTriangle className="size-5 text-amber-400 mt-0.5 shrink-0" />
+              <AlertTriangle className="size-5 mt-0.5 shrink-0" />
               <div className="flex-1">
-                <AlertTitle className="text-amber-200 mb-1">
+                <AlertTitle className="mb-1">
                   Stored token can&apos;t be decrypted
                 </AlertTitle>
-                <AlertDescription className="text-amber-100/80 text-sm">
+                <AlertDescription className="text-sm">
                   {statusMessage}
                 </AlertDescription>
                 <Button
                   onClick={handleReset}
                   disabled={resetting}
                   size="sm"
-                  className="mt-3 bg-amber-600 hover:bg-amber-700 text-white"
+                  className="mt-3 bg-warning-surface text-warning hover:bg-warning/20 border-warning/30"
                 >
                   {resetting ? (
                     <>
@@ -469,14 +469,14 @@ export function WhatsAppConfig() {
 
         {/* Long-lived token nearing expiry (Embedded Signup connections only) */}
         {tokenExpiringSoon && (
-          <Alert className="bg-amber-950/30 border-amber-700/50">
+          <Alert variant="warning">
             <div className="flex items-start gap-3">
-              <AlertTriangle className="size-5 text-amber-400 mt-0.5 shrink-0" />
+              <AlertTriangle className="size-5 mt-0.5 shrink-0" />
               <div>
-                <AlertTitle className="text-amber-200 mb-1">
+                <AlertTitle className="mb-1">
                   Access token expires soon
                 </AlertTitle>
-                <AlertDescription className="text-amber-100/80 text-sm">
+                <AlertDescription className="text-sm">
                   {tokenExpiresAt
                     ? `Expires ${new Date(tokenExpiresAt).toLocaleDateString()}. `
                     : ''}
@@ -494,7 +494,7 @@ export function WhatsAppConfig() {
             {connectionStatus === 'connected' ? (
               <CheckCircle2 className="size-4 text-primary" />
             ) : (
-              <XCircle className="size-4 text-red-500" />
+              <XCircle className="size-4 text-destructive" />
             )}
             <AlertTitle className="text-foreground mb-0">
               {connectionStatus === 'connected' ? 'Credentials valid' : 'Not Connected'}
@@ -514,25 +514,15 @@ export function WhatsAppConfig() {
             receive inbound events. Surface this dimension separately
             so users don't trust a misleading green banner. */}
         {config && (
-          <Alert
-            className={
-              isRegistered
-                ? 'bg-emerald-950/30 border-emerald-700/50'
-                : 'bg-amber-950/30 border-amber-700/50'
-            }
-          >
+          <Alert variant={isRegistered ? 'success' : 'warning'}>
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
                 {isRegistered ? (
-                  <CheckCircle2 className="size-4 text-emerald-400" />
+                  <CheckCircle2 className="size-4" />
                 ) : (
-                  <AlertTriangle className="size-4 text-amber-400" />
+                  <AlertTriangle className="size-4" />
                 )}
-                <AlertTitle
-                  className={
-                    'mb-0 ' + (isRegistered ? 'text-emerald-200' : 'text-amber-200')
-                  }
-                >
+                <AlertTitle className="mb-0">
                   {isRegistered
                     ? 'Registered — Meta will deliver events to Converse360'
                     : 'Not registered — Meta will not deliver events'}
@@ -566,7 +556,7 @@ export function WhatsAppConfig() {
               ) : lastRegistrationError ? (
                 <>
                   Last attempt failed with:{' '}
-                  <span className="text-red-300">
+                  <span className="text-destructive">
                     &quot;{lastRegistrationError}&quot;
                   </span>
                   . Enter (or correct) the 2-step PIN below and click
@@ -586,7 +576,7 @@ export function WhatsAppConfig() {
               <div className="mt-3 rounded border border-border bg-card/60 px-3 py-2 space-y-1.5 text-[11px]">
                 <p className="font-medium text-foreground">
                   Diagnostic — last run: {' '}
-                  <span className={registrationProbe.live ? 'text-emerald-400' : 'text-amber-400'}>
+                  <span className={registrationProbe.live ? 'text-success' : 'text-warning'}>
                     {registrationProbe.live ? 'live' : 'not live'}
                   </span>
                 </p>
@@ -594,9 +584,9 @@ export function WhatsAppConfig() {
                   {Object.entries(registrationProbe.checks).map(([k, v]) => (
                     <li key={k} className="flex items-center gap-1.5">
                       {v === true ? (
-                        <CheckCircle2 className="size-3 text-emerald-400 shrink-0" />
+                        <CheckCircle2 className="size-3 text-success shrink-0" />
                       ) : v === false ? (
-                        <XCircle className="size-3 text-red-400 shrink-0" />
+                        <XCircle className="size-3 text-destructive shrink-0" />
                       ) : (
                         <span className="size-3 rounded-full border border-border shrink-0" />
                       )}
@@ -605,7 +595,7 @@ export function WhatsAppConfig() {
                   ))}
                 </ul>
                 {(registrationProbe.errors ?? []).length > 0 && (
-                  <ul className="pt-1 space-y-0.5 text-red-300">
+                  <ul className="pt-1 space-y-0.5 text-destructive">
                     {registrationProbe.errors?.map((e, i) => (
                       <li key={i}>• {e}</li>
                     ))}
@@ -822,7 +812,7 @@ export function WhatsAppConfig() {
               variant="outline"
               onClick={handleReset}
               disabled={resetting}
-              className="border-red-900 text-red-400 hover:text-red-300 hover:bg-red-950/40"
+              className="border-destructive/40 text-destructive hover:bg-destructive/10"
             >
               {resetting ? (
                 <>

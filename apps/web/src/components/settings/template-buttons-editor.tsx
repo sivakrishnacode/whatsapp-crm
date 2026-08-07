@@ -179,7 +179,7 @@ export function TemplateButtonsEditor({
                     aria-label="Remove button"
                     disabled={buttons.length <= minButtons}
                     onClick={() => onChange(buttons.filter((_, x) => x !== i))}
-                    className="size-7 text-muted-foreground hover:bg-red-950/30 hover:text-red-400"
+                    className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   >
                     <X className="size-3.5" />
                   </Button>

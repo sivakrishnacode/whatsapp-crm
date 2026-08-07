@@ -136,7 +136,7 @@ export function TemplateGallery({
                   </ul>
                 </div>
                 {previewing.needsMedia && (
-                  <p className="rounded-md border border-amber-700/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-300">
+                  <p className="rounded-md border border-warning/30 bg-warning-surface px-3 py-2 text-xs text-warning">
                     You&apos;ll need to add your own{' '}
                     {TYPE_LABELS[previewing.type]} before submitting — we
                     can&apos;t ship media with a starter.
@@ -254,7 +254,7 @@ export function TemplateGallery({
                         {entry.form.body_text}
                       </p>
                       {entry.needsMedia && (
-                        <p className="mt-1.5 text-[10px] uppercase tracking-wide text-amber-400">
+                        <p className="mt-1.5 text-[10px] uppercase tracking-wide text-warning">
                           Needs your media
                         </p>
                       )}

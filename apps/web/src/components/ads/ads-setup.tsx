@@ -726,7 +726,7 @@ const CALLOUT_TONES = {
   warning:
     'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200',
   danger:
-    'border-destructive/40 bg-destructive/10 text-destructive dark:text-red-200',
+    'border-destructive/40 bg-destructive-surface text-destructive',
   success: 'border-primary/40 bg-primary-soft text-foreground',
 } as const;
 

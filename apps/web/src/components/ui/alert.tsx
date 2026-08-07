@@ -11,6 +11,14 @@ const alertVariants = cva(
         default: "bg-card text-card-foreground",
         destructive:
           "bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
+        /* Status variants. Wash and accent are both mode-tuned tokens,
+         * so one class list is correct in light and dark — `dark:`
+         * utilities never fire in this app (see globals.css).
+         * Descriptions stay muted-foreground: the accent is the
+         * signal, a whole paragraph of it is noise. */
+        success: "border-success/30 bg-success-surface text-success",
+        warning: "border-warning/30 bg-warning-surface text-warning",
+        info: "border-info/30 bg-info-surface text-info",
       },
     },
     defaultVariants: {

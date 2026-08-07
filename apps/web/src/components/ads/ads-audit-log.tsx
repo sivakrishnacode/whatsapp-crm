@@ -104,7 +104,7 @@ export function AdsAuditLog() {
                 'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full',
                 entry.succeeded
                   ? 'bg-primary-soft text-primary'
-                  : 'bg-destructive/10 text-destructive',
+                  : 'bg-destructive-surface text-destructive',
               )}
             >
               {entry.succeeded ? (

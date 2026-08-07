@@ -241,7 +241,7 @@ export function TargetingStep({
                     included
                       ? 'border-primary bg-primary-soft text-primary'
                       : excluded
-                        ? 'border-destructive/40 bg-destructive/10 text-destructive line-through'
+                        ? 'border-destructive/40 bg-destructive-surface text-destructive line-through'
                         : 'border-border text-muted-foreground hover:text-foreground',
                   )}
                   title={

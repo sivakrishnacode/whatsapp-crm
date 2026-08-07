@@ -103,7 +103,7 @@ function CardRow({
             aria-label={`Remove card ${index + 1}`}
             disabled={total <= 1}
             onClick={onRemove}
-            className="size-7 text-muted-foreground hover:bg-red-950/30 hover:text-red-400"
+            className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
           >
             <Trash2 className="size-3.5" />
           </Button>
@@ -153,7 +153,7 @@ function CardRow({
                 size="icon"
                 aria-label={`Remove card ${index + 1} file`}
                 onClick={() => onPatch({ header_media_file: null })}
-                className="size-6 text-muted-foreground hover:bg-red-950/30 hover:text-red-400"
+                className="size-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               >
                 <X className="size-3.5" />
               </Button>

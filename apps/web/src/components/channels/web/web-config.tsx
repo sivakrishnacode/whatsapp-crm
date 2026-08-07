@@ -551,7 +551,7 @@ function Banner({
       className={cn(
         'rounded-xl border p-4 text-sm',
         tone === 'error'
-          ? 'border-destructive/30 bg-destructive/5 text-destructive'
+          ? 'border-destructive/30 bg-destructive-surface text-destructive'
           : 'border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400',
       )}
     >
