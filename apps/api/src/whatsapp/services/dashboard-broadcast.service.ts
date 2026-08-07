@@ -1,56 +1,14 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import type { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
-import { decrypt } from '../../common/security/encryption.util';
-import { sendTemplateMessage } from '../meta-api.util';
-import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
-  isRecipientNotAllowedError,
-  toE164,
-} from '../../v1/utils/phone.util';
+import { toE164 } from '../../v1/utils/phone.util';
 import { resolveAccountCountry } from '../../common/phone/account-country.util';
-
-export const BROADCASTS_QUEUE = 'broadcasts-send';
-
-/**
- * Meta rate-limit buffer — same policy the old client-side wizard used:
- * 10 sends per batch, 1 s pause between batches, keeping a large
- * broadcast comfortably under Meta's per-phone-number messaging rate.
- */
-const SEND_BATCH_SIZE = 10;
-const SEND_BATCH_DELAY_MS = 1000;
-
-/**
- * Reserved keys inside `broadcasts.template_variables`.
- *
- * That column is a per-variable mapping keyed by placeholder token, so
- * an underscore prefix is what keeps these send-time extras from
- * colliding with a template's own variable named "headerText". Stored
- * here rather than in new columns because they are exactly as
- * per-broadcast as the variable mapping already in this Json.
- *
- * They exist because a template's requirements are not limited to its
- * body: a LOCATION header needs a pin, a media header needs a URL when
- * the template carries no default, and URL/COPY_CODE buttons need their
- * substitution. Meta rejects the entire send when one is missing, so a
- * broadcast that could not carry them simply failed for every
- * recipient.
- */
-const HEADER_MEDIA_KEY = '_headerMediaUrl';
-const HEADER_TEXT_KEY = '_headerText';
-const HEADER_LOCATION_KEY = '_headerLocation';
-const BUTTON_PARAMS_KEY = '_buttonParams';
-
-/** Every reserved key, so variable resolution can skip them. */
-const RESERVED_VARIABLE_KEYS = new Set([
+import { BroadcastQueueService } from '../../queue/broadcast-queue.service';
+import {
+  BUTTON_PARAMS_KEY,
+  HEADER_LOCATION_KEY,
   HEADER_MEDIA_KEY,
   HEADER_TEXT_KEY,
-  HEADER_LOCATION_KEY,
-  BUTTON_PARAMS_KEY,
-]);
+} from '../queues/broadcast-template.util';
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
@@ -105,10 +63,6 @@ interface AudienceContact {
 
 /** A contacts row as selected, before the phone filter narrows it. */
 type AudienceRow = Omit<AudienceContact, 'phone'> & { phone: string | null };
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * Keys starting with "_" are reserved metadata (e.g. the header media
@@ -186,11 +140,16 @@ export function resolveBroadcastVariableMap(
 
 /**
  * Server-side replacement for the dashboard's old client-side broadcast
- * fan-out (use-broadcast-sending.ts). The browser now makes ONE request;
- * audience resolution, recipient creation, and delivery all happen here.
- * Delivery runs on a BullMQ queue keyed by broadcast id, so it survives
- * page refreshes AND api restarts — the processor only ever picks up
- * recipients still in status='pending', making retries resume-safe.
+ * fan-out (use-broadcast-sending.ts). The browser makes ONE request;
+ * audience resolution and recipient creation happen here.
+ *
+ * Delivery does NOT happen here. This service's last act is to hand the
+ * broadcast id to the orchestrator queue, which fans out one job per
+ * recipient (see whatsapp/queues/). Everything the send needs is on the
+ * `broadcasts` / `broadcast_recipients` rows, so delivery survives a
+ * page refresh, an api restart, and a Redis flush alike — the recipient
+ * rows are the work list, and only rows still in status='pending' are
+ * ever sent.
  */
 @Injectable()
 export class DashboardBroadcastService {
@@ -198,7 +157,7 @@ export class DashboardBroadcastService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @InjectQueue(BROADCASTS_QUEUE) private readonly queue: Queue,
+    private readonly broadcastQueue: BroadcastQueueService,
   ) {}
 
   async createAndQueue(
@@ -292,7 +251,10 @@ export class DashboardBroadcastService {
           excludeTagIds: audience.excludeTagIds,
           csvCount: audience.csvContacts?.length,
         } as object,
-        status: 'sending',
+        // 'queued', not 'sending': nothing has been sent yet, and with
+        // fan-out there is a real interval between acceptance and the
+        // first message. The orchestrator moves it to 'sending'.
+        status: 'queued',
         total_recipients: contacts.length,
       },
       select: { id: true },
@@ -306,19 +268,7 @@ export class DashboardBroadcastService {
       })),
     });
 
-    // jobId = broadcast id → duplicate enqueues are idempotent. Retries
-    // re-enter deliver(), which only touches still-pending recipients.
-    await this.queue.add(
-      'deliver',
-      { broadcastId: broadcast.id },
-      {
-        jobId: broadcast.id,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-        removeOnComplete: true,
-        removeOnFail: true,
-      },
-    );
+    await this.broadcastQueue.enqueueBroadcast(broadcast.id);
 
     return { id: broadcast.id, totalRecipients: contacts.length };
   }
@@ -477,239 +427,5 @@ export class DashboardBroadcastService {
     return phones
       .map((p) => byPhone.get(p))
       .filter((c): c is AudienceContact => Boolean(c));
-  }
-
-  /**
-   * Deliver a queued broadcast. Called by the BullMQ processor —
-   * idempotent: only recipients still in status='pending' are sent, so
-   * a retried/resumed job never double-sends.
-   */
-  async deliver(broadcastId: string): Promise<void> {
-    const broadcast = await this.prisma.broadcasts.findUnique({
-      where: { id: broadcastId },
-    });
-    if (!broadcast || broadcast.status !== 'sending') return;
-
-    const failRemaining = async (reason: string) => {
-      await this.prisma.broadcast_recipients.updateMany({
-        where: { broadcast_id: broadcastId, status: 'pending' },
-        data: { status: 'failed', error_message: reason },
-      });
-      await this.prisma.broadcasts.update({
-        where: { id: broadcastId },
-        data: { status: 'failed', updated_at: new Date() },
-      });
-    };
-
-    const config = await this.prisma.whatsapp_config.findFirst({
-      where: { account_id: broadcast.account_id },
-    });
-    if (!config) {
-      await failRemaining('WhatsApp not configured');
-      return;
-    }
-
-    let accessToken: string;
-    try {
-      accessToken = decrypt(config.access_token);
-    } catch {
-      await failRemaining('Failed to decrypt WhatsApp access token');
-      return;
-    }
-
-    const templateRow = await this.prisma.message_templates.findFirst({
-      where: {
-        account_id: broadcast.account_id,
-        name: broadcast.template_name,
-        language: broadcast.template_language,
-      },
-    });
-
-    const rawVariables = (broadcast.template_variables ?? {}) as Record<
-      string,
-      unknown
-    >;
-    const headerMediaUrl =
-      typeof rawVariables[HEADER_MEDIA_KEY] === 'string'
-        ? rawVariables[HEADER_MEDIA_KEY]
-        : undefined;
-    const headerText =
-      typeof rawVariables[HEADER_TEXT_KEY] === 'string'
-        ? rawVariables[HEADER_TEXT_KEY]
-        : undefined;
-    const headerLocation = rawVariables[HEADER_LOCATION_KEY] as
-      | { latitude: string; longitude: string; name?: string; address?: string }
-      | undefined;
-    const storedButtonParams = (rawVariables[BUTTON_PARAMS_KEY] ??
-      {}) as Record<string, string>;
-    const buttonParams = Object.fromEntries(
-      Object.entries(storedButtonParams).map(([k, v]) => [Number(k), v]),
-    );
-    // The reserved keys share this object with the real variable
-    // mapping; passing them through as variables would have the
-    // resolver look for a template placeholder called "_headerText".
-    const variables = Object.fromEntries(
-      Object.entries(rawVariables).filter(
-        ([key]) => !RESERVED_VARIABLE_KEYS.has(key),
-      ),
-    ) as Record<string, VariableMapping>;
-    const isNamedTemplate =
-      (templateRow as { parameter_format?: string } | null)
-        ?.parameter_format === 'NAMED';
-
-    const recipients = await this.prisma.broadcast_recipients.findMany({
-      where: { broadcast_id: broadcastId, status: 'pending' },
-      select: {
-        id: true,
-        contacts: {
-          select: {
-            id: true,
-            phone: true,
-            name: true,
-            email: true,
-            company: true,
-          },
-        },
-      },
-      orderBy: { created_at: 'asc' },
-    });
-
-    // One bulk fetch of custom values for every contact, avoiding N+1
-    // queries in the send loop (mirrors the old client's index).
-    const contactIds = recipients
-      .map((r) => r.contacts?.id)
-      .filter((id): id is string => Boolean(id));
-    const customValueIndex = new Map<string, Map<string, string>>();
-    const PAGE = 500;
-    for (let i = 0; i < contactIds.length; i += PAGE) {
-      const rows = await this.prisma.contact_custom_values.findMany({
-        where: { contact_id: { in: contactIds.slice(i, i + PAGE) } },
-        select: { contact_id: true, custom_field_id: true, value: true },
-      });
-      for (const row of rows) {
-        const bucket =
-          customValueIndex.get(row.contact_id) ?? new Map<string, string>();
-        bucket.set(row.custom_field_id, row.value ?? '');
-        customValueIndex.set(row.contact_id, bucket);
-      }
-    }
-
-    let processed = 0;
-    for (const recipient of recipients) {
-      const contact = recipient.contacts;
-      if (!contact?.phone) {
-        await this.markRecipient(
-          recipient.id,
-          null,
-          'No phone number on contact',
-        );
-        continue;
-      }
-
-      const sanitized = sanitizePhoneForMeta(contact.phone);
-      if (!isValidE164(sanitized)) {
-        await this.markRecipient(recipient.id, null, 'Invalid phone number');
-        continue;
-      }
-
-      const customValues = customValueIndex.get(contact.id);
-      // NAMED templates travel as a name → value map; positional ones
-      // keep the ordered array they have always used.
-      const params = isNamedTemplate
-        ? undefined
-        : resolveBroadcastVariables(variables, contact, customValues);
-      const messageParams = {
-        ...(headerMediaUrl ? { headerMediaUrl } : {}),
-        ...(headerText ? { headerText } : {}),
-        ...(headerLocation ? { headerLocation } : {}),
-        ...(Object.keys(buttonParams).length > 0 ? { buttonParams } : {}),
-        ...(isNamedTemplate
-          ? {
-              bodyNamed: resolveBroadcastVariableMap(
-                variables,
-                contact,
-                customValues,
-              ),
-            }
-          : {}),
-      };
-
-      let sentMessageId: string | null = null;
-      let lastError: string | null = null;
-      for (const variant of phoneVariants(sanitized)) {
-        try {
-          const result = await sendTemplateMessage({
-            phoneNumberId: config.phone_number_id,
-            accessToken,
-            to: variant,
-            templateName: broadcast.template_name,
-            language: broadcast.template_language,
-            template: (templateRow as never) ?? undefined,
-            params,
-            messageParams,
-          });
-          sentMessageId = result.messageId;
-          lastError = null;
-          break;
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : 'Unknown error';
-          lastError = message;
-          if (!isRecipientNotAllowedError(message)) break;
-        }
-      }
-
-      await this.markRecipient(
-        recipient.id,
-        sentMessageId,
-        sentMessageId ? null : (lastError ?? 'Unknown error'),
-      );
-
-      processed++;
-      if (processed % SEND_BATCH_SIZE === 0 && processed < recipients.length) {
-        await sleep(SEND_BATCH_DELAY_MS);
-      }
-    }
-
-    // sent_count/failed_count aggregates are maintained by the DB
-    // trigger on broadcast_recipients (migration 003) — only the final
-    // status is flipped here. "failed" only when nothing went out.
-    const sentCount = await this.prisma.broadcast_recipients.count({
-      where: { broadcast_id: broadcastId, status: 'sent' },
-    });
-    await this.prisma.broadcasts.update({
-      where: { id: broadcastId },
-      data: {
-        status: sentCount > 0 ? 'sent' : 'failed',
-        updated_at: new Date(),
-      },
-    });
-    this.logger.log(
-      `broadcast ${broadcastId}: delivered ${sentCount}/${broadcast.total_recipients ?? recipients.length}`,
-    );
-  }
-
-  private async markRecipient(
-    recipientRowId: string,
-    whatsappMessageId: string | null,
-    errorMessage: string | null,
-  ): Promise<void> {
-    try {
-      await this.prisma.broadcast_recipients.update({
-        where: { id: recipientRowId },
-        data: whatsappMessageId
-          ? {
-              status: 'sent',
-              sent_at: new Date(),
-              whatsapp_message_id: whatsappMessageId,
-              error_message: null,
-            }
-          : { status: 'failed', error_message: errorMessage },
-      });
-    } catch (err) {
-      this.logger.error(
-        `failed updating recipient ${recipientRowId}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
   }
 }

@@ -470,7 +470,7 @@ export class BookingService {
       | 'appointment_rescheduled',
   ): Promise<void> {
     try {
-      await this.automationDispatch.dispatch({
+      await this.automationDispatch.enqueue({
         accountId,
         triggerType,
         contactId: row.contact_id,

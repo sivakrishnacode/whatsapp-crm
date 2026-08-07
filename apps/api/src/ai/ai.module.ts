@@ -11,6 +11,8 @@ import { AgentConfigService } from './services/agent-config.service';
 import { AgentRuntimeService } from './services/agent-runtime.service';
 import { AgentActionsService } from './services/agent-actions.service';
 import { KnowledgeSourceService } from './services/knowledge-source.service';
+import { QueueModule } from '../queue/queue.module';
+import { AiReplyProcessor } from './queues/ai-reply.processor';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { KnowledgeSourceService } from './services/knowledge-source.service';
     // The auto-reply bot sends through ChannelSenderService so it works
     // on Instagram DMs as well as WhatsApp.
     forwardRef(() => MessagingModule),
+    // Inbound messages are answered on a queue, not in the webhook.
+    QueueModule,
   ],
   controllers: [
     AiController,
@@ -28,6 +32,7 @@ import { KnowledgeSourceService } from './services/knowledge-source.service';
   ],
   providers: [
     AiReplyService,
+    AiReplyProcessor,
     AgentConfigService,
     AgentRuntimeService,
     AgentActionsService,

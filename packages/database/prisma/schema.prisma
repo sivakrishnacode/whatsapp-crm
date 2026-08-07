@@ -963,11 +963,14 @@ model broadcast_recipients {
   error_message       String?
   created_at          DateTime?  @default(now()) @db.Timestamptz(6)
   whatsapp_message_id String?    @unique(map: "idx_broadcast_recipients_wamid", where: raw("(whatsapp_message_id IS NOT NULL)"))
+  /// Per-recipient template parameters from the public API. NULL = resolve from broadcasts.template_variables (migration 070).
+  template_params     Json?
   broadcasts          broadcasts @relation(fields: [broadcast_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   contacts            contacts?  @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
 
   @@index([broadcast_id], map: "idx_broadcast_recipients_broadcast")
   @@index([broadcast_id, status], map: "idx_broadcast_recipients_broadcast_status")
+  @@index([broadcast_id, status, created_at], map: "idx_broadcast_recipients_fanout")
   @@index([contact_id, status], map: "idx_broadcast_recipients_contact_status")
   @@schema("public")
 }

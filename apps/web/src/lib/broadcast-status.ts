@@ -18,7 +18,7 @@ export interface StatusDisplay {
   classes: string;
   /**
    * Set true for statuses that should pulse in the UI to convey
-   * "live / in-flight" — currently only `sending`.
+   * "live / in-flight" — `queued` and `sending`.
    */
   pulse?: boolean;
 }
@@ -27,6 +27,15 @@ export const broadcastStatusConfig: Record<BroadcastStatus, StatusDisplay> = {
   draft: {
     label: "Draft",
     classes: "bg-slate-500/10 text-muted-foreground border-slate-500/20",
+  },
+  queued: {
+    // Amber like `sending`, and pulsing, because to the user this is
+    // the same thing: the broadcast is under way and the number will
+    // start moving. The distinct label is what tells support the
+    // difference between "waiting for a worker" and "actively sending".
+    label: "Queued",
+    classes: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    pulse: true,
   },
   scheduled: {
     label: "Scheduled",

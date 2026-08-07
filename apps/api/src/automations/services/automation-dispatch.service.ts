@@ -1,9 +1,12 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
+import type { Queue } from 'bullmq';
 import type { Automation } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AutomationStepExecutorService } from './automation-step-executor.service';
 import { triggerMatches } from './automation-trigger-match.util';
 import { toChannel } from '../../common/messaging/channel';
+import { AUTOMATION_TRIGGER_QUEUE } from '../../queue/queue.constants';
 import type {
   AutomationContext,
   AutomationDispatchInput,
@@ -20,7 +23,38 @@ export class AutomationDispatchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stepExecutor: AutomationStepExecutorService,
+    @InjectQueue(AUTOMATION_TRIGGER_QUEUE) private readonly queue: Queue,
   ) {}
+
+  /**
+   * Queue a trigger instead of running it inline.
+   *
+   * `dispatch()` can run an entire automation — sending messages,
+   * calling webhooks, waiting — and the callers that reach it from a
+   * form submission, a web-widget message or a booking were doing that
+   * inside the request that caused it. A slow automation therefore
+   * slowed down the visitor's own page, and a restart mid-run lost the
+   * remainder with no way to tell it had ever started.
+   *
+   * The input is ids and a plain-JSON context, so a queued trigger runs
+   * exactly as it would have inline — just not on the caller's clock.
+   * Never throws: every caller is a fire-and-forget fan-out, and a
+   * Redis blip must not fail the form submission that triggered it.
+   */
+  async enqueue(input: AutomationDispatchInput): Promise<void> {
+    try {
+      await this.queue.add('trigger', input, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { count: 200, age: 3600 },
+        removeOnFail: { count: 500 },
+      });
+    } catch (err) {
+      this.logger.error(
+        `could not queue ${input.triggerType} trigger: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   /**
    * Fire all active automations matching the given trigger for an account.

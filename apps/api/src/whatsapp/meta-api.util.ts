@@ -108,7 +108,13 @@ export {
   MetaRateLimitError,
 } from '../common/messaging/meta-errors';
 
-import { throwClassifiedMetaError } from '../common/messaging/meta-errors';
+import {
+  throwClassifiedMetaError,
+  MetaApiError,
+  MetaRateLimitError,
+  MetaTokenExpiredError,
+  RATE_LIMIT_CODES,
+} from '../common/messaging/meta-errors';
 
 export interface SendTextMessageArgs {
   phoneNumberId: string;
@@ -255,7 +261,24 @@ export async function sendTemplateMessage(
       `[meta] template "${templateName}" rejected: ${errMsg}\n` +
         `payload: ${JSON.stringify(templatePayload)}`,
     );
-    throw new Error(errMsg);
+    // Classified, not a bare Error: broadcast delivery is a queue now,
+    // and "retry this in 15 seconds" vs "record it as failed and move
+    // on" is decided from the HTTP status and Meta's error code. A
+    // throttle looks exactly like a rejected template in the message
+    // string, which is why that decision must not be made by matching
+    // on one. Every subclass still extends Error with the same rich
+    // message, so existing `err.message` call sites are unaffected.
+    const code = metaErr?.error?.code;
+    if (response.status === 401 || code === 190) {
+      throw new MetaTokenExpiredError(errMsg, code, response.status);
+    }
+    if (
+      response.status === 429 ||
+      (code !== undefined && RATE_LIMIT_CODES.has(code))
+    ) {
+      throw new MetaRateLimitError(errMsg, code, response.status);
+    }
+    throw new MetaApiError(errMsg, code, response.status);
   }
   const data = (await response.json()) as MetaSendResponse;
   return { messageId: data.messages[0].id };

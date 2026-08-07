@@ -64,7 +64,7 @@ Prisma client before compiling anything that needs it.
 - **Auth (`src/auth/guards`):**
   - `supabase-auth.guard.ts` — verifies **Supabase** JWTs from cookies using `jose` (JWKS via `SUPABASE_URL/.well-known/jwks.json`, or HS256 with `SUPABASE_JWT_SECRET`). Used by the dashboard/web surface.
   - `api-key.guard.ts` — `Bearer <api-key>` for the public `v1` API (see `ApiKey` model + `src/lib/api-keys/scopes`).
-- **Queue:** `@nestjs/bullmq` + `ioredis` (broadcasts, automations, campaign schedules, etc.).
+- **Queue:** `@nestjs/bullmq` + `ioredis` — see the dedicated section below.
 - **Payments:** `stripe` and `razorpay` (Razorpay for IN — see `docs/razorpay.md`, `docs/subscription-setup.md`).
 - **Config:** `@nestjs/config` global. Env-driven (`SUPABASE_*`, `REDIS_URL`, `DATABASE_URL`, Meta app creds, Stripe/Razorpay keys, etc.).
 
@@ -259,6 +259,46 @@ pending Meta App Review for `ads_management`.
   (a Click-to-WhatsApp click produces a *WhatsApp* conversation).
 - Publishing a Click-to-WhatsApp ad writes a `ctwa_campaigns` row, so existing
   `ctwa_clicks` attribution and `/channels/whatsapp/ctwa` keep working unchanged.
+
+## Queues (`apps/api/src/queue`, BullMQ + Redis)
+
+**Anything that calls somebody else's API on behalf of a request runs on a
+queue.** Design and the decisions behind it: `docs/implementation_queue.md`.
+
+- **`src/queue/queue.constants.ts` is the single source of every queue name**,
+  and the list the dashboard enumerates. A queue whose name is declared next to
+  its processor instead still runs — it is just invisible at `/admin/queues`,
+  which is when you need it most.
+- **13 queues.** Registered centrally in `QueueModule` when producer and
+  processor live in different modules (`broadcast-orchestrate`,
+  `broadcast-send`, `webhook-delivery`, `ai-reply`, `automation-trigger`,
+  `ecommerce-sync`, `lead-fetch`); in the owning module otherwise
+  (`automations-pending`, `flows-sweep`, `whatsapp-limits`, `ads-sync`, the two
+  Instagram ones).
+- **Broadcasts are a fan-out**: one orchestrator job per broadcast → one job per
+  recipient. Both the dashboard and `POST /v1/broadcasts` go through
+  `BroadcastQueueService.enqueueBroadcast()`. The status flow is
+  `draft → queued → sending → sent|failed` (migration 070).
+- ⚠️ **Never put a secret in a job payload.** Redis stores job data in plaintext
+  and Bull Board renders it. Processors re-read and decrypt what they need —
+  which also means a rotated token takes effect on the next job.
+- ⚠️ **Redis is a work list; Postgres is the system of record.** Every job must
+  be rebuildable from rows alone (this is why per-recipient template params are
+  a column, not payload), and `BroadcastRecoveryService` re-enqueues unfinished
+  broadcasts on boot.
+- ⚠️ **Idempotency is layered on purpose**: a stable `jobId` stops a duplicate
+  job existing, *and* the processor re-checks the row's status before acting.
+  Removing either one re-introduces double-sends.
+- **Retry classification comes from Meta's status code**, never from matching on
+  an error message (`isTransientSendError`). `sendTemplateMessage` throws
+  classified `MetaApiError` subclasses so this is possible.
+- ⚠️ **`ai-reply` must stay fast.** Its concurrency is the auto-reply bot's
+  response time; no rate limiter and no deliberate delay belongs on that queue.
+- **Bull Board at `/admin/queues`**, mounted by hand in `main.ts` so auth runs
+  before every one of its internal routes. Guarded by its own ops credential
+  (`QUEUE_DASHBOARD_USER`/`_PASSWORD`) and **not mounted at all** when unset —
+  it shows every tenant's job payloads, so a workspace login must never open it
+  (same reasoning as `apps/admin-panel`).
 
 ## Infra — `docker-compose.yml`
 

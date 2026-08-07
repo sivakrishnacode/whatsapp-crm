@@ -80,9 +80,11 @@ export class WhatsappBroadcastsController {
       },
     );
 
+    // 'queued' matches what was actually written: the recipients exist
+    // and the orchestrator has the broadcast, but nothing has been sent.
     return res.status(HttpStatus.ACCEPTED).json({
       id,
-      status: 'sending',
+      status: 'queued',
       total_recipients: totalRecipients,
     });
   }

@@ -22,6 +22,8 @@
     "prisma:studio": "npm run studio --workspace=@repo/database"
   },
   "dependencies": {
+    "@bull-board/api": "^6.21.3",
+    "@bull-board/express": "^6.21.3",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",

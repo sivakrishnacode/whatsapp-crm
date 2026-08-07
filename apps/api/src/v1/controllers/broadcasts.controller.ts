@@ -50,7 +50,7 @@ export class BroadcastsController {
 
     const auditUserId = await resolveAuditUserId(this.prisma, ctx.accountId);
 
-    const plan = await this.broadcastSendService.createBroadcast(
+    const accepted = await this.broadcastSendService.createBroadcast(
       ctx.accountId,
       auditUserId,
       {
@@ -67,16 +67,17 @@ export class BroadcastsController {
       },
     );
 
-    // Asynchronous background delivery (returns 202 immediately)
-    void this.broadcastSendService.deliverBroadcast(plan);
-
+    // 202 + 'queued'. `createBroadcast` has already persisted every
+    // recipient and handed the broadcast to the queue, so this response
+    // is a promise the system can keep across a restart — which the
+    // old `void deliverBroadcast(plan)` here could not.
     res.status(HttpStatus.ACCEPTED);
     return ok({
-      broadcast_id: plan.broadcastId,
-      status: 'sending',
-      total_recipients: plan.planned.length,
-      accepted: plan.planned.length,
-      rejected: plan.rejected,
+      broadcast_id: accepted.broadcastId,
+      status: 'queued',
+      total_recipients: accepted.accepted,
+      accepted: accepted.accepted,
+      rejected: accepted.rejected,
     });
   }
 

@@ -12,16 +12,18 @@ import { WhatsappMediaController } from './controllers/whatsapp-media.controller
 import { WhatsappDashboardController } from './controllers/whatsapp-dashboard.controller';
 import { WhatsappShopController } from './controllers/whatsapp-shop.controller';
 import { WhatsappBroadcastsController } from './controllers/whatsapp-broadcasts.controller';
-import {
-  DashboardBroadcastService,
-  BROADCASTS_QUEUE,
-} from './services/dashboard-broadcast.service';
-import { BroadcastsProcessor } from './broadcasts.processor';
+import { DashboardBroadcastService } from './services/dashboard-broadcast.service';
+import { BroadcastOrchestratorProcessor } from './queues/broadcast-orchestrator.processor';
+import { BroadcastSendProcessor } from './queues/broadcast-send.processor';
+import { BroadcastRecipientSendService } from './queues/broadcast-recipient-send.service';
+import { BroadcastFinalizeService } from './queues/broadcast-finalize.service';
+import { BroadcastRecoveryService } from './queues/broadcast-recovery.service';
 import {
   MessagingLimitsService,
   LIMITS_QUEUE,
 } from './services/messaging-limits.service';
 import { MessagingLimitsProcessor } from './messaging-limits.processor';
+import { QueueModule } from '../queue/queue.module';
 import { V1Module } from '../v1/v1.module';
 import { AutomationsModule } from '../automations/automations.module';
 import { FlowsModule } from '../flows/flows.module';
@@ -30,7 +32,9 @@ import { AiModule } from '../ai/ai.module';
 @Module({
   imports: [
     V1Module,
-    BullModule.registerQueue({ name: BROADCASTS_QUEUE }),
+    // Broadcast queues (orchestrate + send) are registered centrally —
+    // the public API enqueues into the same ones. See QueueModule.
+    QueueModule,
     BullModule.registerQueue({ name: LIMITS_QUEUE }),
     forwardRef(() => AutomationsModule),
     forwardRef(() => FlowsModule),
@@ -52,7 +56,11 @@ import { AiModule } from '../ai/ai.module';
     ConnectAccountService,
     WhatsappWebhookService,
     DashboardBroadcastService,
-    BroadcastsProcessor,
+    BroadcastOrchestratorProcessor,
+    BroadcastSendProcessor,
+    BroadcastRecipientSendService,
+    BroadcastFinalizeService,
+    BroadcastRecoveryService,
     MessagingLimitsService,
     MessagingLimitsProcessor,
   ],

@@ -218,7 +218,8 @@ export default function BroadcastDetailPage() {
   // the counts and the visible page every few seconds. Survives page
   // reloads because all progress lives in the DB, not in this tab.
   useEffect(() => {
-    if (broadcast?.status !== 'sending') return;
+    if (broadcast?.status !== 'sending' && broadcast?.status !== 'queued')
+      return;
     const interval = setInterval(() => {
       fetchBroadcast().catch(() => undefined);
       fetchRecipients().catch(() => undefined);
@@ -390,11 +391,13 @@ export default function BroadcastDetailPage() {
           <Button
             variant="outline"
             size="sm"
-            disabled={broadcast.status === 'sending'}
+            disabled={
+              broadcast.status === 'sending' || broadcast.status === 'queued'
+            }
             onClick={() => setConfirmDelete(true)}
             title={
-              broadcast.status === 'sending'
-                ? 'Cannot delete while a broadcast is actively sending'
+              broadcast.status === 'sending' || broadcast.status === 'queued'
+                ? 'Cannot delete while a broadcast is queued or sending'
                 : 'Delete this broadcast'
             }
             className="border-red-500/30 bg-transparent text-red-400 hover:bg-red-500/10 disabled:opacity-40"

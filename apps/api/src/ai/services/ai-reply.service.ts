@@ -1,6 +1,9 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import type { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChannelSenderService } from '../../common/messaging/channel-sender.service';
+import { AI_REPLY_QUEUE } from '../../queue/queue.constants';
 import { loadAiConfig } from '../lib/config';
 import { buildConversationContext } from '../lib/context';
 import { generateReply } from '../lib/generate';
@@ -8,7 +11,7 @@ import { latestUserMessage, matchesHandoffPhrase } from '../lib/query';
 import { AgentRuntimeService } from './agent-runtime.service';
 import type { AiConfig } from '../lib/types';
 
-interface DispatchArgs {
+export interface DispatchArgs {
   accountId: string;
   conversationId: string;
   contactId: string;
@@ -24,6 +27,7 @@ export class AiReplyService {
     private readonly runtime: AgentRuntimeService,
     @Inject(forwardRef(() => ChannelSenderService))
     private readonly channelSender: ChannelSenderService,
+    @InjectQueue(AI_REPLY_QUEUE) private readonly queue: Queue,
   ) {}
 
   /**
@@ -112,10 +116,50 @@ export class AiReplyService {
   }
 
   /**
-   * AI auto-reply logic for an inbound message.
-   * Invoked asynchronously (non-blocking) from the webhook handler.
+   * Hand an inbound message to the AI reply queue.
+   *
+   * Called from every inbound webhook (WhatsApp, Instagram, web). It
+   * used to *be* the reply: a `void`-ed call that ran the whole
+   * retrieval-plus-provider round trip inside the webhook handler.
+   * Two problems with that, both of which cost real replies:
+   *
+   * - A provider call takes seconds and occasionally tens of seconds.
+   *   Meta retries a webhook we are slow to acknowledge, and a restart
+   *   during one silently dropped the answer — the customer's message
+   *   just never got a reply, with nothing anywhere saying why.
+   * - There was no retry. A transient 503 from OpenAI was final.
+   *
+   * The job payload is four ids. Everything else — the config, the
+   * conversation, the contact — is read at run time, so a job that
+   * waits behind a queue cannot answer using stale settings.
    */
   async dispatchInboundToAiReply(args: DispatchArgs): Promise<void> {
+    try {
+      await this.queue.add('reply', args, {
+        // One job per inbound message. No jobId: two messages in the
+        // same conversation are two separate things to answer, and the
+        // per-conversation reply budget (claim_ai_reply_slot) is what
+        // stops the bot talking too much — not deduplication here.
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { count: 100, age: 3600 },
+        removeOnFail: { count: 200 },
+      });
+    } catch (err) {
+      // Callers are fire-and-forget from a webhook handler; a Redis
+      // blip must not turn into a 500 that makes Meta redeliver the
+      // whole webhook.
+      this.logger.error(
+        `[ai auto-reply] could not queue reply for conversation ${args.conversationId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * The actual auto-reply. Called by the queue processor, never
+   * directly from a request path.
+   */
+  async runInboundAiReply(args: DispatchArgs): Promise<void> {
     const { accountId, conversationId, contactId, configOwnerUserId } = args;
 
     try {

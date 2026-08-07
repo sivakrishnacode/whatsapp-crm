@@ -17,15 +17,19 @@ import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ShopifyClient } from '../utils/shopify.client.js';
-import { WooCommerceClient } from '../utils/woocommerce.client.js';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
+import { ECOMMERCE_SYNC_QUEUE } from '../../queue/queue.constants';
 
 @Controller('ecommerce')
 @UseGuards(SupabaseAuthGuard)
 export class EcommerceController {
   private readonly logger = new Logger(EcommerceController.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(ECOMMERCE_SYNC_QUEUE) private readonly syncQueue: Queue,
+  ) {}
 
   /** GET /api/ecommerce/integrations — list connected stores. */
   @Get('integrations')
@@ -209,129 +213,22 @@ export class EcommerceController {
       });
     }
 
-    // Fire-and-forget sync; respond immediately
-    void this.runSync(id, integration, account.userId).catch((err: unknown) => {
-      this.logger.error('[ecommerce sync]', err);
-    });
+    // Queued, not detached. `jobId` is the integration id, so
+    // double-clicking "Sync now" cannot start two imports of the same
+    // store writing the same rows — the second add is a no-op while
+    // the first is still queued or running.
+    await this.syncQueue.add(
+      'sync',
+      { integrationId: id },
+      {
+        jobId: id,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 10_000 },
+        removeOnComplete: true,
+        removeOnFail: { count: 50 },
+      },
+    );
 
     return res.status(HttpStatus.ACCEPTED).json({ message: 'Sync started' });
-  }
-
-  private async runSync(
-    id: string,
-    integration: {
-      id: string;
-      account_id: string;
-      platform: string;
-      store_url: string;
-      api_key: string | null;
-      api_secret: string | null;
-      access_token: string | null;
-    },
-    userId: string,
-  ): Promise<void> {
-    let productsSynced = 0;
-    const ordersSynced = 0;
-
-    try {
-      if (integration.platform === 'shopify') {
-        const client = new ShopifyClient(
-          integration.store_url,
-          integration.api_key ?? '',
-          integration.api_secret ?? '',
-          integration.access_token ?? undefined,
-        );
-
-        const products = await client.getProducts();
-
-        for (const p of products) {
-          await this.prisma.ecommerce_products.upsert({
-            where: {
-              integration_id_external_product_id: {
-                integration_id: integration.id,
-                external_product_id: p.id,
-              },
-            },
-            create: {
-              integration_id: integration.id,
-              external_product_id: p.id,
-              name: p.title,
-              description: p.description ?? null,
-              price: parseFloat(p.variants[0]?.price ?? '0'),
-              currency: 'USD',
-              image_url: p.images[0]?.url ?? null,
-              product_url: `${integration.store_url}/products/${p.handle}`,
-              inventory_count: p.variants[0]?.inventoryQuantity ?? null,
-              sync_at: new Date(),
-            },
-            update: {
-              name: p.title,
-              price: parseFloat(p.variants[0]?.price ?? '0'),
-              sync_at: new Date(),
-            },
-          });
-          productsSynced++;
-        }
-      } else if (integration.platform === 'woocommerce') {
-        const client = new WooCommerceClient(
-          integration.store_url,
-          integration.api_key ?? '',
-          integration.api_secret ?? '',
-        );
-
-        const products = await client.getAllProducts();
-
-        for (const p of products) {
-          await this.prisma.ecommerce_products.upsert({
-            where: {
-              integration_id_external_product_id: {
-                integration_id: integration.id,
-                external_product_id: String(p.id),
-              },
-            },
-            create: {
-              integration_id: integration.id,
-              external_product_id: String(p.id),
-              name: p.name,
-              description: p.description ?? null,
-              price: parseFloat(p.price || '0'),
-              currency: 'USD',
-              image_url: p.images[0]?.src ?? null,
-              product_url: p.permalink,
-              inventory_count: p.stock_quantity ?? null,
-              sync_at: new Date(),
-            },
-            update: {
-              name: p.name,
-              price: parseFloat(p.price || '0'),
-              sync_at: new Date(),
-            },
-          });
-          productsSynced++;
-        }
-      }
-
-      await this.prisma.ecommerce_integrations.update({
-        where: { id },
-        data: {
-          status: 'connected',
-          last_sync_at: new Date(),
-          sync_error: null,
-        },
-      });
-
-      this.logger.log(
-        `[ecommerce sync] ${integration.platform} — products: ${productsSynced}, orders: ${ordersSynced}`,
-      );
-    } catch (err) {
-      await this.prisma.ecommerce_integrations.update({
-        where: { id },
-        data: {
-          status: 'error',
-          sync_error: err instanceof Error ? err.message : 'Sync failed',
-        },
-      });
-      throw err;
-    }
   }
 }

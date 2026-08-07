@@ -271,7 +271,7 @@ export class FormSubmitService {
     data: Record<string, unknown>,
   ): Promise<void> {
     try {
-      await this.automationDispatch.dispatch({
+      await this.automationDispatch.enqueue({
         accountId: input.accountId,
         triggerType: 'form_submitted',
         contactId,

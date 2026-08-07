@@ -14,10 +14,15 @@ import { AutomationConditionService } from './services/automation-condition.serv
 import { AutomationStepsTreeService } from './services/automation-steps-tree.service';
 import { AutomationsProcessor } from './automations.processor';
 import { InternalDispatchGuard } from './guards/internal-dispatch.guard';
+import { AutomationTriggerProcessor } from './queues/automation-trigger.processor';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: AUTOMATIONS_PENDING_QUEUE }),
+    // automation-trigger (starting a run) is registered centrally —
+    // forms, the web widget and bookings all enqueue into it.
+    QueueModule,
     forwardRef(() => WhatsappModule),
     // send_message steps route by conversation channel; send_template
     // steps use it to refuse cleanly on Instagram.
@@ -31,6 +36,7 @@ import { InternalDispatchGuard } from './guards/internal-dispatch.guard';
     AutomationStepExecutorService,
     AutomationConditionService,
     AutomationsProcessor,
+    AutomationTriggerProcessor,
     InternalDispatchGuard,
   ],
   exports: [AutomationDispatchService],

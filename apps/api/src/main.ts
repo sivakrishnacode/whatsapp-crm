@@ -5,6 +5,10 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded } from 'express';
 import type { Request } from 'express';
 import { AppModule } from './app.module';
+import {
+  QueueDashboardService,
+  QUEUE_DASHBOARD_PATH,
+} from './queue/bull-board/queue-dashboard.service';
 
 /**
  * Maximum request body.
@@ -59,6 +63,21 @@ async function bootstrap() {
 
   app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+
+  // Bull Board, mounted by hand rather than as a Nest route.
+  //
+  // It is an express router with its own internal paths, and the auth
+  // must run before ANY of them — including the static assets, which a
+  // Nest controller route could not cover. Mounting it here makes the
+  // order unmissable: credentials first, dashboard second. Absent
+  // credentials, nothing is mounted at all and the path 404s like any
+  // other unknown route.
+  const dashboard = app.get(QueueDashboardService, { strict: false });
+  const dashboardRouter = dashboard.getRouter();
+  if (dashboardRouter) {
+    app.use(QUEUE_DASHBOARD_PATH, dashboard.authMiddleware(), dashboardRouter);
+  }
+
   app.enableShutdownHooks();
   await app.listen(process.env.PORT ?? 8001);
 }

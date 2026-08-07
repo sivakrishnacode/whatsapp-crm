@@ -2,7 +2,6 @@
    vitest's asymmetric matchers (expect.any / expect.objectContaining)
    are typed `any`; property-position usage trips the rule spuriously. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Queue } from 'bullmq';
 import {
   DashboardBroadcastService,
   resolveBroadcastVariables,
@@ -10,15 +9,11 @@ import {
   type VariableMapping,
 } from './dashboard-broadcast.service';
 import type { PrismaService } from '../../prisma/prisma.service';
+import type { BroadcastQueueService } from '../../queue/broadcast-queue.service';
 
-vi.mock('../meta-api.util', () => ({
-  sendTemplateMessage: vi.fn(),
-}));
 vi.mock('../../common/security/encryption.util', () => ({
   decrypt: vi.fn(() => 'decrypted-token'),
 }));
-
-import { sendTemplateMessage } from '../meta-api.util';
 
 const CONTACT = {
   id: 'c-1',
@@ -137,16 +132,16 @@ describe('resolveBroadcastVariableMap', () => {
 
 describe('DashboardBroadcastService.createAndQueue', () => {
   let prisma: ReturnType<typeof makePrismaMock>;
-  let queue: { add: ReturnType<typeof vi.fn> };
+  let queue: { enqueueBroadcast: ReturnType<typeof vi.fn> };
   let service: DashboardBroadcastService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     prisma = makePrismaMock();
-    queue = { add: vi.fn().mockResolvedValue({}) };
+    queue = { enqueueBroadcast: vi.fn().mockResolvedValue(undefined) };
     service = new DashboardBroadcastService(
       prisma as unknown as PrismaService,
-      queue as unknown as Queue,
+      queue as unknown as BroadcastQueueService,
     );
   });
 
@@ -190,10 +185,10 @@ describe('DashboardBroadcastService.createAndQueue', () => {
       response: { error: 'No contacts found for this audience.' },
     });
     expect(prisma.broadcasts.create).not.toHaveBeenCalled();
-    expect(queue.add).not.toHaveBeenCalled();
+    expect(queue.enqueueBroadcast).not.toHaveBeenCalled();
   });
 
-  it('creates broadcast + pending recipients and queues an idempotent job', async () => {
+  it('creates the broadcast as "queued" — nothing has been sent yet', async () => {
     const result = await service.createAndQueue('acc-1', 'u-1', {
       ...basePayload,
       headerMediaUrl: ' https://x.test/img.png ',
@@ -205,7 +200,7 @@ describe('DashboardBroadcastService.createAndQueue', () => {
         data: expect.objectContaining({
           account_id: 'acc-1',
           user_id: 'u-1',
-          status: 'sending',
+          status: 'queued',
           total_recipients: 1,
           template_variables: expect.objectContaining({
             _headerMediaUrl: 'https://x.test/img.png',
@@ -216,11 +211,7 @@ describe('DashboardBroadcastService.createAndQueue', () => {
     expect(prisma.broadcast_recipients.createMany).toHaveBeenCalledWith({
       data: [{ broadcast_id: 'b-1', contact_id: 'c-1', status: 'pending' }],
     });
-    expect(queue.add).toHaveBeenCalledWith(
-      'deliver',
-      { broadcastId: 'b-1' },
-      expect.objectContaining({ jobId: 'b-1', attempts: 3 }),
-    );
+    expect(queue.enqueueBroadcast).toHaveBeenCalledWith('b-1');
   });
 
   it('resolves a tags audience scoped to the account, minus excluded tags', async () => {
@@ -281,143 +272,6 @@ describe('DashboardBroadcastService.createAndQueue', () => {
           account_id: 'acc-1',
           phone: '+918888888888',
         }),
-      }),
-    );
-  });
-});
-
-describe('DashboardBroadcastService.deliver', () => {
-  let prisma: ReturnType<typeof makePrismaMock>;
-  let service: DashboardBroadcastService;
-  const sendMock = vi.mocked(sendTemplateMessage);
-
-  const BROADCAST_ROW = {
-    id: 'b-1',
-    account_id: 'acc-1',
-    status: 'sending',
-    template_name: 'hello_world',
-    template_language: 'en_US',
-    template_variables: { '1': { type: 'field', value: 'name' } },
-    total_recipients: 2,
-  };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    prisma = makePrismaMock();
-    service = new DashboardBroadcastService(
-      prisma as unknown as PrismaService,
-      { add: vi.fn() } as unknown as Queue,
-    );
-  });
-
-  it('no-ops for missing or already-finished broadcasts (idempotent resume)', async () => {
-    prisma.broadcasts.findUnique.mockResolvedValueOnce(null);
-    await service.deliver('missing');
-
-    prisma.broadcasts.findUnique.mockResolvedValueOnce({
-      ...BROADCAST_ROW,
-      status: 'sent',
-    });
-    await service.deliver('b-1');
-
-    expect(prisma.broadcast_recipients.findMany).not.toHaveBeenCalled();
-    expect(sendMock).not.toHaveBeenCalled();
-  });
-
-  it('fails all pending recipients when WhatsApp config is gone', async () => {
-    prisma.broadcasts.findUnique.mockResolvedValueOnce(BROADCAST_ROW);
-    prisma.whatsapp_config.findFirst.mockResolvedValueOnce(null);
-
-    await service.deliver('b-1');
-
-    expect(prisma.broadcast_recipients.updateMany).toHaveBeenCalledWith({
-      where: { broadcast_id: 'b-1', status: 'pending' },
-      data: { status: 'failed', error_message: 'WhatsApp not configured' },
-    });
-    expect(prisma.broadcasts.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: 'failed' }),
-      }),
-    );
-  });
-
-  it('sends only pending recipients, marks rows, and finishes as sent', async () => {
-    prisma.broadcasts.findUnique.mockResolvedValueOnce(BROADCAST_ROW);
-    prisma.broadcast_recipients.findMany.mockResolvedValueOnce([
-      { id: 'r-1', contacts: CONTACT },
-      {
-        id: 'r-2',
-        contacts: {
-          ...CONTACT,
-          id: 'c-2',
-          phone: '+919999999999',
-          name: 'Vik',
-        },
-      },
-    ]);
-    sendMock
-      .mockResolvedValueOnce({ messageId: 'wamid-1' } as never)
-      .mockRejectedValueOnce(new Error('Meta said no'));
-    prisma.broadcast_recipients.count.mockResolvedValueOnce(1);
-
-    await service.deliver('b-1');
-
-    expect(prisma.broadcast_recipients.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { broadcast_id: 'b-1', status: 'pending' },
-      }),
-    );
-    // Personalized params resolved per contact from the stored mapping;
-    // `to` is sanitized to Meta's digits-only format.
-    expect(sendMock).toHaveBeenCalledWith(
-      expect.objectContaining({ params: ['Asha'], to: '911234567890' }),
-    );
-    expect(prisma.broadcast_recipients.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'r-1' },
-        data: expect.objectContaining({
-          status: 'sent',
-          whatsapp_message_id: 'wamid-1',
-        }),
-      }),
-    );
-    expect(prisma.broadcast_recipients.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'r-2' },
-        data: expect.objectContaining({
-          status: 'failed',
-          error_message: 'Meta said no',
-        }),
-      }),
-    );
-    expect(prisma.broadcasts.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: 'sent' }),
-      }),
-    );
-  });
-
-  it('marks recipients without a valid phone failed without calling Meta', async () => {
-    prisma.broadcasts.findUnique.mockResolvedValueOnce(BROADCAST_ROW);
-    prisma.broadcast_recipients.findMany.mockResolvedValueOnce([
-      { id: 'r-1', contacts: { ...CONTACT, phone: null } },
-      { id: 'r-2', contacts: { ...CONTACT, id: 'c-2', phone: 'not-a-phone' } },
-    ]);
-    prisma.broadcast_recipients.count.mockResolvedValueOnce(0);
-
-    await service.deliver('b-1');
-
-    expect(sendMock).not.toHaveBeenCalled();
-    expect(prisma.broadcast_recipients.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'r-1' },
-        data: expect.objectContaining({ status: 'failed' }),
-      }),
-    );
-    // Nothing went out → the broadcast lands on failed
-    expect(prisma.broadcasts.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: 'failed' }),
       }),
     );
   });

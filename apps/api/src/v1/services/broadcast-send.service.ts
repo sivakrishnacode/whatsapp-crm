@@ -1,16 +1,10 @@
-import { Injectable, Logger, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { sendTemplateMessage } from '../../whatsapp/meta-api.util';
-import { decrypt } from '../../common/security/encryption.util';
-import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
-  isRecipientNotAllowedError,
-} from '../utils/phone.util';
+import { sanitizePhoneForMeta, isValidE164 } from '../utils/phone.util';
 import { findOrCreateContact } from '../utils/contacts.util';
 import { ApiError } from '../utils/respond.util';
 import { WebhookDeliverService } from './webhook-deliver.service';
+import { BroadcastQueueService } from '../../queue/broadcast-queue.service';
 
 const MAX_RECIPIENTS = 1000;
 
@@ -26,20 +20,11 @@ export interface CreateBroadcastParams {
   recipients: BroadcastRecipientInput[];
 }
 
-interface PlannedRecipient {
-  recipientRowId: string;
-  phone: string;
-  params: string[];
-}
-
-export interface BroadcastPlan {
+export interface BroadcastAccepted {
   broadcastId: string;
-  templateName: string;
-  templateLanguage: string;
-  phoneNumberId: string;
-  accessToken: string;
-  templateRow: any;
-  planned: PlannedRecipient[];
+  /** Recipients written as pending rows and handed to the queue. */
+  accepted: number;
+  /** Recipients dropped for an unusable phone number. */
   rejected: number;
 }
 
@@ -53,20 +38,31 @@ function isMessageTemplate(row: any): boolean {
   );
 }
 
+/**
+ * `POST /v1/broadcasts` — validate, persist, hand to the queue.
+ *
+ * This service used to *also* deliver: the controller called
+ * `void deliverBroadcast(plan)` and a single in-process loop sent to
+ * every recipient with no queue behind it at all. Anything that
+ * interrupted the process — a deploy, a crash, an OOM — dropped the
+ * remaining recipients silently, and the caller had already been told
+ * 202 Accepted. Delivery is now the same fan-out queue the dashboard
+ * uses, and the only difference between the two paths is where the
+ * template parameters come from.
+ */
 @Injectable()
 export class BroadcastSendService {
-  private readonly logger = new Logger(BroadcastSendService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly webhookDeliver: WebhookDeliverService,
+    private readonly broadcastQueue: BroadcastQueueService,
   ) {}
 
   async createBroadcast(
     accountId: string,
     auditUserId: string,
     params: CreateBroadcastParams,
-  ): Promise<BroadcastPlan> {
+  ): Promise<BroadcastAccepted> {
     const { name, templateName, recipients } = params;
     const templateLanguage = params.templateLanguage || 'en_US';
 
@@ -92,8 +88,14 @@ export class BroadcastSendService {
       );
     }
 
+    // Fail fast on a disconnected WhatsApp account, but do NOT decrypt
+    // the token here: nothing on this path sends any more. The
+    // recipient processor reads and decrypts it at send time, which is
+    // also the only way a token rotated between acceptance and delivery
+    // is the one actually used.
     const config = await this.prisma.whatsapp_config.findFirst({
       where: { account_id: accountId },
+      select: { id: true },
     });
     if (!config) {
       throw new ApiError(
@@ -102,7 +104,6 @@ export class BroadcastSendService {
         HttpStatus.BAD_REQUEST,
       );
     }
-    const accessToken = decrypt(config.access_token);
 
     const rawTemplateRow = await this.prisma.message_templates.findFirst({
       where: {
@@ -161,6 +162,12 @@ export class BroadcastSendService {
       );
     }
 
+    // createMany + a follow-up read, rather than one create-with-nested,
+    // because the per-recipient params have to land on the row: a
+    // recipient job rebuilds its send from the database alone, so
+    // params kept only in memory (as they were when this method
+    // returned a plan for an in-process loop to walk) would come back
+    // empty after any restart.
     const broadcast = await this.prisma.broadcasts.create({
       data: {
         account_id: accountId,
@@ -168,114 +175,31 @@ export class BroadcastSendService {
         name: name || `API broadcast (${templateName})`,
         template_name: templateName,
         template_language: templateLanguage,
-        status: 'sending',
+        status: 'queued',
         total_recipients: deduped.length,
       },
       select: { id: true },
     });
 
-    // Create the broadcast_recipients rows in a batch
     await this.prisma.broadcast_recipients.createMany({
       data: deduped.map((r) => ({
         broadcast_id: broadcast.id,
         contact_id: r.contactId,
         status: 'pending',
+        // [] is stored as-is: "this recipient has no parameters" is a
+        // real answer, and distinguishing it from NULL ("resolve from
+        // the broadcast's variable mapping") is what lets one processor
+        // serve both the API and the dashboard.
+        template_params: r.params,
       })),
     });
 
-    const recipientRows = await this.prisma.broadcast_recipients.findMany({
-      where: { broadcast_id: broadcast.id },
-      select: { id: true, contact_id: true },
-    });
-
-    const byContact = new Map(deduped.map((r) => [r.contactId, r]));
-    const planned: PlannedRecipient[] = recipientRows.map((row) => {
-      const r = byContact.get(row.contact_id as string)!;
-      return { recipientRowId: row.id, phone: r.phone, params: r.params };
-    });
+    await this.broadcastQueue.enqueueBroadcast(broadcast.id);
 
     return {
       broadcastId: broadcast.id,
-      templateName,
-      templateLanguage,
-      phoneNumberId: config.phone_number_id,
-      accessToken,
-      templateRow: rawTemplateRow ?? null,
-      planned,
+      accepted: deduped.length,
       rejected,
     };
-  }
-
-  async deliverBroadcast(plan: BroadcastPlan): Promise<void> {
-    let sentCount = 0;
-
-    for (const recipient of plan.planned) {
-      const variants = phoneVariants(recipient.phone);
-      let sentMessageId: string | null = null;
-      let lastError: string | null = null;
-
-      for (const variant of variants) {
-        try {
-          const result = await sendTemplateMessage({
-            phoneNumberId: plan.phoneNumberId,
-            accessToken: plan.accessToken,
-            to: variant,
-            templateName: plan.templateName,
-            language: plan.templateLanguage,
-            template: plan.templateRow ?? undefined,
-            params: recipient.params,
-          });
-          sentMessageId = result.messageId;
-          lastError = null;
-          break;
-        } catch (error: any) {
-          const message =
-            error instanceof Error ? error.message : 'Unknown error';
-          lastError = message;
-          if (!isRecipientNotAllowedError(message)) break;
-        }
-      }
-
-      try {
-        if (sentMessageId) {
-          sentCount++;
-          await this.prisma.broadcast_recipients.update({
-            where: { id: recipient.recipientRowId },
-            data: {
-              status: 'sent',
-              sent_at: new Date(),
-              whatsapp_message_id: sentMessageId,
-              error_message: null,
-            },
-          });
-        } else {
-          await this.prisma.broadcast_recipients.update({
-            where: { id: recipient.recipientRowId },
-            data: {
-              status: 'failed',
-              error_message: lastError || 'Unknown error',
-            },
-          });
-        }
-      } catch (err: any) {
-        this.logger.error(
-          `[broadcast-core] failed updating recipient ${recipient.recipientRowId}: ${err?.message || err}`,
-        );
-      }
-    }
-
-    try {
-      await this.prisma.broadcasts.update({
-        where: { id: plan.broadcastId },
-        data: {
-          status: sentCount > 0 ? 'sent' : 'failed',
-          updated_at: new Date(),
-        },
-      });
-    } catch (err: any) {
-      this.logger.error(
-        `[broadcast-core] failed updating final status for ${plan.broadcastId}: ${err?.message || err}`,
-      );
-    }
   }
 }

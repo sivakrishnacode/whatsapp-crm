@@ -194,7 +194,7 @@ export class WebInboundService {
 
     for (const triggerType of triggers) {
       this.automationDispatch
-        .dispatch({
+        .enqueue({
           accountId: input.accountId,
           triggerType,
           contactId: input.contactId,

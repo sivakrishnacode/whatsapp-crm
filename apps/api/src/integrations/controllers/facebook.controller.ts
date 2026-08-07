@@ -16,10 +16,10 @@ import * as express from 'express';
 import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service.js';
-import { toE164 } from '../../common/phone/phone.util';
-import { resolveAccountCountry } from '../../common/phone/account-country.util';
+import { LEAD_FETCH_QUEUE } from '../../queue/queue.constants';
 
 @Controller('integrations/facebook')
 export class FacebookController {
@@ -271,8 +271,7 @@ export class FacebookLeadsWebhookController {
   private readonly logger = new Logger(FacebookLeadsWebhookController.name);
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly webhookDeliver: WebhookDeliverService,
+    @InjectQueue(LEAD_FETCH_QUEUE) private readonly leadQueue: Queue,
   ) {}
 
   /**
@@ -344,224 +343,40 @@ export class FacebookLeadsWebhookController {
         .json({ success: true, ignored: 'not page object' });
     }
 
-    // Process leads fire-and-forget
+    // Queue each lead, then acknowledge. Meta redelivers a webhook it
+    // does not get a prompt 200 for, so the handler must not wait on a
+    // Graph fetch — but the previous `void processLead(...)` meant a
+    // failed fetch dropped the lead with nothing left to retry from.
+    // `jobId` is the leadgen id: Meta's own redelivery of the same
+    // notification then collapses into the one job it already is.
     for (const entry of body.entry ?? []) {
       for (const change of entry.changes ?? []) {
         if (change.field === 'leadgen') {
           const { leadgen_id, page_id } = change.value ?? {};
           if (leadgen_id && page_id) {
-            void this.processLead(leadgen_id, page_id).catch((err: unknown) => {
-              this.logger.error(`processLead error for ${leadgen_id}`, err);
-            });
+            try {
+              await this.leadQueue.add(
+                'fetch',
+                { leadgenId: leadgen_id, pageId: page_id },
+                {
+                  jobId: `lead:${leadgen_id}`,
+                  attempts: 5,
+                  backoff: { type: 'exponential', delay: 5000 },
+                  removeOnComplete: { count: 100 },
+                  removeOnFail: { count: 500 },
+                },
+              );
+            } catch (err) {
+              this.logger.error(
+                `could not queue Facebook lead ${leadgen_id}`,
+                err,
+              );
+            }
           }
         }
       }
     }
 
     return res.status(200).json({ success: true });
-  }
-
-  private async processLead(leadgenId: string, pageId: string): Promise<void> {
-    const page = await this.prisma.facebook_pages.findFirst({
-      where: { page_id: pageId },
-      select: { user_id: true, page_access_token: true, is_syncing: true },
-    });
-
-    if (!page?.is_syncing) return;
-
-    // Resolve tenant account_id
-    const profile = await this.prisma.profile.findFirst({
-      where: { userId: page.user_id },
-      select: { accountId: true },
-    });
-
-    if (!profile) {
-      this.logger.warn(
-        `No Profile/Account found for Facebook Page user: ${page.user_id}`,
-      );
-      return;
-    }
-
-    const accountId = profile.accountId;
-
-    let name = '';
-    let email = '';
-    let phone = '';
-    let company = '';
-
-    const isMock = pageId.startsWith('page_mock');
-    if (isMock) {
-      name = 'Test Lead Ads User';
-      email = 'test.lead@example.com';
-      phone = '+919999988888';
-      company = 'Meta Sandbox LLC';
-    } else {
-      const leadRes = await fetch(
-        `https://graph.facebook.com/v20.0/${leadgenId}?access_token=${page.page_access_token}`,
-      );
-      const leadData = (await leadRes.json()) as {
-        field_data?: Array<{ name: string; values?: string[] }>;
-        error?: unknown;
-      };
-
-      if (!leadRes.ok || leadData.error) {
-        this.logger.error(
-          `Meta Graph API error for lead ${leadgenId}`,
-          leadData.error,
-        );
-        return;
-      }
-
-      for (const field of leadData.field_data ?? []) {
-        const val = field.values?.[0] ?? '';
-        if (field.name === 'full_name' || field.name === 'name') name = val;
-        else if (field.name === 'email') email = val;
-        else if (field.name === 'phone_number' || field.name === 'phone')
-          phone = val;
-        else if (field.name === 'company' || field.name === 'company_name')
-          company = val;
-      }
-    }
-
-    // Lead-gen forms let the advertiser choose which fields to ask
-    // for, so a lead can arrive with no phone at all. The previous
-    // `phone || '+0000000000'` placeholder minted a contact nobody can
-    // ever be messaged on, one per phone-less lead, all colliding on
-    // the same number. There is no salvaging that: `contacts` requires
-    // a phone, an IGSID, or a web visitor id (contacts_identity_chk)
-    // and a lead has none of the other two.
-    const canonicalPhone = toE164(
-      phone,
-      await resolveAccountCountry(this.prisma, accountId),
-    );
-    if (!canonicalPhone) {
-      this.logger.warn(
-        `Facebook lead ${leadgenId} has no usable phone number — skipping. ` +
-          'Add a phone field to the lead form to capture these.',
-      );
-      return;
-    }
-
-    // Upsert contact
-    let contact = await this.prisma.contacts.findFirst({
-      where: { account_id: accountId, phone: canonicalPhone },
-    });
-
-    if (!contact) {
-      contact = await this.prisma.contacts.create({
-        data: {
-          account_id: accountId,
-          user_id: page.user_id,
-          phone: canonicalPhone,
-          name: name || 'Facebook Lead',
-          email: email || null,
-          company: company || null,
-          source: 'facebook_lead',
-        },
-      });
-      this.logger.log(
-        `Created contact ${contact.id} from FB lead ${leadgenId}`,
-      );
-
-      await this.webhookDeliver.dispatchWebhookEvent(
-        accountId,
-        'contact.created',
-        {
-          contact_id: contact.id,
-          phone: canonicalPhone,
-          name: contact.name,
-        },
-      );
-    } else {
-      const updates: Record<string, unknown> = {};
-      if (!contact.name && name) updates.name = name;
-      if (!contact.email && email) updates.email = email;
-      if (Object.keys(updates).length > 0) {
-        await this.prisma.contacts.update({
-          where: { id: contact.id },
-          data: updates,
-        });
-      }
-    }
-
-    // Create pipeline deal in first stage of first pipeline
-    const pipeline = await this.prisma.pipelines.findFirst({
-      where: { account_id: accountId },
-      select: { id: true },
-    });
-
-    if (pipeline) {
-      const stage = await this.prisma.pipeline_stages.findFirst({
-        where: { pipeline_id: pipeline.id },
-        orderBy: { position: 'asc' },
-        select: { id: true },
-      });
-
-      if (stage) {
-        await this.prisma.deals.create({
-          data: {
-            account_id: accountId,
-            user_id: page.user_id,
-            pipeline_id: pipeline.id,
-            stage_id: stage.id,
-            contact_id: contact.id,
-            title: `${contact.name || 'Facebook Lead'} - Lead Ads`,
-            value: 0,
-            currency: 'INR',
-            status: 'active',
-          },
-        });
-        this.logger.log(`Created pipeline deal for contact ${contact.id}`);
-      }
-    }
-
-    // Create conversation + message
-    const lastMessage = `New Facebook Lead: ${contact.name}`;
-
-    // A lead-gen lead is followed up on WhatsApp (the contact is created
-    // from the form's phone field), so this is the WhatsApp thread —
-    // pinned explicitly now that a contact can own one per channel.
-    let conversation = await this.prisma.conversations.findFirst({
-      where: {
-        account_id: accountId,
-        contact_id: contact.id,
-        channel: 'whatsapp',
-      },
-    });
-
-    if (!conversation) {
-      conversation = await this.prisma.conversations.create({
-        data: {
-          account_id: accountId,
-          user_id: page.user_id,
-          contact_id: contact.id,
-          channel: 'whatsapp',
-          status: 'open',
-          last_message_text: lastMessage,
-          last_message_at: new Date(),
-          unread_count: 1,
-        },
-      });
-    } else {
-      await this.prisma.conversations.update({
-        where: { id: conversation.id },
-        data: {
-          last_message_text: lastMessage,
-          last_message_at: new Date(),
-          unread_count: { increment: 1 },
-          status: 'open',
-        },
-      });
-    }
-
-    await this.prisma.messages.create({
-      data: {
-        conversation_id: conversation.id,
-        sender_type: 'customer',
-        content_type: 'text',
-        content_text: `[Facebook Lead Capture] Email: ${email || 'N/A'}, Phone: ${phone || 'N/A'}, Company: ${company || 'N/A'}`,
-        status: 'delivered',
-      },
-    });
   }
 }

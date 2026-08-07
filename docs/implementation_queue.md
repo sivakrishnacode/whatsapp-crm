@@ -1,5 +1,12 @@
 # Production-Level Message Queue System for Bulk Broadcasts
 
+> **STATUS: BUILT.** Shipped as the fan-out queue described below, plus
+> six more queues for the other fire-and-forget paths and a Bull Board
+> dashboard at `/admin/queues`. This file keeps the original design for
+> context; **[what actually shipped, and the decisions taken on Q1–Q4,
+> is recorded at the bottom](#what-shipped)**. Read that first — where
+> the two disagree, the bottom wins.
+
 ## Background & Problem Statement
 
 The current broadcast delivery in both surfaces has a critical architectural flaw: **each recipient is processed sequentially in a `for` loop** inside a single BullMQ job. This means:
@@ -377,3 +384,90 @@ Tests to write:
 11. `[DELETE]` `broadcasts.processor.ts` — old single-job processor
 12. `[MIGRATION]` Add `'queued'` to `broadcasts.status` check constraint (if Q3 is yes)
 13. `[NEW]` Tests for orchestrator and send processors
+
+---
+
+## What shipped
+
+Delivered in one pass. `docs/implementation_queue.md` described broadcasts
+only; the same treatment was applied to every other `void this.…()` path
+in the API, because they all failed the same way — external I/O, no
+retry, silently lost on restart.
+
+### The four open questions, answered
+
+| # | Question | Decision |
+|---|---|---|
+| Q1 | Where does the public API's `BroadcastSendService` get its queue? | **Option A, generalised.** `BroadcastQueueService` lives in `src/queue/`, owns the job options, and is exported by `QueueModule`. Both `whatsapp` and `v1` import it. Neither module knows the other exists. |
+| Q2 | BullMQ Flows for the parent/child lifecycle? | **No — DB-driven finalization.** `BroadcastFinalizeService` runs ONE atomic SQL statement that tests "any recipient still pending?" and writes the terminal status in the same snapshot. Flows would add a second source of truth for something the recipient rows already answer, and the race the parent job was meant to solve is solved better by the `NOT EXISTS` clause. |
+| Q3 | Add a `'queued'` status? | **Yes** — migration 070 widens the CHECK constraint; the web UI has a pulsing amber "Queued" badge and treats it as in-flight for polling and the delete guard. With fan-out there is a real, sometimes long interval between acceptance and the first message, and "nothing has arrived yet" needed to be a state rather than a mystery. |
+| Q4 | Expose a queue dashboard? | **Yes — Bull Board at `/admin/queues`**, behind its own ops credential (`QUEUE_DASHBOARD_USER` / `QUEUE_DASHBOARD_PASSWORD`), not mounted at all when unset. |
+
+### Queues
+
+| Queue | Replaces | Notes |
+|---|---|---|
+| `broadcast-orchestrate` | `broadcasts-send` (deleted) | One job per broadcast; fans out, then gets out of the way |
+| `broadcast-send` | the in-process `for` loop | One job per recipient. The only rate-limited queue |
+| `webhook-delivery` | `void dispatchWebhookEvent()` × ~15 call sites | One job per (event, endpoint) |
+| `ai-reply` | `void dispatchInboundToAiReply()` × 4 | Concurrency 20 — speed is the requirement |
+| `automation-trigger` | `void fanOut()` in forms / web / bookings | Distinct from `automations-pending`, which resumes parked runs |
+| `ecommerce-sync` | `void this.runSync()` | `jobId` = integration id, so double-clicking "Sync now" cannot import twice |
+| `lead-fetch` | `void this.processLead()` | `jobId` = leadgen id, so Meta's own webhook redelivery collapses into one job |
+
+Every name lives in `src/queue/queue.constants.ts`, which is also what the
+dashboard enumerates — a queue added without a line there still works, it
+is just invisible, and that is the one thing this file exists to prevent.
+
+### Things worth knowing before changing this
+
+- **Idempotency is layered, not incidental.** `jobId` = the recipient row
+  id stops the orchestrator queueing a second send; the send processor
+  re-checks `status = 'pending'` before calling Meta, which covers the
+  case where the first job already completed and was removed from Redis.
+  Either alone is insufficient.
+- **Access tokens never enter a job payload.** Job data is plaintext in
+  Redis and is rendered in the dashboard. Every processor re-reads and
+  decrypts what it needs, which also means a rotated token takes effect
+  on the next job rather than the next deploy.
+- **Per-recipient params are in Postgres, not Redis** — that is what
+  `broadcast_recipients.template_params` (migration 070) is for. Redis is
+  a work list; the database is the system of record, and a flushed queue
+  must be fully resumable from it.
+- **Transient vs permanent is decided from Meta's status code**, not by
+  matching on the message string — `isTransientSendError` in
+  `broadcast-recipient-send.service.ts`. `sendTemplateMessage` now throws
+  classified `MetaApiError` subclasses to make that possible. A throttle
+  retries; a rejected template is recorded and never retried, because
+  four more attempts would produce the identical answer twenty minutes
+  later.
+- **`BroadcastRecoveryService` re-enqueues unfinished broadcasts on
+  boot.** This is what drains broadcasts stranded by the deploy that
+  removed the old queue, and it doubles as crash recovery for good.
+- **The webhook endpoint failure counter is incremented once per event**,
+  after retries are exhausted — not once per attempt. Otherwise a brief
+  outage would disable a working integration in three events instead of
+  fifteen.
+- **The rate limiter is global, not per phone number.** Grouped rate
+  limiting is a BullMQ Pro feature. One very large broadcast does slow
+  other accounts' broadcasts down; the alternative was risking a real
+  customer's number being throttled by Meta.
+
+### Verified
+
+Monorepo typecheck clean · **921 API tests** (up from 806) and **676 web
+tests** passing · `nest build` clean · Nest boots with the full DI graph
+and all 13 queues register · an enqueued job round-trips through Redis to
+its worker · `/admin/queues` returns 401 with no credentials, 401 with a
+wrong password, 200 with the right one, and **404 when the credentials
+are unset**.
+
+### Not done
+
+- `whatsapp` and `instagram` inbound webhooks still call
+  `automationDispatch.dispatch()` inline. They were out of the agreed
+  scope: both interleave dispatch with flow-consumption logic that
+  decides whether an automation should run at all, so moving them is its
+  own change with its own tests.
+- The public API's 1000-recipient cap per request is unchanged. Fan-out
+  removes the reason for it, but raising it is a product decision.

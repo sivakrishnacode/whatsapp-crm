@@ -87,8 +87,12 @@ export default function BroadcastsPage() {
     fetchBroadcasts();
   }, []);
 
+  // 'queued' counts as in-flight: the fan-out queue may not have
+  // picked the broadcast up yet, and a list that stops polling in that
+  // window shows a permanently stuck "Queued" until the user reloads.
   const anySending = useMemo(
-    () => broadcasts.some((b) => b.status === 'sending'),
+    () =>
+      broadcasts.some((b) => b.status === 'sending' || b.status === 'queued'),
     [broadcasts],
   );
 

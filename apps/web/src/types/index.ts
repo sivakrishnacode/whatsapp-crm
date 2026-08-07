@@ -543,7 +543,20 @@ export interface Deal {
   assignee?: Profile;
 }
 
-export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
+/**
+ * `queued` (migration 070) sits between draft and sending: accepted and
+ * handed to the delivery queue, but no message has left yet. It exists
+ * because delivery fans out into one job per recipient, so there is a
+ * real interval — rate-limited, and longer for a big audience — where
+ * "nothing has arrived" is the correct and expected state.
+ */
+export type BroadcastStatus =
+  | 'draft'
+  | 'queued'
+  | 'scheduled'
+  | 'sending'
+  | 'sent'
+  | 'failed';
 export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';
 
 export interface Broadcast {
