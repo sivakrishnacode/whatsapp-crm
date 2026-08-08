@@ -60,8 +60,16 @@ export default async function SubscriberDetailPage({
             </h1>
             <p className="text-muted mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               {subscriber.email ? <span>{subscriber.email}</span> : null}
-              {subscriber.accountName ? (
-                <span>Account: {subscriber.accountName}</span>
+              {subscriber.accountId ? (
+                <span>
+                  Workspace:{' '}
+                  <Link
+                    href={`/workspaces/${subscriber.accountId}`}
+                    className="text-ink-2 hover:text-ink underline-offset-2 hover:underline"
+                  >
+                    {subscriber.accountName ?? 'Unnamed workspace'}
+                  </Link>
+                </span>
               ) : (
                 <span>No account profile</span>
               )}

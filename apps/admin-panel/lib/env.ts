@@ -65,3 +65,20 @@ export function sessionTtlHours(): number {
 export function currency(): string {
   return process.env.ADMIN_CURRENCY?.trim() || 'INR';
 }
+
+/**
+ * The most credits one manual adjustment may move, in either direction.
+ *
+ * A server-side backstop that does not depend on any UI validation — the same
+ * reasoning as `ADS_MAX_DAILY_BUDGET_MINOR` in the api, where a mis-keyed
+ * number spends real money. Here the cost of a slip is inference on our own
+ * Gemini key, which the customer did not pay for.
+ *
+ * The default is the size of the largest purchasable pack (25,000): granting
+ * more than anyone can buy in one go should require an env change and a moment's
+ * thought, not a keystroke.
+ */
+export function maxCreditAdjustment(): number {
+  const raw = Number(process.env.ADMIN_MAX_CREDIT_ADJUSTMENT);
+  return Number.isInteger(raw) && raw > 0 ? raw : 25_000;
+}

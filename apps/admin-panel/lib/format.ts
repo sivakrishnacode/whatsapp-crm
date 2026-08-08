@@ -42,8 +42,55 @@ export function formatMoney(amount: number | null | undefined): string {
   return moneyFormatter(hasFraction ? 2 : 0).format(value);
 }
 
+/**
+ * ⚠️ Minor units → major units. Paise to rupees.
+ *
+ * The AI credit tables (`ai_credit_packs.price_minor`,
+ * `ai_credit_orders.amount_minor`) store BIGINT minor units, matching
+ * Razorpay's API and the ads module, while `subscription_plans.price_*` store
+ * plain major-unit decimals. One missed conversion is a 100× error on a figure
+ * an operator will act on, so this is the ONLY place the division happens —
+ * see the header of lib/queries/credits.ts.
+ */
+export function minorToMajor(minor: number | null | undefined): number {
+  return (minor ?? 0) / 100;
+}
+
+/**
+ * Money that arrived as minor units. `currencyCode` comes from the row itself
+ * (`ai_credit_packs.currency`) because, unlike `subscription_plans`, those
+ * tables record their own currency and it need not match `ADMIN_CURRENCY`.
+ */
+export function formatMinor(
+  minor: number | null | undefined,
+  currencyCode?: string
+): string {
+  const code = currencyCode?.trim().toUpperCase() || currency();
+  const value = minorToMajor(minor);
+  const hasFraction = Math.abs(value % 1) > 0.004;
+
+  return new Intl.NumberFormat(LOCALE_FOR_CURRENCY[code] ?? 'en-US', {
+    style: 'currency',
+    currency: code,
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: hasFraction ? 2 : 0,
+  }).format(value);
+}
+
 export function formatNumber(value: number | null | undefined): string {
   return new Intl.NumberFormat('en-IN').format(value ?? 0);
+}
+
+/** Credits are counted, never currency — a credit has no exchange rate. */
+export function formatCredits(value: number | null | undefined): string {
+  return formatNumber(value);
+}
+
+/** "+250" / "−40". Signed, with a real minus sign. */
+export function formatDelta(value: number): string {
+  return value >= 0
+    ? `+${formatNumber(value)}`
+    : `−${formatNumber(Math.abs(value))}`;
 }
 
 export function formatPercent(

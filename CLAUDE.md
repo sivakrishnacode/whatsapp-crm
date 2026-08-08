@@ -81,12 +81,16 @@ Prisma client before compiling anything that needs it.
 
 ## Admin panel — `apps/admin-panel` (Next.js 16)
 
-Internal billing panel: subscriber accounts, subscription amounts, sales, users. Port **3002**. See `apps/admin-panel/README.md`.
+Internal operations panel: subscriptions and their amounts, sales, **tenant workspaces and their members**, **AI credit wallets**, and an audit log. Port **3002**. See `apps/admin-panel/README.md`.
 
 - **No new api endpoints** — reads/writes Postgres directly via Prisma (`@repo/database`). Nothing here calls `apps/api`.
 - **Auth:** one env credential (`ADMIN_USERNAME`/`ADMIN_PASSWORD`), timing-safe compare, HS256 JWT session cookie signed with `ADMIN_SESSION_SECRET`. `proxy.ts` is an optimistic redirect gate; `requireAdmin()` in `lib/auth.ts` is the real check and runs in every page **and every Server Action**.
-- **Structure:** `app/(panel)/*` pages, `app/login`, `lib/{env,session,auth,prisma,format}.ts`, `lib/queries/*` (reads), `lib/actions/*` (writes), `components/{ui,chart,shell,subscriber,plans}`.
+- **Structure:** `app/(panel)/*` pages (`/`, `subscribers`, `sales`, `plans`, `workspaces`, `users`, `credits`, `audit`), `app/login`, `lib/{env,session,auth,prisma,format}.ts`, `lib/queries/*` (reads), `lib/actions/*` (writes), `components/{ui,chart,shell,subscriber,plans,credits,workspace}`.
 - ⚠️ **Money is derived, not recorded.** There is no payments/invoices table in this database — `user_subscriptions` has no amount column and no history. Every figure is `plan price × subscription`, so MRR/ARR/expected-collections are exact for *today* and historical revenue is unrecoverable (a price edit rewrites the past). The reasoning lives in `lib/queries/sql.ts`; read it before adding a revenue figure. Time series there count subscriptions, never money.
+- **AI credits are the one exception**, and the one place the panel handles real collected money: `ai_credit_orders.amount_minor` is what Razorpay charged and `ai_credit_ledger` is every credit that moved, so `/credits` may plot both over time. ⚠️ Those columns are **BIGINT minor units** while `subscription_plans.price_*` are major-unit decimals — every minor field is named `...Minor` and `minorToMajor()` in `lib/format.ts` is the only conversion. Never sum one into MRR.
+- ⚠️ **Manual credit adjustment goes through `admin_adjust_ai_credits`** (migration 073), the third and last writer of `ai_credit_wallets.balance` after 072's `grant_ai_credits`/`consume_ai_credits`. It writes `reason = 'admin_adjust'` with `feature = NULL`, leaves `lifetime_purchased`/`lifetime_consumed` alone (a goodwill grant is not a purchase and a clawback is not consumption), and clamps a deduction at zero. A Prisma update on `balance` is a bug: concurrent auto-replies meter the same wallet and the ledger row must be written in the same statement. `ADMIN_MAX_CREDIT_ADJUSTMENT` is the server-side ceiling.
+- ⚠️ **Membership writes re-implement migration 018's RPCs, deliberately.** `set_member_role`, `remove_account_member` and `transfer_account_ownership` all begin `IF auth.uid() IS NULL THEN RAISE 'Unauthorized'` — that check is what stops one tenant editing another's profiles, and this panel has no JWT, so they all refuse. `lib/actions/workspaces.ts` restates the rules and must stay in step with 018. Transferring ownership additionally **moves the subscription row**, because a workspace's plan is resolved through `accounts.owner_user_id`; `usage_tracking` does not move. Both `accounts.owner_user_id` and `user_subscriptions.user_id` are UNIQUE, so both conflicts are pre-checked into sentences rather than P2002s.
+- **`admin_audit_log` (073) has no foreign keys on purpose** — a row must outlive the workspace, user or plan it describes. RLS on with zero policies and rights revoked from `anon`/`authenticated`; only an owner connection reads it. `recordAudit()` runs *after* the write it describes and fails soft (credit moves have the ledger as an independent record).
 - `lib/format.ts` is `server-only` on purpose: `ADMIN_CURRENCY` is not public, so client components take pre-formatted strings.
 
 ## Database — Prisma + Postgres (Supabase)
@@ -96,7 +100,7 @@ Internal billing panel: subscriber accounts, subscription amounts, sales, users.
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
 - ⚠️ **Supabase Storage buckets are written from the BROWSER, not the API** (`avatars`, `flow-media` 016/020, `chat-media` 023, `workspace-logos` 071). The bucket's RLS policy is therefore the *only* gate on those writes — it must carry the authorization itself, including any role check. Account-scoped buckets all use the path convention `account-<account_id>/…` matched on the first folder segment, built in one place by `buildMediaPath()` (`apps/web/src/lib/storage/upload-media.ts`); a hand-rolled path is silently rejected. When such a URL is later persisted to a column, pin it to our own bucket *and* the caller's own folder server-side (`common/storage/workspace-logo.util.ts`) — a free-text URL that renders in every teammate's browser is a beacon.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`.
+- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
 
 ## Auth & signup
 
@@ -168,11 +172,14 @@ Everything below is account-scoped configuration on `ai_configs` (one row per wo
   (Redis stores those in plaintext and Bull Board renders them), or a log line.
 - **The playground is metered like production.** An unmetered test surface on our key is
   an open inference proxy behind a login page.
-- **Balance moves only through `grant_ai_credits` / `consume_ai_credits`** (SQL, atomic,
-  ledger written in the same statement). Both are SECURITY INVOKER with EXECUTE revoked
-  from PUBLIC — a DEFINER function granted to `authenticated` would be a mint-your-own-
-  credits endpoint. Concurrent auto-replies on one workspace make read-then-write in JS
-  wrong, not just untidy.
+- **Balance moves only through `grant_ai_credits` / `consume_ai_credits` /
+  `admin_adjust_ai_credits`** (SQL, atomic, ledger written in the same statement). All
+  three are SECURITY INVOKER with EXECUTE revoked from PUBLIC — a DEFINER function
+  granted to `authenticated` would be a mint-your-own-credits endpoint. Concurrent
+  auto-replies on one workspace make read-then-write in JS wrong, not just untidy.
+  The third (migration 073) is the internal admin panel's signed manual correction:
+  `reason = 'admin_adjust'`, `feature = NULL`, `lifetime_purchased`/`lifetime_consumed`
+  untouched, deductions clamped at zero. Nothing in `apps/api` calls it.
 - ⚠️ **Top-ups verify Razorpay's HMAC signature and price the pack server-side**
   (`ai_credit_packs` → `ai_credit_orders` written *before* redirect). `credited_at` is the
   idempotency latch so the browser callback and the webhook grant exactly once. Note the

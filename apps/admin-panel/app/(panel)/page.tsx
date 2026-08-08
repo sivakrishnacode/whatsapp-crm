@@ -6,15 +6,26 @@ import { SubscriberMiniTable } from '@/components/subscriber/mini-table';
 import { Card, CardBody, CardHeader, DerivedNote } from '@/components/ui/card';
 import { HeroStat, StatRow, StatTile } from '@/components/ui/stat';
 import { requireAdmin } from '@/lib/auth';
-import { formatMoney, formatNumber } from '@/lib/format';
+import {
+  formatCredits,
+  formatMinor,
+  formatMoney,
+  formatNumber,
+} from '@/lib/format';
+import { creditTotals } from '@/lib/queries/credits';
 import { getOverview } from '@/lib/queries/overview';
 
 export const metadata: Metadata = { title: 'Overview · Converse360 Admin' };
 
 export default async function OverviewPage() {
   await requireAdmin();
-  const { subscriptions, tenants, plans, trials, renewals, recent } =
-    await getOverview();
+
+  // Credits are fetched alongside rather than folded into `getOverview()`:
+  // subscription revenue is derived from plan prices and credit revenue is
+  // collected money, and keeping the two queries apart keeps that distinction
+  // legible in the code as well as on the page.
+  const [{ subscriptions, tenants, plans, trials, renewals, recent }, credits] =
+    await Promise.all([getOverview(), creditTotals()]);
 
   const arr = subscriptions.mrr * 12;
   const arpa =
@@ -121,6 +132,71 @@ export default async function OverviewPage() {
           context={`${formatNumber(tenants.profiles)} with an account profile`}
         />
       </StatRow>
+
+      {/* AI credits sit apart from the revenue above because they are a
+        * different kind of number: a top-up is money we actually collected,
+        * and an outstanding balance is inference we still owe. Neither belongs
+        * in MRR. */}
+      <Card>
+        <CardHeader
+          title="AI credits"
+          description="Workspaces running the agent on our Gemini key spend credits; the ones on their own provider key spend nothing."
+          action={
+            <Link
+              href="/credits"
+              className="text-muted hover:text-ink text-xs underline-offset-2 hover:underline"
+            >
+              Manage credits
+            </Link>
+          }
+        />
+        <CardBody>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm md:grid-cols-4">
+            <div>
+              <dt className="text-muted text-xs">Credits outstanding</dt>
+              <dd className="text-ink mt-1 font-semibold">
+                {formatCredits(credits.outstanding)}
+              </dd>
+              <dd className="text-muted mt-0.5 text-xs">
+                across {formatNumber(credits.wallets)} wallets
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted text-xs">Consumed, 30 days</dt>
+              <dd className="text-ink mt-1 font-semibold">
+                {formatCredits(credits.consumed30d)}
+              </dd>
+              <dd className="text-muted mt-0.5 text-xs">
+                on {formatNumber(credits.onPlatform)} workspaces using our key
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted text-xs">Top-up revenue, this month</dt>
+              <dd className="text-ink mt-1 font-semibold">
+                {formatMinor(credits.topUpRevenueMinorThisMonth)}
+              </dd>
+              <dd className="text-muted mt-0.5 text-xs">
+                collected, not derived — the only such figure here
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted text-xs">Wallets empty</dt>
+              <dd className="text-ink mt-1 flex items-center gap-2 font-semibold">
+                {credits.walletsEmpty > 0 ? (
+                  <span
+                    aria-hidden
+                    className="bg-warning size-2 rounded-full"
+                  />
+                ) : null}
+                {formatNumber(credits.walletsEmpty)}
+              </dd>
+              <dd className="text-muted mt-0.5 text-xs">
+                {formatNumber(credits.walletsLow)} more running low
+              </dd>
+            </div>
+          </dl>
+        </CardBody>
+      </Card>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <Card>

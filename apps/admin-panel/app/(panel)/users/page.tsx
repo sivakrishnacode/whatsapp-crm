@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { Badge, Pill, StatusBadge } from '@/components/ui/badge';
 import { Card, CardHeader, EmptyState } from '@/components/ui/card';
@@ -133,9 +134,16 @@ export default async function UsersPage({
                       ) : null}
                     </TD>
                     <TD>
-                      <span className="text-ink-2">
-                        {row.accountName ?? '—'}
-                      </span>
+                      {row.accountId ? (
+                        <Link
+                          href={`/workspaces/${row.accountId}`}
+                          className="text-ink-2 hover:text-ink underline-offset-2 hover:underline"
+                        >
+                          {row.accountName ?? 'Unnamed workspace'}
+                        </Link>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
                       {row.isAccountOwner ? (
                         <span className="text-muted block text-xs">owner</span>
                       ) : null}
