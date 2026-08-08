@@ -134,9 +134,9 @@ export default async function OverviewPage() {
       </StatRow>
 
       {/* AI credits sit apart from the revenue above because they are a
-        * different kind of number: a top-up is money we actually collected,
-        * and an outstanding balance is inference we still owe. Neither belongs
-        * in MRR. */}
+       * different kind of number: a top-up is money we actually collected,
+       * and an outstanding balance is inference we still owe. Neither belongs
+       * in MRR. */}
       <Card>
         <CardHeader
           title="AI credits"

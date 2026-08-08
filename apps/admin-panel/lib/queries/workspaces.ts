@@ -68,12 +68,7 @@ export type WorkspaceRow = {
 };
 
 export type WorkspaceSort =
-  | 'recent'
-  | 'name'
-  | 'value'
-  | 'credits'
-  | 'spend'
-  | 'members';
+  'recent' | 'name' | 'value' | 'credits' | 'spend' | 'members';
 
 export type WorkspaceCreditFilter = 'all' | 'low' | 'empty' | 'has';
 
@@ -447,18 +442,27 @@ export async function getWorkspace(
 
   if (!workspace) return null;
 
-  const [members, invites, wallet, ledger, orders, ai, channels, activity, enquiries] =
-    await Promise.all([
-      listMembers(accountId),
-      listInvites(accountId),
-      getWallet(accountId),
-      listLedger(accountId),
-      listOrders(accountId),
-      getAi(accountId),
-      getChannels(accountId),
-      getActivity(accountId),
-      listEnquiries(accountId),
-    ]);
+  const [
+    members,
+    invites,
+    wallet,
+    ledger,
+    orders,
+    ai,
+    channels,
+    activity,
+    enquiries,
+  ] = await Promise.all([
+    listMembers(accountId),
+    listInvites(accountId),
+    getWallet(accountId),
+    listLedger(accountId),
+    listOrders(accountId),
+    getAi(accountId),
+    getChannels(accountId),
+    getActivity(accountId),
+    listEnquiries(accountId),
+  ]);
 
   return {
     workspace,
@@ -550,7 +554,10 @@ async function getWallet(accountId: string): Promise<WorkspaceWallet | null> {
   return row ?? null;
 }
 
-async function listLedger(accountId: string, limit = 25): Promise<LedgerEntry[]> {
+async function listLedger(
+  accountId: string,
+  limit = 25
+): Promise<LedgerEntry[]> {
   return prisma.$queryRaw<LedgerEntry[]>(Prisma.sql`
     select
       id as "id",
@@ -576,7 +583,10 @@ async function listLedger(accountId: string, limit = 25): Promise<LedgerEntry[]>
  * Intl. Exact for any realistic amount — float8 holds integers to 2^53, which
  * is ninety trillion rupees in paise.
  */
-async function listOrders(accountId: string, limit = 10): Promise<CreditOrder[]> {
+async function listOrders(
+  accountId: string,
+  limit = 10
+): Promise<CreditOrder[]> {
   return prisma.$queryRaw<CreditOrder[]>(Prisma.sql`
     select
       id as "id",

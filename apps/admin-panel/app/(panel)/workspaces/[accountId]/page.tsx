@@ -216,7 +216,9 @@ export default async function WorkspaceDetailPage({
                       </p>
                       <p className="text-muted mt-1 text-xs">
                         Last sign-in {formatDate(member.lastSignInAt)}
-                        {member.emailConfirmedAt ? '' : ' · email not confirmed'}
+                        {member.emailConfirmedAt
+                          ? ''
+                          : ' · email not confirmed'}
                         {member.bannedUntil && member.bannedUntil > new Date()
                           ? ` · banned until ${formatDate(member.bannedUntil)}`
                           : ''}
@@ -308,9 +310,9 @@ export default async function WorkspaceDetailPage({
 
               <DerivedNote>
                 A manual adjustment does not count towards &ldquo;bought&rdquo;:
-                that column is what the customer paid for, and a goodwill grant is
-                us giving something away. Both land on the ledger below either
-                way.
+                that column is what the customer paid for, and a goodwill grant
+                is us giving something away. Both land on the ledger below
+                either way.
               </DerivedNote>
             </CardBody>
           </Card>
@@ -614,8 +616,9 @@ export default async function WorkspaceDetailPage({
                     </p>
                     <p className="text-muted text-xs">
                       {enquiry.workEmail}
-                      {enquiry.companySize ? ` · ${enquiry.companySize}` : ''} ·{' '}
-                      {formatDate(enquiry.createdAt)}
+                      {enquiry.companySize
+                        ? ` · ${enquiry.companySize}`
+                        : ''} · {formatDate(enquiry.createdAt)}
                     </p>
                   </li>
                 ))}
@@ -688,7 +691,9 @@ function describeLedgerEntry(entry: LedgerEntry): string {
     embedding: 'Knowledge indexing',
   };
 
-  const what = entry.feature ? (FEATURES[entry.feature] ?? entry.feature) : base;
+  const what = entry.feature
+    ? (FEATURES[entry.feature] ?? entry.feature)
+    : base;
   const tokens =
     entry.inputTokens + entry.outputTokens > 0
       ? ` · ${formatNumber(entry.inputTokens)} in / ${formatNumber(entry.outputTokens)} out`

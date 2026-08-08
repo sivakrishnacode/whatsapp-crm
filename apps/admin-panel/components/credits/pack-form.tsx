@@ -103,7 +103,10 @@ export function PackForm({
           />
         </Field>
 
-        <Field label="Badge" hint='Ribbon text, e.g. "Popular". Empty for none.'>
+        <Field
+          label="Badge"
+          hint='Ribbon text, e.g. "Popular". Empty for none.'
+        >
           <Input name="badge" defaultValue={badge ?? ''} maxLength={24} />
         </Field>
 

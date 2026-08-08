@@ -63,8 +63,8 @@ export default async function CreditsPage() {
       <header>
         <h1 className="text-ink text-xl font-semibold">AI credits</h1>
         <p className="text-muted mt-1 text-sm">
-          What the platform Gemini key is costing us, what customers have paid to
-          use it, and the packs they buy it in.
+          What the platform Gemini key is costing us, what customers have paid
+          to use it, and the packs they buy it in.
         </p>
       </header>
 
@@ -224,7 +224,9 @@ export default async function CreditsPage() {
                       </TD>
                       <TD>
                         <Badge tone="outline">
-                          {row.creditMode === 'platform' ? 'our key' : 'own key'}
+                          {row.creditMode === 'platform'
+                            ? 'our key'
+                            : 'own key'}
                         </Badge>
                       </TD>
                       <TD align="right">
@@ -238,7 +240,9 @@ export default async function CreditsPage() {
                       <TD align="right">
                         <span
                           className={
-                            (row.balance ?? 0) === 0 ? 'text-muted' : 'text-ink-2'
+                            (row.balance ?? 0) === 0
+                              ? 'text-muted'
+                              : 'text-ink-2'
                           }
                         >
                           {formatCredits(row.balance ?? 0)}
@@ -373,7 +377,9 @@ export default async function CreditsPage() {
           />
           {orders.length === 0 ? (
             <CardBody>
-              <p className="text-muted text-sm">Nobody has bought credits yet.</p>
+              <p className="text-muted text-sm">
+                Nobody has bought credits yet.
+              </p>
             </CardBody>
           ) : (
             <ul className="divide-line divide-y">

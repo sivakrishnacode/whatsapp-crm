@@ -42,18 +42,18 @@ change what customers are charged.
 
 ## What the pages do
 
-| Route                       | Purpose                                                                                   |
-| --------------------------- | ----------------------------------------------------------------------------------------- |
-| `/`                         | MRR, at-risk and trial value, AI credit position, trials ending, renewals due              |
-| `/subscribers`              | Every subscription, searchable and filterable by status/plan                              |
-| `/subscribers/[userId]`     | Edit one subscription; usage vs plan limits; account activity                             |
-| `/sales`                    | MRR/ARR, splits by plan / cycle / payment method, 12-month movement, expected collections |
-| `/plans`                    | The subscription amounts themselves — prices, trial length, limits                        |
-| `/workspaces`               | Every tenant account: people, plan, channels, credits, what they've built                 |
-| `/workspaces/[accountId]`   | One workspace — membership, credit adjustments, AI setup, channel health                  |
-| `/users`                    | Everyone with a login, including users who never onboarded                                |
-| `/credits`                  | AI credits across tenants: spend, top-up revenue, packs, manual adjustments               |
-| `/audit`                    | Every write this panel has made, and by whom                                              |
+| Route                     | Purpose                                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `/`                       | MRR, at-risk and trial value, AI credit position, trials ending, renewals due             |
+| `/subscribers`            | Every subscription, searchable and filterable by status/plan                              |
+| `/subscribers/[userId]`   | Edit one subscription; usage vs plan limits; account activity                             |
+| `/sales`                  | MRR/ARR, splits by plan / cycle / payment method, 12-month movement, expected collections |
+| `/plans`                  | The subscription amounts themselves — prices, trial length, limits                        |
+| `/workspaces`             | Every tenant account: people, plan, channels, credits, what they've built                 |
+| `/workspaces/[accountId]` | One workspace — membership, credit adjustments, AI setup, channel health                  |
+| `/users`                  | Everyone with a login, including users who never onboarded                                |
+| `/credits`                | AI credits across tenants: spend, top-up revenue, packs, manual adjustments               |
+| `/audit`                  | Every write this panel has made, and by whom                                              |
 
 ## Workspaces and the people in them
 

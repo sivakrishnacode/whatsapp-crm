@@ -49,7 +49,8 @@ export default async function AuditPage({
 
   const actions = await auditActionCounts();
   const known = new Set(actions.map((entry) => entry.action));
-  const action = params.action && known.has(params.action) ? params.action : 'all';
+  const action =
+    params.action && known.has(params.action) ? params.action : 'all';
   const accountId =
     params.accountId && UUID_RE.test(params.accountId)
       ? params.accountId
@@ -65,8 +66,8 @@ export default async function AuditPage({
         <div>
           <h1 className="text-ink text-xl font-semibold">Audit log</h1>
           <p className="text-muted mt-1 text-sm">
-            Every write this panel has made, by whom, in the words recorded at the
-            time.
+            Every write this panel has made, by whom, in the words recorded at
+            the time.
           </p>
         </div>
         <p className="text-muted flex flex-wrap gap-2 text-xs">

@@ -349,10 +349,10 @@ export default async function WorkspacesPage({
       </Card>
 
       <p className="text-muted text-xs leading-relaxed">
-        {formatNumber(totals.soloWorkspaces)} of {formatNumber(totals.workspaces)}{' '}
-        workspaces have a single member. Signup creates one workspace per user, so
-        most of those are people who signed up and never invited anyone — they are
-        accounts, not teams.
+        {formatNumber(totals.soloWorkspaces)} of{' '}
+        {formatNumber(totals.workspaces)} workspaces have a single member.
+        Signup creates one workspace per user, so most of those are people who
+        signed up and never invited anyone — they are accounts, not teams.
       </p>
     </div>
   );

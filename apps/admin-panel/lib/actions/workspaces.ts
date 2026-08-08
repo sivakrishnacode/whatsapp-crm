@@ -142,7 +142,13 @@ export async function memberAction(
 
     switch (intent) {
       case 'set_role':
-        return await setMemberRole(session, formData, accountId, userId, member);
+        return await setMemberRole(
+          session,
+          formData,
+          accountId,
+          userId,
+          member
+        );
       case 'remove':
         return await removeMember(session, accountId, userId, member);
       case 'transfer_ownership':

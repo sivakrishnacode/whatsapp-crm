@@ -38,16 +38,16 @@ turbo.json             Tasks: build, dev, lint, test, typecheck, generate.
 
 ## Commands (run from repo root unless noted)
 
-| Task | Command |
-|---|---|
-| Dev (all) | `npm run dev` (turbo) |
-| Build / lint / typecheck / test (all) | `npm run build` \| `lint` \| `typecheck` \| `test` |
-| Format | `npm run format` (prettier) |
-| API only | `cd apps/api && npm run dev` (nest watch) |
-| API tests | `cd apps/api && npm test` (**vitest**) |
-| Prisma | `npm run db:generate` \| `db:migrate` \| `db:push` \| `db:studio` |
-| Web only | `cd apps/web && npm run dev` |
-| Admin panel only | `npm run dev --workspace=admin-panel` |
+| Task                                  | Command                                                           |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| Dev (all)                             | `npm run dev` (turbo)                                             |
+| Build / lint / typecheck / test (all) | `npm run build` \| `lint` \| `typecheck` \| `test`                |
+| Format                                | `npm run format` (prettier)                                       |
+| API only                              | `cd apps/api && npm run dev` (nest watch)                         |
+| API tests                             | `cd apps/api && npm test` (**vitest**)                            |
+| Prisma                                | `npm run db:generate` \| `db:migrate` \| `db:push` \| `db:studio` |
+| Web only                              | `cd apps/web && npm run dev`                                      |
+| Admin panel only                      | `npm run dev --workspace=admin-panel`                             |
 
 Both apps test with **vitest** (not Jest). API lint = eslint + prettier; web lint = `eslint`.
 
@@ -86,11 +86,11 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 - **No new api endpoints** — reads/writes Postgres directly via Prisma (`@repo/database`). Nothing here calls `apps/api`.
 - **Auth:** one env credential (`ADMIN_USERNAME`/`ADMIN_PASSWORD`), timing-safe compare, HS256 JWT session cookie signed with `ADMIN_SESSION_SECRET`. `proxy.ts` is an optimistic redirect gate; `requireAdmin()` in `lib/auth.ts` is the real check and runs in every page **and every Server Action**.
 - **Structure:** `app/(panel)/*` pages (`/`, `subscribers`, `sales`, `plans`, `workspaces`, `users`, `credits`, `audit`), `app/login`, `lib/{env,session,auth,prisma,format}.ts`, `lib/queries/*` (reads), `lib/actions/*` (writes), `components/{ui,chart,shell,subscriber,plans,credits,workspace}`.
-- ⚠️ **Money is derived, not recorded.** There is no payments/invoices table in this database — `user_subscriptions` has no amount column and no history. Every figure is `plan price × subscription`, so MRR/ARR/expected-collections are exact for *today* and historical revenue is unrecoverable (a price edit rewrites the past). The reasoning lives in `lib/queries/sql.ts`; read it before adding a revenue figure. Time series there count subscriptions, never money.
+- ⚠️ **Money is derived, not recorded.** There is no payments/invoices table in this database — `user_subscriptions` has no amount column and no history. Every figure is `plan price × subscription`, so MRR/ARR/expected-collections are exact for _today_ and historical revenue is unrecoverable (a price edit rewrites the past). The reasoning lives in `lib/queries/sql.ts`; read it before adding a revenue figure. Time series there count subscriptions, never money.
 - **AI credits are the one exception**, and the one place the panel handles real collected money: `ai_credit_orders.amount_minor` is what Razorpay charged and `ai_credit_ledger` is every credit that moved, so `/credits` may plot both over time. ⚠️ Those columns are **BIGINT minor units** while `subscription_plans.price_*` are major-unit decimals — every minor field is named `...Minor` and `minorToMajor()` in `lib/format.ts` is the only conversion. Never sum one into MRR.
 - ⚠️ **Manual credit adjustment goes through `admin_adjust_ai_credits`** (migration 073), the third and last writer of `ai_credit_wallets.balance` after 072's `grant_ai_credits`/`consume_ai_credits`. It writes `reason = 'admin_adjust'` with `feature = NULL`, leaves `lifetime_purchased`/`lifetime_consumed` alone (a goodwill grant is not a purchase and a clawback is not consumption), and clamps a deduction at zero. A Prisma update on `balance` is a bug: concurrent auto-replies meter the same wallet and the ledger row must be written in the same statement. `ADMIN_MAX_CREDIT_ADJUSTMENT` is the server-side ceiling.
 - ⚠️ **Membership writes re-implement migration 018's RPCs, deliberately.** `set_member_role`, `remove_account_member` and `transfer_account_ownership` all begin `IF auth.uid() IS NULL THEN RAISE 'Unauthorized'` — that check is what stops one tenant editing another's profiles, and this panel has no JWT, so they all refuse. `lib/actions/workspaces.ts` restates the rules and must stay in step with 018. Transferring ownership additionally **moves the subscription row**, because a workspace's plan is resolved through `accounts.owner_user_id`; `usage_tracking` does not move. Both `accounts.owner_user_id` and `user_subscriptions.user_id` are UNIQUE, so both conflicts are pre-checked into sentences rather than P2002s.
-- **`admin_audit_log` (073) has no foreign keys on purpose** — a row must outlive the workspace, user or plan it describes. RLS on with zero policies and rights revoked from `anon`/`authenticated`; only an owner connection reads it. `recordAudit()` runs *after* the write it describes and fails soft (credit moves have the ledger as an independent record).
+- **`admin_audit_log` (073) has no foreign keys on purpose** — a row must outlive the workspace, user or plan it describes. RLS on with zero policies and rights revoked from `anon`/`authenticated`; only an owner connection reads it. `recordAudit()` runs _after_ the write it describes and fails soft (credit moves have the ledger as an independent record).
 - `lib/format.ts` is `server-only` on purpose: `ADMIN_CURRENCY` is not public, so client components take pre-formatted strings.
 
 ## Database — Prisma + Postgres (Supabase)
@@ -99,7 +99,7 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 - Each app owns its own connection (lifecycles differ): `apps/api/src/prisma/prisma.service.ts` (Nest module) and `apps/admin-panel/lib/prisma.ts` (globalThis singleton). Both use `@prisma/adapter-pg` (`pg`).
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
-- ⚠️ **Supabase Storage buckets are written from the BROWSER, not the API** (`avatars`, `flow-media` 016/020, `chat-media` 023, `workspace-logos` 071). The bucket's RLS policy is therefore the *only* gate on those writes — it must carry the authorization itself, including any role check. Account-scoped buckets all use the path convention `account-<account_id>/…` matched on the first folder segment, built in one place by `buildMediaPath()` (`apps/web/src/lib/storage/upload-media.ts`); a hand-rolled path is silently rejected. When such a URL is later persisted to a column, pin it to our own bucket *and* the caller's own folder server-side (`common/storage/workspace-logo.util.ts`) — a free-text URL that renders in every teammate's browser is a beacon.
+- ⚠️ **Supabase Storage buckets are written from the BROWSER, not the API** (`avatars`, `flow-media` 016/020, `chat-media` 023, `workspace-logos` 071). The bucket's RLS policy is therefore the _only_ gate on those writes — it must carry the authorization itself, including any role check. Account-scoped buckets all use the path convention `account-<account_id>/…` matched on the first folder segment, built in one place by `buildMediaPath()` (`apps/web/src/lib/storage/upload-media.ts`); a hand-rolled path is silently rejected. When such a URL is later persisted to a column, pin it to our own bucket _and_ the caller's own folder server-side (`common/storage/workspace-logo.util.ts`) — a free-text URL that renders in every teammate's browser is a beacon.
 - **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
 
 ## Auth & signup
@@ -123,24 +123,24 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 
 Two cross-tenant leaks shipped here before being removed; both share one shape, so check for it in any new code:
 
-- **Prisma bypasses RLS.** `apps/api` connects as the database owner, so a `findMany()` without `where: { account_id }` returns *every tenant's* rows even though the equivalent browser query is correctly scoped by policy. The deleted `subscription/admin/users` endpoint was exactly this — `profile.findMany()`, no filter. Its sibling write endpoints took a `targetUserId` from the body and only checked that the caller was an admin *somewhere*, which let an admin of one workspace rewrite another's subscription.
+- **Prisma bypasses RLS.** `apps/api` connects as the database owner, so a `findMany()` without `where: { account_id }` returns _every tenant's_ rows even though the equivalent browser query is correctly scoped by policy. The deleted `subscription/admin/users` endpoint was exactly this — `profile.findMany()`, no filter. Its sibling write endpoints took a `targetUserId` from the body and only checked that the caller was an admin _somewhere_, which let an admin of one workspace rewrite another's subscription.
 - **`SECURITY DEFINER` RPCs bypass RLS too**, and `GRANT EXECUTE ... TO authenticated` means any signed-in user can call them with any argument. Authorization has to be inside the body.
 
-The rule of thumb: *if a query runs through Prisma or a SECURITY DEFINER function, RLS is not protecting you — scope it yourself.*
+The rule of thumb: _if a query runs through Prisma or a SECURITY DEFINER function, RLS is not protecting you — scope it yourself._
 
 ## Meta WhatsApp Cloud API integration (core dependency)
 
 The app is built on the **official Meta WhatsApp Cloud API** (`https://graph.facebook.com/<version>/...`, Bearer-token auth). `notes/WhatsApp Cloud API.postman_collection.json` is Meta's official collection and is a **superset reference** for endpoints — the code implements a subset of it.
 
 - **Version pins — there are now THREE**, one per independent surface. Intentional (three upgrade risks rather than one shared one), but three things to keep current:
-  | Surface | Version | Constant |
-  |---|---|---|
-  | WhatsApp Cloud API | `v21.0` | `META_API_BASE` in `src/whatsapp/meta-api.util.ts:21`, `whatsapp-templates.controller.ts:63` |
-  | Facebook Pages / lead-gen | `v20.0` | inline in `src/integrations/controllers/facebook.controller.ts` |
-  | Marketing API (Ads Manager) | `v23.0` | `META_MARKETING_VERSION` in `src/ads/marketing-api.util.ts` |
+  | Surface                     | Version | Constant                                                                                     |
+  | --------------------------- | ------- | -------------------------------------------------------------------------------------------- |
+  | WhatsApp Cloud API          | `v21.0` | `META_API_BASE` in `src/whatsapp/meta-api.util.ts:21`, `whatsapp-templates.controller.ts:63` |
+  | Facebook Pages / lead-gen   | `v20.0` | inline in `src/integrations/controllers/facebook.controller.ts`                              |
+  | Marketing API (Ads Manager) | `v23.0` | `META_MARKETING_VERSION` in `src/ads/marketing-api.util.ts`                                  |
 - **`src/whatsapp/meta-api.util.ts`** — thin fetch wrappers (each takes one named-options object): `sendTextMessage`, `sendTemplateMessage`, `sendMediaMessage`, `sendInteractiveButtons`, `sendInteractiveList` (+ shared `INTERACTIVE_LIMITS`), `sendProductMessage`/`sendProductListMessage`, `sendReactionMessage`, `verifyPhoneNumber`, `exchangeEmbeddedSignupCode`, `registerPhoneNumber`, `subscribeWabaToApp`/`getSubscribedApps`, `uploadResumableMedia`, `submit/edit/deleteMessageTemplate`, `getMediaUrl`/`downloadMedia`.
 - **Also implemented across the module:** flows send (`flow-meta-send.service.ts`), template management (`controllers/whatsapp-templates.controller.ts`), media proxy (`controllers/whatsapp-media.controller.ts`), inbound webhook (`services/whatsapp-webhook.service.ts` — parses messages + delivery/read statuses), account connect/register (`services/connect-account.service.ts`).
-- **In the Postman collection but NOT yet implemented:** outbound *mark-as-read* & *typing indicators*, QR codes, commerce settings, Payments API (SG/IN order messages), analytics, billing, block users, business compliance, deregister, business portfolio. (Read status is only *received* via webhook, not sent.)
+- **In the Postman collection but NOT yet implemented:** outbound _mark-as-read_ & _typing indicators_, QR codes, commerce settings, Payments API (SG/IN order messages), analytics, billing, block users, business compliance, deregister, business portfolio. (Read status is only _received_ via webhook, not sent.)
 
 ## AI agent (`apps/api/src/ai`, `apps/web/src/app/(dashboard)/agents`)
 
@@ -157,7 +157,7 @@ Everything below is account-scoped configuration on `ai_configs` (one row per wo
 - ⚠️ **The stored mode is the decision; fallback is one-directional.** `resolveSource()`
   in `lib/config.ts` falls back only when the chosen source cannot serve the call at all
   (no server key, empty wallet → their key if present; no own key → platform). It never
-  falls back *to* credits from a working own-key setup: that would bill someone for
+  falls back _to_ credits from a working own-key setup: that would bill someone for
   something they did not choose. A pre-072 account with a key was migrated to `byok`
   for the same reason.
 - ⚠️ **A credit is metered from real tokens**, not per action: `creditsForGeneration()`
@@ -181,7 +181,7 @@ Everything below is account-scoped configuration on `ai_configs` (one row per wo
   `reason = 'admin_adjust'`, `feature = NULL`, `lifetime_purchased`/`lifetime_consumed`
   untouched, deductions clamped at zero. Nothing in `apps/api` calls it.
 - ⚠️ **Top-ups verify Razorpay's HMAC signature and price the pack server-side**
-  (`ai_credit_packs` → `ai_credit_orders` written *before* redirect). `credited_at` is the
+  (`ai_credit_packs` → `ai_credit_orders` written _before_ redirect). `credited_at` is the
   idempotency latch so the browser callback and the webhook grant exactly once. Note the
   neighbouring `subscription/razorpay/confirm-payment` does **not** verify a signature —
   do not copy it; it needs the same fix.
@@ -205,7 +205,7 @@ Everything below is account-scoped configuration on `ai_configs` (one row per wo
 - **Custom API actions** (`ai_agent_actions`) are user-defined HTTP tools. The model
   supplies declared parameter VALUES only; endpoint, method and headers are what an
   admin configured, so a prompt-injected "call your action against evil.test" is not
-  expressible. Headers are encrypted and never returned — the UI shows header *names*.
+  expressible. Headers are encrypted and never returned — the UI shows header _names_.
 - ⚠️ **`lib/http-guard.ts` is the SSRF boundary** for the two features that fetch a
   user-supplied URL (page crawling, custom actions): scheme allowlist, no credentials
   in the URL, every resolved address must be publicly routable, redirects followed
@@ -227,7 +227,7 @@ Everything below is account-scoped configuration on `ai_configs` (one row per wo
   you go live": the bot answers only those numbers and leaves everyone else for a
   human. On `byok` there is deliberately **no message quota** — the provider bills the
   customer directly, so a cap we invented would be theatre. On `platform` the credit
-  wallet *is* the cap, because we are the ones paying.
+  wallet _is_ the cap, because we are the ones paying.
 - **Match RPCs stay `SECURITY INVOKER`** (migration 032 fixed a cross-tenant read by
   changing them from DEFINER). They are granted to `authenticated`; as DEFINER any
   signed-in user could pass a foreign `p_account_id` through PostgREST.
@@ -282,7 +282,7 @@ pending Meta App Review for `ads_management`.
   of the ad account / page / pixel ids. **No route accepts an `ad_account_id` as
   authority** — see the tenant-scoping section above; here the cost of forgetting is
   spending another tenant's money rather than leaking their data. `facebook_connections`
-  stores its token in *plaintext*; do not copy that pattern (fixing it is outstanding).
+  stores its token in _plaintext_; do not copy that pattern (fixing it is outstanding).
 - **Connect is a server-side OAuth redirect, not the Facebook JS SDK.** An ads token must
   never exist in page JavaScript, and `connect.facebook.net` is absent from the web app's
   CSP `script-src` (Report-Only today, so the existing SDK-based lead-ads screen still
@@ -299,7 +299,7 @@ pending Meta App Review for `ads_management`.
 - **Nav:** Ads Manager is the first primary-rail row to own a second panel, via
   `RailItem.panel` in `lib/nav/channels.ts`. It is deliberately **not** a channel — a
   channel is a value of `conversations.channel`, and no conversation arrives on "ads"
-  (a Click-to-WhatsApp click produces a *WhatsApp* conversation).
+  (a Click-to-WhatsApp click produces a _WhatsApp_ conversation).
 - Publishing a Click-to-WhatsApp ad writes a `ctwa_campaigns` row, so existing
   `ctwa_clicks` attribution and `/channels/whatsapp/ctwa` keep working unchanged.
 
@@ -330,7 +330,7 @@ queue.** Design and the decisions behind it: `docs/implementation_queue.md`.
   a column, not payload), and `BroadcastRecoveryService` re-enqueues unfinished
   broadcasts on boot.
 - ⚠️ **Idempotency is layered on purpose**: a stable `jobId` stops a duplicate
-  job existing, *and* the processor re-checks the row's status before acting.
+  job existing, _and_ the processor re-checks the row's status before acting.
   Removing either one re-introduces double-sends.
 - **Retry classification comes from Meta's status code**, never from matching on
   an error message (`isTransientSendError`). `sendTemplateMessage` throws
@@ -345,7 +345,7 @@ queue.** Design and the decisions behind it: `docs/implementation_queue.md`.
 
 ## Infra — `docker-compose.yml`
 
-All app ports are bound to **127.0.0.1** deliberately — Docker's port publishing writes iptables rules that sit in front of ufw, so `ufw deny` does *not* close a `0.0.0.0` publish. The host proxy reaches them on loopback.
+All app ports are bound to **127.0.0.1** deliberately — Docker's port publishing writes iptables rules that sit in front of ufw, so `ufw deny` does _not_ close a `0.0.0.0` publish. The host proxy reaches them on loopback.
 
 - `redis` (`redis:7-alpine`, `wacrm-redis`) — no published port at all.
 - `api` (`wacrm-api`, `127.0.0.1:8001:8001`, `REDIS_URL=redis://redis:6379`).
