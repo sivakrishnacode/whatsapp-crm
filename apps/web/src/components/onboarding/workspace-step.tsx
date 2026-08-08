@@ -1,13 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Check } from "lucide-react";
+import { Check, Loader2, Upload } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { WorkspaceLogo } from "@/components/workspace/workspace-logo";
+import {
+  LOGO_ACCEPT,
+  LOGO_MAX_BYTES,
+  LOGO_MIME_TYPES,
+  discardWorkspaceLogo,
+  uploadWorkspaceLogo,
+} from "@/lib/workspace/logo";
 import {
   GOAL_OPTIONS,
   REFERRAL_OPTIONS,
@@ -44,6 +52,14 @@ export function WorkspaceStep({
     initial.referralOther ?? "",
   );
 
+  // The logo uploads on pick rather than on submit: the file is already
+  // in Storage by the time "Continue" is pressed, so the step saves in
+  // one round trip and a slow upload never holds up the wizard.
+  const [logoUrl, setLogoUrl] = useState<string | null>(initial.logoUrl);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
   const toggleGoal = (key: string) => {
     setGoals((current) =>
       current.includes(key)
@@ -69,7 +85,49 @@ export function WorkspaceStep({
       referralSource: referral!,
       referralOther:
         referral === REFERRAL_OTHER_KEY ? referralOther.trim() : undefined,
+      logoUrl,
     });
+  };
+
+  const handleLogoPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset first: re-picking the same file after an error fires no
+    // change event otherwise.
+    e.target.value = "";
+    if (!file) return;
+
+    if (!LOGO_MIME_TYPES.includes(file.type)) {
+      setLogoError(t("logoWrongType"));
+      return;
+    }
+    if (file.size > LOGO_MAX_BYTES) {
+      setLogoError(t("logoTooLarge"));
+      return;
+    }
+
+    setLogoError(null);
+    setLogoBusy(true);
+    const previous = logoUrl;
+    try {
+      const { publicUrl } = await uploadWorkspaceLogo(file);
+      setLogoUrl(publicUrl);
+      // Someone who picks three logos before continuing should not leave
+      // two orphans behind in a public bucket.
+      if (previous) await discardWorkspaceLogo(previous);
+    } catch {
+      // Never fatal. A logo is the one optional thing on this screen, and
+      // failing signup over it would be absurd.
+      setLogoError(t("logoFailed"));
+    } finally {
+      setLogoBusy(false);
+    }
+  };
+
+  const handleLogoRemove = async () => {
+    const previous = logoUrl;
+    setLogoUrl(null);
+    setLogoError(null);
+    if (previous) await discardWorkspaceLogo(previous);
   };
 
   return (
@@ -88,6 +146,57 @@ export function WorkspaceStep({
         />
         <p className="text-xs text-muted-foreground">
           {t("workspaceNameHint")}
+        </p>
+      </div>
+
+      {/* Logo. Directly under the name because the two together are "who
+          is this workspace" — and explicitly marked optional in the
+          label, since anything that looks required on the first screen
+          of a product costs completions. */}
+      <div className="flex flex-col gap-2">
+        <Label>{t("logoLabel")}</Label>
+        <div className="flex items-center gap-4">
+          <WorkspaceLogo name={name || "?"} logoUrl={logoUrl} size="lg" />
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={fileInput}
+              type="file"
+              accept={LOGO_ACCEPT}
+              onChange={handleLogoPick}
+              className="hidden"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              disabled={logoBusy}
+              onClick={() => fileInput.current?.click()}
+            >
+              {logoBusy ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {t("logoUploading")}
+                </>
+              ) : (
+                <>
+                  <Upload className="size-4" />
+                  {logoUrl ? t("logoReplace") : t("logoUpload")}
+                </>
+              )}
+            </Button>
+            {logoUrl && !logoBusy ? (
+              <Button type="button" variant="ghost" onClick={handleLogoRemove}>
+                {t("logoRemove")}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <p
+          className={cn(
+            "text-xs",
+            logoError ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {logoError ?? t("logoHint")}
         </p>
       </div>
 

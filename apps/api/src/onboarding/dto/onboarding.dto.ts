@@ -8,6 +8,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { MAX_LOGO_URL_LEN } from '../../common/storage/workspace-logo.util';
 
 /**
  * Answer vocabularies.
@@ -69,6 +70,21 @@ export class SaveWorkspaceDto {
   @IsString()
   @MaxLength(200)
   referralOther?: string;
+
+  /**
+   * Public URL of a logo the visitor already uploaded to the
+   * `workspace-logos` bucket. Optional and deliberately so — this is the
+   * first screen of the product, and a file picker must never stand
+   * between someone and their account. `null` clears a logo picked on an
+   * earlier pass through the step.
+   *
+   * Validated for shape here; pinned to this account's own storage
+   * folder by the service (see `normalizeWorkspaceLogoUrl`).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_LOGO_URL_LEN)
+  logoUrl?: string | null;
 }
 
 /** Step 2 — pick a plan. FREE is not selectable; it is no longer active. */

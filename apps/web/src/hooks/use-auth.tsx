@@ -42,6 +42,9 @@ interface Profile {
 interface AccountSummary {
   id: string;
   name: string;
+  /** Workspace logo (migration 071). null = none; render the initial
+   *  fallback rather than a broken image. */
+  logo_url: string | null;
   /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'USD' in the
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
@@ -193,9 +196,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const { data: account, error: accountErr } = await supabase
             .from("accounts")
             // default_currency added in migration 021, default_country
-            // in 059; both narrowed to their fallbacks below for older
-            // schemas where they read null.
-            .select("id, name, default_currency, default_country")
+            // in 059, logo_url in 071; all narrowed to their fallbacks
+            // below for older schemas where they read null.
+            .select("id, name, logo_url, default_currency, default_country")
             .eq("id", data.account_id)
             .maybeSingle();
           if (accountErr) {
@@ -209,6 +212,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             accountRow = {
               id: account.id,
               name: account.name,
+              logo_url: account.logo_url ?? null,
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
               default_country: account.default_country ?? DEFAULT_COUNTRY,
             };

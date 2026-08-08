@@ -11,6 +11,7 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
+import { WorkspaceLogo } from "@/components/workspace/workspace-logo";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,12 +70,11 @@ export function Header({ onOpenSidebar, title, breadcrumb }: HeaderProps) {
             the only place it appears. */}
         {account?.name ? (
           <div className="hidden min-w-0 shrink items-center gap-2 border-r border-border pr-3 md:flex">
-            <span
-              aria-hidden
-              className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[11px] font-semibold text-primary"
-            >
-              {account.name.charAt(0).toUpperCase()}
-            </span>
+            {/* Their logo when they have uploaded one, the initial when
+                they have not — <WorkspaceLogo> owns that choice so the
+                header, the settings card and the signup wizard cannot
+                drift apart. */}
+            <WorkspaceLogo name={account.name} logoUrl={account.logo_url} />
             <span
               className="truncate text-sm font-medium text-foreground"
               title={account.name}

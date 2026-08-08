@@ -1,14 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Building2, Loader2 } from 'lucide-react';
+import { Loader2, Upload } from 'lucide-react';
 
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { WorkspaceLogo } from '@/components/workspace/workspace-logo';
+import {
+  LOGO_ACCEPT,
+  discardWorkspaceLogo,
+  uploadWorkspaceLogo,
+  validateLogoFile,
+} from '@/lib/workspace/logo';
 
 import { ROLE_META } from './role-meta';
 import { SettingsChip } from './settings-chip';
@@ -36,6 +43,8 @@ export function WorkspaceCard() {
 
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setName(account?.name ?? '');
@@ -76,13 +85,88 @@ export function WorkspaceCard() {
     }
   };
 
+  /**
+   * Persist a logo URL (or null to clear) and refresh the shell.
+   *
+   * Order matters: save first, *then* delete what it replaced. The other
+   * way round leaves the account pointing at a file that no longer
+   * exists if the PATCH fails.
+   */
+  const saveLogo = async (nextUrl: string | null) => {
+    const previous = account?.logo_url ?? null;
+
+    const res = await fetch('/api/account', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logo_url: nextUrl }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error ?? `Failed to save logo (${res.status})`);
+    }
+
+    // Re-reads the account, so the header picks the logo up without a
+    // reload — same seam the rename uses.
+    await refreshProfile();
+    if (previous && previous !== nextUrl) await discardWorkspaceLogo(previous);
+  };
+
+  const onPickLogo = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Reset immediately: picking the same file twice after a failure
+    // fires no change event otherwise.
+    event.target.value = '';
+    if (!file) return;
+
+    const problem = validateLogoFile(file);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
+
+    setLogoBusy(true);
+    let uploaded: string | null = null;
+    try {
+      const { publicUrl } = await uploadWorkspaceLogo(file);
+      uploaded = publicUrl;
+      await saveLogo(publicUrl);
+      toast.success('Logo updated');
+    } catch (error) {
+      // The upload may have succeeded and only the PATCH failed — bin the
+      // object rather than orphan it in a public bucket.
+      if (uploaded) await discardWorkspaceLogo(uploaded);
+      toast.error(error instanceof Error ? error.message : 'Upload failed');
+    } finally {
+      setLogoBusy(false);
+    }
+  };
+
+  const onRemoveLogo = async () => {
+    setLogoBusy(true);
+    try {
+      await saveLogo(null);
+      toast.success('Logo removed');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to remove');
+    } finally {
+      setLogoBusy(false);
+    }
+  };
+
   return (
     <Card className="mt-4">
       <CardContent className="space-y-6">
         <div className="flex items-center gap-4">
-          <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-            <Building2 className="size-5 text-primary" />
-          </span>
+          {/* The generic building icon that used to sit here said nothing
+              — every workspace had the same one. The account's own mark
+              (or its initial) is the same size and actually identifies
+              the place you are in. */}
+          <WorkspaceLogo
+            name={account?.name ?? 'Your workspace'}
+            logoUrl={account?.logo_url}
+            size="md"
+          />
           <div className="min-w-0 flex-1">
             <div className="truncate text-base font-semibold text-foreground">
               {account?.name ?? 'Your workspace'}
@@ -100,6 +184,58 @@ export function WorkspaceCard() {
             </SettingsChip>
           ) : null}
         </div>
+
+        {/* Logo controls sit outside the rename <form>: pressing Enter in
+            the name field must not trigger a file picker, and the two
+            save independently. Admin+ only, matching PATCH /account and
+            the bucket's own write policy — an agent seeing buttons that
+            403 would be worse than not seeing them. */}
+        {canManageMembers ? (
+          <div className="space-y-2">
+            <Label className="text-foreground">Workspace logo</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileInput}
+                type="file"
+                accept={LOGO_ACCEPT}
+                onChange={onPickLogo}
+                className="hidden"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={logoBusy || !account}
+                onClick={() => fileInput.current?.click()}
+              >
+                {logoBusy ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Working…
+                  </>
+                ) : (
+                  <>
+                    <Upload className="size-4" />
+                    {account?.logo_url ? 'Replace logo' : 'Upload logo'}
+                  </>
+                )}
+              </Button>
+              {account?.logo_url ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={logoBusy}
+                  onClick={onRemoveLogo}
+                >
+                  Remove
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              PNG, JPEG or WebP, up to 2 MB. A square image works best — it
+              appears beside the workspace name for everyone on your team.
+            </p>
+          </div>
+        ) : null}
 
         {canManageMembers ? (
           <form onSubmit={onSave} className="space-y-2">

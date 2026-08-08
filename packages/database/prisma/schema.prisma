@@ -19,6 +19,11 @@ model Account {
   /// country code (migration 059). Read by toE164() on every contact
   /// write path — see src/common/phone/phone.util.ts.
   defaultCountry                String                          @default("IN") @map("default_country")
+  /// Public URL of the workspace logo in the `workspace-logos` bucket
+  /// (migration 071). NULL is the normal state — the UI falls back to
+  /// the first letter of `name`. Only PATCH /account writes it, and it
+  /// pins the value to this project's own Storage prefix.
+  logoUrl                       String?                         @map("logo_url")
   account_invitations           account_invitations[]
   account_onboarding            account_onboarding?
   users                         users                           @relation(fields: [ownerUserId], references: [id], onUpdate: NoAction)

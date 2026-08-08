@@ -12,6 +12,10 @@ import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  InvalidWorkspaceLogoError,
+  normalizeWorkspaceLogoUrl,
+} from '../../common/storage/workspace-logo.util';
 
 const MAX_NAME_LEN = 80;
 
@@ -38,7 +42,13 @@ export class AccountController {
     const [acc, profile] = await Promise.all([
       this.prisma.account.findUnique({
         where: { id: account.accountId },
-        select: { id: true, name: true, ownerUserId: true, createdAt: true },
+        select: {
+          id: true,
+          name: true,
+          logoUrl: true,
+          ownerUserId: true,
+          createdAt: true,
+        },
       }),
       this.prisma.profile.findUnique({
         where: { userId: account.userId },
@@ -56,6 +66,7 @@ export class AccountController {
       account: {
         id: acc.id,
         name: acc.name,
+        logo_url: acc.logoUrl,
         owner_user_id: acc.ownerUserId,
         created_at: acc.createdAt,
       },
@@ -65,12 +76,19 @@ export class AccountController {
 
   /**
    * PATCH /api/account
-   * Rename the account. Admin+ only.
+   * Rename the account and/or set its logo. Admin+ only.
+   *
+   * Both fields are optional and independent — the settings form saves
+   * the name and the logo with separate controls, and sending the whole
+   * object back for either one would let a stale name overwrite a
+   * rename made in another tab. Presence of the *key* is the signal, so
+   * `{ logo_url: null }` clears the logo while an absent key leaves it
+   * alone.
    */
   @Patch()
   async updateAccount(
     @CurrentAccount() account: SupabaseAccountContext,
-    @Body() body: { name?: unknown },
+    @Body() body: { name?: unknown; logo_url?: unknown },
     @Res() res: Response,
   ) {
     const profile = await this.prisma.profile.findUnique({
@@ -84,32 +102,69 @@ export class AccountController {
         .json({ error: 'Admin+ required' });
     }
 
-    const rawName = body?.name;
-    if (typeof rawName !== 'string') {
-      return res
-        .status(HttpStatus.BAD_REQUEST)
-        .json({ error: "'name' must be a string" });
+    const patch: { name?: string; logoUrl?: string | null } = {};
+
+    if (body && 'name' in body) {
+      const rawName = body.name;
+      if (typeof rawName !== 'string') {
+        return res
+          .status(HttpStatus.BAD_REQUEST)
+          .json({ error: "'name' must be a string" });
+      }
+
+      const name = rawName.trim();
+      if (name.length === 0) {
+        return res
+          .status(HttpStatus.BAD_REQUEST)
+          .json({ error: 'Account name cannot be empty' });
+      }
+      if (name.length > MAX_NAME_LEN) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          error: `Account name must be ${MAX_NAME_LEN} characters or fewer`,
+        });
+      }
+
+      patch.name = name;
     }
 
-    const name = rawName.trim();
-    if (name.length === 0) {
+    if (body && 'logo_url' in body) {
+      try {
+        // Scoped to the caller's own account folder — see the util for
+        // why an arbitrary URL is not acceptable here.
+        patch.logoUrl = normalizeWorkspaceLogoUrl(
+          body.logo_url,
+          account.accountId,
+          process.env.SUPABASE_URL,
+        );
+      } catch (error) {
+        if (error instanceof InvalidWorkspaceLogoError) {
+          return res
+            .status(HttpStatus.BAD_REQUEST)
+            .json({ error: error.message });
+        }
+        throw error;
+      }
+    }
+
+    if (Object.keys(patch).length === 0) {
       return res
         .status(HttpStatus.BAD_REQUEST)
-        .json({ error: 'Account name cannot be empty' });
-    }
-    if (name.length > MAX_NAME_LEN) {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        error: `Account name must be ${MAX_NAME_LEN} characters or fewer`,
-      });
+        .json({ error: "Provide 'name' and/or 'logo_url'" });
     }
 
     const updated = await this.prisma.account.update({
       where: { id: account.accountId },
-      data: { name },
-      select: { id: true, name: true },
+      data: patch,
+      select: { id: true, name: true, logoUrl: true },
     });
 
-    return res.status(HttpStatus.OK).json({ account: updated });
+    return res.status(HttpStatus.OK).json({
+      account: {
+        id: updated.id,
+        name: updated.name,
+        logo_url: updated.logoUrl,
+      },
+    });
   }
 
   /**

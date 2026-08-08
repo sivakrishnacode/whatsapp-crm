@@ -32,6 +32,8 @@ export interface OnboardingState {
   step: OnboardingStep;
   workspace: {
     name: string;
+    /** Public URL in the `workspace-logos` bucket, or null for none. */
+    logoUrl: string | null;
     goals: string[];
     teamSize: string | null;
     referralSource: string | null;
@@ -52,6 +54,12 @@ export interface WorkspacePayload {
   teamSize: string;
   referralSource: string;
   referralOther?: string;
+  /**
+   * Already uploaded to the `workspace-logos` bucket by the time this is
+   * sent — the API stores the URL, never the bytes. `null` clears a logo
+   * picked on an earlier pass; omit the key to leave it untouched.
+   */
+  logoUrl?: string | null;
 }
 
 export interface EnquiryPayload {

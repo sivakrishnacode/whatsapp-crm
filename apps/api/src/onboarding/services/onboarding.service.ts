@@ -8,6 +8,10 @@ import {
   type PlanView,
 } from '../../subscription/services/subscription.service';
 import type { PlanEnquiryDto, SaveWorkspaceDto } from '../dto/onboarding.dto';
+import {
+  InvalidWorkspaceLogoError,
+  normalizeWorkspaceLogoUrl,
+} from '../../common/storage/workspace-logo.util';
 
 /** Fallback billing period when a plan carries no trial. */
 const DEFAULT_PERIOD_DAYS = 30;
@@ -21,6 +25,8 @@ export interface OnboardingState {
   step: OnboardingStep;
   workspace: {
     name: string;
+    /** Public URL in the `workspace-logos` bucket, or null for none. */
+    logoUrl: string | null;
     goals: string[];
     teamSize: string | null;
     referralSource: string | null;
@@ -66,6 +72,7 @@ export class OnboardingService {
       where: { id: accountId },
       select: {
         name: true,
+        logoUrl: true,
         ownerUserId: true,
         account_onboarding: true,
       },
@@ -93,6 +100,7 @@ export class OnboardingService {
       }),
       workspace: {
         name: account.name,
+        logoUrl: account.logoUrl,
         goals: onboarding?.goals ?? [],
         teamSize: onboarding?.team_size ?? null,
         referralSource: onboarding?.referral_source ?? null,
@@ -124,10 +132,28 @@ export class OnboardingService {
     const referralOther =
       dto.referralSource === 'other' ? dto.referralOther?.trim() || null : null;
 
+    // Absent key = "don't touch the logo", so re-submitting the step from
+    // a client that never sends the field cannot silently erase one.
+    const accountPatch: { name: string; logoUrl?: string | null } = { name };
+    if (dto.logoUrl !== undefined) {
+      try {
+        accountPatch.logoUrl = normalizeWorkspaceLogoUrl(
+          dto.logoUrl,
+          accountId,
+          process.env.SUPABASE_URL,
+        );
+      } catch (error) {
+        if (error instanceof InvalidWorkspaceLogoError) {
+          throw new BadRequestException(error.message);
+        }
+        throw error;
+      }
+    }
+
     await this.prisma.$transaction([
       this.prisma.account.update({
         where: { id: accountId },
-        data: { name },
+        data: accountPatch,
       }),
       this.prisma.account_onboarding.upsert({
         where: { account_id: accountId },
