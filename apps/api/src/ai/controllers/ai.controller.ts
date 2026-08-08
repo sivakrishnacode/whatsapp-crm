@@ -17,13 +17,23 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AiReplyService } from '../services/ai-reply.service';
 import { AgentRuntimeService } from '../services/agent-runtime.service';
 import { KnowledgeSourceService } from '../services/knowledge-source.service';
+import { AiCreditsService } from '../credits/ai-credits.service';
+import {
+  assertCanSpendCredits,
+  isPlatformAiAvailable,
+} from '../credits/credits.constants';
 import { encrypt, decrypt } from '../../common/security/encryption.util';
 import { validateAiCredentials } from '../lib/validate';
 import { EMBEDDING_MODEL, embedTexts } from '../lib/embeddings';
 import { loadAiConfig } from '../lib/config';
 import { buildConversationContext, withDraftNudge } from '../lib/context';
 import { generateReply } from '../lib/generate';
-import { AiError, type AiProvider, type ChatMessage, type EmbeddingsProvider } from '../lib/types';
+import {
+  AiError,
+  type AiProvider,
+  type ChatMessage,
+  type EmbeddingsProvider,
+} from '../lib/types';
 
 const PROVIDERS: AiProvider[] = ['openai', 'anthropic', 'gemini'];
 const EMBEDDINGS_PROVIDERS: EmbeddingsProvider[] = ['openai', 'gemini'];
@@ -34,6 +44,30 @@ function isProvider(value: unknown): value is AiProvider {
 
 function isEmbeddingsProvider(value: unknown): value is EmbeddingsProvider {
   return EMBEDDINGS_PROVIDERS.includes(value as EmbeddingsProvider);
+}
+
+/**
+ * Turn an AiError into the response the client can act on, preserving
+ * both its status and its `code`.
+ *
+ * The code matters more than the message here: `ai_credits_exhausted`
+ * is what makes the web app open the top-up sheet instead of showing
+ * another red toast the user cannot do anything about.
+ */
+function toHttp(err: unknown): HttpException {
+  if (err instanceof HttpException) return err;
+  if (err instanceof AiError) {
+    return new HttpException(
+      { error: err.message, code: err.code },
+      err.status >= 400 && err.status < 600
+        ? err.status
+        : HttpStatus.BAD_GATEWAY,
+    );
+  }
+  return new HttpException(
+    { error: 'The AI request failed.', code: 'ai_failed' },
+    HttpStatus.INTERNAL_SERVER_ERROR,
+  );
 }
 
 /**
@@ -51,6 +85,7 @@ export class AiController {
     private readonly aiReplyService: AiReplyService,
     private readonly runtime: AgentRuntimeService,
     private readonly knowledge: KnowledgeSourceService,
+    private readonly credits: AiCreditsService,
   ) {}
 
   /**
@@ -127,7 +162,8 @@ export class AiController {
     // absent meant `false`, saving a new key would silently switch the
     // agent off and blank the legacy prompt.
     const behaviour: Record<string, unknown> = {};
-    if (typeof body.is_active === 'boolean') behaviour.is_active = body.is_active;
+    if (typeof body.is_active === 'boolean')
+      behaviour.is_active = body.is_active;
     if (typeof body.auto_reply_enabled === 'boolean') {
       behaviour.auto_reply_enabled = body.auto_reply_enabled;
     }
@@ -213,7 +249,8 @@ export class AiController {
       ? body.embeddings_provider
       : isEmbeddingsProvider(provider)
         ? provider
-        : (existing?.embeddings_provider as EmbeddingsProvider | null) ?? 'openai';
+        : ((existing?.embeddings_provider as EmbeddingsProvider | null) ??
+          'openai');
 
     const embeddingsModel = EMBEDDING_MODEL[requestedEmbeddingsProvider];
 
@@ -426,15 +463,13 @@ export class AiController {
       throw new HttpException('Conversation not found', HttpStatus.NOT_FOUND);
     }
 
+    // `loadAiConfig` now raises a typed AiError for an undecryptable key
+    // rather than returning null, so the blanket catch that used to
+    // report every failure as "key could not be decrypted" is gone —
+    // it was hiding real errors behind a wrong diagnosis.
     const config = await loadAiConfig(this.prisma, account.accountId).catch(
-      () => {
-        throw new HttpException(
-          {
-            error: 'Stored API key could not be decrypted.',
-            code: 'key_decrypt_failed',
-          },
-          HttpStatus.BAD_REQUEST,
-        );
+      (err) => {
+        throw toHttp(err);
       },
     );
 
@@ -447,6 +482,15 @@ export class AiController {
         },
         HttpStatus.BAD_REQUEST,
       );
+    }
+
+    // Before any work: an empty wallet with no key of their own to fall
+    // back on. Checked here rather than after generation so we do not
+    // retrieve knowledge and build a prompt for a call that cannot run.
+    try {
+      assertCanSpendCredits(config);
+    } catch (err) {
+      throw toHttp(err);
     }
 
     const messages = await buildConversationContext(
@@ -475,8 +519,9 @@ export class AiController {
     // for what the customer actually asked. Only generation gets the
     // nudged copy — see `withDraftNudge`.
     let text: string;
+    let usage: { inputTokens: number; outputTokens: number };
     try {
-      ({ text } = await generateReply({
+      ({ text, usage } = await generateReply({
         config,
         systemPrompt: run.systemPrompt,
         messages: withDraftNudge(messages),
@@ -487,21 +532,58 @@ export class AiController {
       // A provider failure here is the user's own key talking to their own
       // provider: their message is the useful one, and letting it escape as
       // an unhandled 500 costs them the only diagnosis available.
-      if (err instanceof AiError) {
-        throw new HttpException(
-          { error: err.message, code: err.code },
-          err.status >= 400 && err.status < 600
-            ? err.status
-            : HttpStatus.BAD_GATEWAY,
-        );
-      }
-      throw err;
+      //
+      // Nothing is charged: a draft that never arrived is not a draft
+      // they should pay for, and the rounds we did spend are ours.
+      throw toHttp(err);
     }
+
+    const charged = await this.charge(config, {
+      accountId: account.accountId,
+      feature: 'draft',
+      usage,
+      conversationId,
+      userId: account.userId,
+    });
 
     return {
       draft: text,
       grounded_on: run.knowledge.map((hit) => hit.title).filter(Boolean),
+      ...charged,
     };
+  }
+
+  /**
+   * Meter a completed run and report the wallet back to the client, so
+   * the header badge updates without a second round trip.
+   *
+   * Returns nothing at all on a bring-your-own-key run — the absence of
+   * the field is what tells the UI not to render a credit cost for a
+   * call that did not have one.
+   */
+  private async charge(
+    config: { source: string; provider: string; model: string },
+    args: {
+      accountId: string;
+      feature: 'draft' | 'playground';
+      usage: { inputTokens: number; outputTokens: number };
+      conversationId?: string;
+      userId?: string;
+    },
+  ): Promise<{ credits_used?: number; credits_remaining?: number }> {
+    if (config.source !== 'platform') return {};
+
+    const used = await this.credits.chargeGeneration({
+      accountId: args.accountId,
+      feature: args.feature,
+      provider: config.provider,
+      model: config.model,
+      usage: args.usage,
+      conversationId: args.conversationId ?? null,
+      userId: args.userId ?? null,
+    });
+    const wallet = await this.credits.getWallet(args.accountId);
+    return { credits_used: used, credits_remaining: wallet.balance };
   }
 
   /**
@@ -550,14 +632,8 @@ export class AiController {
 
     const config = await loadAiConfig(this.prisma, account.accountId, {
       requireActive: false,
-    }).catch(() => {
-      throw new HttpException(
-        {
-          error: 'Stored API key could not be decrypted.',
-          code: 'key_decrypt_failed',
-        },
-        HttpStatus.BAD_REQUEST,
-      );
+    }).catch((err) => {
+      throw toHttp(err);
     });
 
     if (!config) {
@@ -568,6 +644,17 @@ export class AiController {
         },
         HttpStatus.BAD_REQUEST,
       );
+    }
+
+    // The playground spends credits exactly like production does. It is
+    // the same assembly and the same provider call, so an unmetered one
+    // would be an open inference endpoint with a login page in front of
+    // it — and it would teach users a cost model the real agent does not
+    // honour, which is the same argument that keeps the assembly shared.
+    try {
+      assertCanSpendCredits(config);
+    } catch (err) {
+      throw toHttp(err);
     }
 
     const run = await this.runtime.assemble({
@@ -581,12 +668,27 @@ export class AiController {
       },
     });
 
-    const { text, handoff, toolTrace } = await generateReply({
-      config,
-      systemPrompt: run.systemPrompt,
-      messages,
-      tools: run.tools,
-      executeTool: run.executeTool,
+    let text: string;
+    let handoff: boolean;
+    let toolTrace: Awaited<ReturnType<typeof generateReply>>['toolTrace'];
+    let usage: { inputTokens: number; outputTokens: number };
+    try {
+      ({ text, handoff, toolTrace, usage } = await generateReply({
+        config,
+        systemPrompt: run.systemPrompt,
+        messages,
+        tools: run.tools,
+        executeTool: run.executeTool,
+      }));
+    } catch (err) {
+      throw toHttp(err);
+    }
+
+    const charged = await this.charge(config, {
+      accountId: account.accountId,
+      feature: 'playground',
+      usage,
+      userId: account.userId,
     });
 
     return {
@@ -599,6 +701,9 @@ export class AiController {
       })),
       tools_available: run.tools.map((t) => t.name),
       tool_calls: toolTrace,
+      // The test panel is where someone learns what the agent costs, so
+      // it says so per message rather than only in a billing screen.
+      ...charged,
     };
   }
 

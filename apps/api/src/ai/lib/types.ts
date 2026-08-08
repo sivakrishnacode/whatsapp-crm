@@ -43,10 +43,26 @@ export interface AgentSkillState {
 /** `{ [skillId]: state }` — see `lib/skills.ts` for the registry. */
 export type AgentSkills = Record<string, AgentSkillState>;
 
+/**
+ * Whose provider key a run is about to spend.
+ *
+ * `platform` — our Gemini key. We pay the provider, so the run is
+ *   metered against the workspace's credit wallet.
+ * `byok` — the workspace's own key. They pay the provider directly, so
+ *   nothing is metered and no quota applies (the original 069 design).
+ */
+export type AiCreditMode = 'platform' | 'byok';
+
 export interface AiConfig {
   provider: AiProvider;
   model: string;
   apiKey: string;
+  /** Which key `apiKey` actually is. Decides whether to charge credits. */
+  source: AiCreditMode;
+  /** What the workspace chose, before any fallback. For the UI's benefit. */
+  creditMode: AiCreditMode;
+  /** Wallet balance at load time. Only meaningful when source is platform. */
+  creditBalance: number;
   /** Pre-069 free-text business context. Appended after the profile. */
   systemPrompt: string | null;
   isActive: boolean;
@@ -127,6 +143,13 @@ export interface GenerateResult {
   handoff: boolean;
   /** Populated when the run executed tools; empty otherwise. */
   toolTrace: ToolTraceEntry[];
+  /**
+   * Tokens across EVERY provider round this run made, not just the last.
+   * A tool loop is several billable calls and each one re-sends the whole
+   * transcript, so the final round alone understates the cost several
+   * times over. This is what the credit charge is computed from.
+   */
+  usage: { inputTokens: number; outputTokens: number; rounds: number };
 }
 
 export class AiError extends Error {

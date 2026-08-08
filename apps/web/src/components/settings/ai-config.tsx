@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SettingsPanelHead } from './settings-panel-head';
+import { AiCreditModeCard } from '@/components/ai/ai-credit-mode-card';
 import { AI_PROVIDER_DEFAULT_MODEL, PROVIDER_MODELS } from '@/lib/ai/defaults';
 import type { AiProvider, EmbeddingsProvider } from '@/lib/ai/types';
 
@@ -247,7 +248,7 @@ export function AiConfig({ onSaved }: { onSaved?: () => void } = {}) {
     <div>
       <SettingsPanelHead
         title="Provider & key"
-        description="Bring your own OpenAI, Anthropic or Google key. Converse360 calls the provider directly with it — no per-seat AI fees, and your conversations are not routed through anyone else. This powers AI-drafted replies in the inbox, the auto-reply agent, and the test panel."
+        description="What powers AI-drafted replies in the inbox, the auto-reply agent and the test panel. Use our built-in AI and pay per use, or bring your own OpenAI, Anthropic or Google key — Converse360 then calls the provider directly with it, so there are no per-seat AI fees and your conversations are not routed through anyone else."
       />
 
       {!canEdit && (
@@ -257,6 +258,12 @@ export function AiConfig({ onSaved }: { onSaved?: () => void } = {}) {
       )}
 
       <div className="max-w-3xl space-y-6">
+        {/* First, because it decides whether the key form below is
+            required at all. Renders nothing when the server has no
+            platform key — then bring-your-own-key is the only option
+            and a chooser with one choice is noise. */}
+        <AiCreditModeCard canEdit={canEdit} onChanged={fetchConfig} />
+
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">

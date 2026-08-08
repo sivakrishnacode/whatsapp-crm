@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { useOnboardingGate } from "@/hooks/use-onboarding-gate";
 import { useNavPrefs } from "@/hooks/use-nav-prefs";
 import { ChannelStatusProvider } from "@/hooks/use-channel-status";
+import { AiCreditsProvider } from "@/hooks/use-ai-credits";
 import { PrimaryRail } from "@/components/layout/primary-rail";
 import { SecondaryPanel } from "@/components/layout/secondary-panel";
 import { Header } from "@/components/layout/header";
@@ -124,6 +125,10 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   return (
     <TooltipProvider>
       <ChannelStatusProvider>
+        {/* One balance for the header badge, the top-up sheet and the
+            Provider tab. Three separate fetches would disagree the
+            moment one of them spent a credit. */}
+        <AiCreditsProvider>
         <div className="flex h-screen overflow-hidden bg-background">
           {/* Reports this tab's online/away presence once we know a user is
               signed in. Headless — renders nothing. */}
@@ -164,6 +169,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
             <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
           </div>
         </div>
+        </AiCreditsProvider>
       </ChannelStatusProvider>
     </TooltipProvider>
   );

@@ -13,6 +13,7 @@ import { AgentActionsService } from './services/agent-actions.service';
 import { KnowledgeSourceService } from './services/knowledge-source.service';
 import { QueueModule } from '../queue/queue.module';
 import { AiReplyProcessor } from './queues/ai-reply.processor';
+import { AiCreditsModule } from './credits/ai-credits.module';
 
 @Module({
   imports: [
@@ -23,6 +24,9 @@ import { AiReplyProcessor } from './queues/ai-reply.processor';
     forwardRef(() => MessagingModule),
     // Inbound messages are answered on a queue, not in the webhook.
     QueueModule,
+    // Metering. Every entry point that calls a provider on OUR key
+    // charges through this.
+    AiCreditsModule,
   ],
   controllers: [
     AiController,

@@ -4,12 +4,16 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import * as express from 'express';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AiCreditsService } from '../../ai/credits/ai-credits.service';
 
 @Controller('webhooks')
 export class SubscriptionWebhooksController {
   private readonly logger = new Logger(SubscriptionWebhooksController.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly aiCredits: AiCreditsService,
+  ) {}
 
   /**
    * POST /api/webhooks/razorpay
@@ -62,6 +66,26 @@ export class SubscriptionWebhooksController {
           const payment =
             event.payload.payment?.entity || event.payload.order?.entity;
           const notes = payment?.notes;
+
+          // An AI credit top-up is a one-time payment on the same
+          // webhook as plan payments, told apart by the `kind` note we
+          // set when creating the order. It must be handled BEFORE the
+          // plan-metadata check below, which would otherwise dismiss it
+          // as a malformed subscription payment and drop the credits on
+          // the floor for anyone who closed the tab.
+          if (notes?.kind === 'ai_credits') {
+            const gatewayOrderId = payment.order_id || payment.id;
+            const credited = await this.aiCredits.creditByGatewayOrderId(
+              gatewayOrderId,
+              payment.id,
+            );
+            this.logger.log(
+              credited
+                ? `AI credits granted for Razorpay order ${gatewayOrderId}`
+                : `Razorpay webhook: no AI credit order for ${gatewayOrderId}`,
+            );
+            return res.status(HttpStatus.OK).json({ received: true });
+          }
 
           if (
             !notes ||

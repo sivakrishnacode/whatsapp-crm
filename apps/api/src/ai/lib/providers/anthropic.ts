@@ -1,6 +1,7 @@
 import { AiError, type ChatMessage } from '../types';
 import { MAX_OUTPUT_TOKENS } from '../defaults';
 import {
+  asTokenCount,
   mergeConsecutive,
   providerHttpError,
   toNetworkError,
@@ -21,6 +22,7 @@ interface AnthropicBlock {
 
 interface AnthropicResponse {
   content?: AnthropicBlock[];
+  usage?: { input_tokens?: number; output_tokens?: number };
 }
 
 /**
@@ -134,7 +136,9 @@ export async function generateAnthropic(
       id: b.id ?? `call_${i}`,
       name: b.name!,
       arguments:
-        b.input && typeof b.input === 'object' ? b.input : ({} as Record<string, unknown>),
+        b.input && typeof b.input === 'object'
+          ? b.input
+          : ({} as Record<string, unknown>),
     }));
 
   if (!text && toolCalls.length === 0) {
@@ -143,5 +147,12 @@ export async function generateAnthropic(
     });
   }
 
-  return { text, toolCalls };
+  return {
+    text,
+    toolCalls,
+    usage: {
+      inputTokens: asTokenCount(data?.usage?.input_tokens),
+      outputTokens: asTokenCount(data?.usage?.output_tokens),
+    },
+  };
 }

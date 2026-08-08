@@ -5,6 +5,7 @@ import { SubscriptionController } from './controllers/subscription.controller';
 import { RazorpayController } from './controllers/razorpay.controller';
 import { StripeController } from './controllers/stripe.controller';
 import { SubscriptionWebhooksController } from './controllers/subscription-webhooks.controller';
+import { AiCreditsModule } from '../ai/credits/ai-credits.module';
 
 /**
  * There is deliberately no `subscription/admin` controller here.
@@ -24,7 +25,9 @@ import { SubscriptionWebhooksController } from './controllers/subscription-webho
  * is exactly why its auth is separate.
  */
 @Module({
-  imports: [PrismaModule],
+  // Razorpay's webhook carries AI credit top-ups alongside plan
+  // payments, so the handler needs to be able to grant them.
+  imports: [PrismaModule, AiCreditsModule],
   controllers: [
     SubscriptionController,
     RazorpayController,

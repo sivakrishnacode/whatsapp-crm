@@ -6,6 +6,7 @@ import { EMBEDDING_MODEL } from '../lib/embeddings';
 import { extractFileText, MAX_UPLOAD_BYTES } from '../lib/extract';
 import { ingestDocument } from '../lib/knowledge';
 import { AiError } from '../lib/types';
+import { AiCreditsService } from '../credits/ai-credits.service';
 
 export type KnowledgeStatus = 'ready' | 'indexing' | 'lexical' | 'failed' | 'stale';
 
@@ -36,7 +37,10 @@ interface IngestOutcome {
 export class KnowledgeSourceService {
   private readonly logger = new Logger(KnowledgeSourceService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly credits: AiCreditsService,
+  ) {}
 
   async list(accountId: string) {
     const documents = await this.prisma.ai_knowledge_documents.findMany({
@@ -87,7 +91,7 @@ export class KnowledgeSourceService {
     content: string;
   }): Promise<IngestOutcome> {
     const { accountId, documentId, content } = args;
-    const { key, corrupt, provider, model } = await loadEmbeddingsKey(
+    const { key, corrupt, provider, model, source } = await loadEmbeddingsKey(
       this.prisma,
       accountId,
     );
@@ -109,6 +113,19 @@ export class KnowledgeSourceService {
         content,
       );
       chunkCount = result.chunks;
+
+      // Indexing on OUR key is billable, at roughly a hundredth of what
+      // the same tokens would cost through a chat model. Charged after
+      // the fact and never fatal — the document is already indexed, and
+      // failing the upload over a metering error would be absurd.
+      if (source === 'platform' && result.embeddedTokens > 0) {
+        await this.credits.chargeEmbedding({
+          accountId,
+          provider: 'gemini',
+          model: result.model ?? 'unknown',
+          tokens: result.embeddedTokens,
+        });
+      }
 
       if (result.chunks === 0) {
         status = 'failed';

@@ -2,6 +2,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import type { AiConfig, EmbeddingsProvider, KnowledgeHit } from './types';
 import { chunkText } from './chunk';
 import { EMBEDDING_MODEL, embedTexts, toVectorLiteral } from './embeddings';
+import { estimateEmbeddingTokens } from '../credits/credits.constants';
 
 interface MatchRow {
   id: string;
@@ -23,6 +24,13 @@ export interface IngestResult {
   embedError: unknown;
   /** The model recorded against the new chunks, or null if unembedded. */
   model: string | null;
+  /**
+   * Roughly how many tokens were embedded, for metering when the run
+   * used OUR key. Reported rather than charged here so this stays a
+   * pure lib function — the service that knows whose key it was does
+   * the charging.
+   */
+  embeddedTokens: number;
 }
 
 function resolveModel(config: EmbeddingsContext): string {
@@ -57,7 +65,13 @@ export async function ingestDocument(
   );
 
   if (chunks.length === 0) {
-    return { chunks: 0, embedded: false, embedError: null, model: null };
+    return {
+      chunks: 0,
+      embedded: false,
+      embedError: null,
+      model: null,
+      embeddedTokens: 0,
+    };
   }
 
   // 2. Embed, if a key is configured.
@@ -106,6 +120,10 @@ export async function ingestDocument(
     embedded: Boolean(embeddings),
     embedError,
     model: embeddings ? model : null,
+    // Only what was actually embedded. A failed embed call is not
+    // billable — the document sits in keyword-search-only mode and the
+    // user is already being asked to fix something.
+    embeddedTokens: embeddings ? estimateEmbeddingTokens(chunks) : 0,
   };
 }
 

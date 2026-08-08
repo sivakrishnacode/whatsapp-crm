@@ -1,6 +1,7 @@
 import { AiError, type ChatMessage, type ToolDefinition } from '../types';
 import { MAX_OUTPUT_TOKENS } from '../defaults';
 import {
+  asTokenCount,
   mergeConsecutive,
   providerHttpError,
   toNetworkError,
@@ -51,6 +52,13 @@ interface GeminiResponse {
     finishReason?: string;
   }[];
   promptFeedback?: { blockReason?: string };
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    /** Reasoning tokens on a thinking model. Reported separately but
+     *  BILLED AS OUTPUT — see the note in `generateGemini`. */
+    thoughtsTokenCount?: number;
+  };
 }
 
 /**
@@ -66,7 +74,11 @@ function toGeminiSchema(value: unknown): unknown {
 
   const out: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-    if (key === 'additionalProperties' || key === '$schema' || key === 'examples') {
+    if (
+      key === 'additionalProperties' ||
+      key === '$schema' ||
+      key === 'examples'
+    ) {
       continue;
     }
     out[key] = toGeminiSchema(val);
@@ -140,7 +152,9 @@ function toGeminiContents(messages: ChatMessage[]): unknown[] {
   return out;
 }
 
-export async function generateGemini(args: ProviderArgs): Promise<ProviderTurn> {
+export async function generateGemini(
+  args: ProviderArgs,
+): Promise<ProviderTurn> {
   const { apiKey, model, systemPrompt, messages, timeoutMs, tools } = args;
 
   // Model ids are stored bare ("gemini-3.5-flash") but the path wants
@@ -157,7 +171,9 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderTurn> 
     // zero content parts and finishReason MAX_TOKENS — which reads as
     // "the AI said nothing" with no clue why. The headroom is not
     // permission to write more: reply length is governed by the prompt.
-    generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS + THINKING_HEADROOM },
+    generationConfig: {
+      maxOutputTokens: MAX_OUTPUT_TOKENS + THINKING_HEADROOM,
+    },
   };
   if (tools && tools.length > 0) {
     body.tools = toGeminiTools(tools);
@@ -224,5 +240,20 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderTurn> 
     });
   }
 
-  return { text, toolCalls };
+  return {
+    text,
+    toolCalls,
+    usage: {
+      inputTokens: asTokenCount(data?.usageMetadata?.promptTokenCount),
+      // `thoughtsTokenCount` is reported apart from `candidatesTokenCount`
+      // but Google bills it at the output rate, and on a thinking model a
+      // one-line answer routinely spends more tokens reasoning than
+      // replying. Charging only the visible reply would meter a fraction
+      // of what the call actually costs us — this is the platform
+      // provider, so that fraction is our margin.
+      outputTokens:
+        asTokenCount(data?.usageMetadata?.candidatesTokenCount) +
+        asTokenCount(data?.usageMetadata?.thoughtsTokenCount),
+    },
+  };
 }

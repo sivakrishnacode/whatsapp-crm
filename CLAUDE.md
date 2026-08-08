@@ -140,10 +140,44 @@ The app is built on the **official Meta WhatsApp Cloud API** (`https://graph.fac
 
 ## AI agent (`apps/api/src/ai`, `apps/web/src/app/(dashboard)/agents`)
 
-**Bring-your-own-key.** The account's own OpenAI / Anthropic / **Google Gemini** key is
-stored AES-256-GCM-encrypted and used to call the provider directly — no per-seat AI
-fee, no conversation routed through a third party of ours. Everything below is
-account-scoped configuration on `ai_configs` (one row per workspace).
+**Two ways to power it, chosen per workspace** (`ai_configs.credit_mode`, migration 072):
+
+- `platform` (default) — runs on **our** Gemini key (`AI_PLATFORM_GEMINI_KEY`), metered
+  against `ai_credit_wallets`. New workspaces get 250 free credits.
+- `byok` — the account's own OpenAI / Anthropic / Gemini key, AES-256-GCM-encrypted,
+  calling the provider directly. Their provider bills them, so **nothing is metered and
+  no quota applies** — the original 069 design, unchanged.
+
+Everything below is account-scoped configuration on `ai_configs` (one row per workspace).
+
+- ⚠️ **The stored mode is the decision; fallback is one-directional.** `resolveSource()`
+  in `lib/config.ts` falls back only when the chosen source cannot serve the call at all
+  (no server key, empty wallet → their key if present; no own key → platform). It never
+  falls back *to* credits from a working own-key setup: that would bill someone for
+  something they did not choose. A pre-072 account with a key was migrated to `byok`
+  for the same reason.
+- ⚠️ **A credit is metered from real tokens**, not per action: `creditsForGeneration()`
+  charges `ceil((input + output×4) / 4000)`, floor 1, summed over **every** tool round
+  (`GenerateResult.usage`) — a 3-round loop is 3 billable calls. Gemini's
+  `thoughtsTokenCount` counts as **output**; omitting it meters a fraction of the cost.
+  Indexing is metered at 1 credit / 25k tokens. Pinned by `credits/credits.test.ts`.
+- **Platform model is deliberately the cheapest high-rate-limit tier**
+  (`gemini-3.5-flash-lite`): one key serves every platform workspace, so a low RPM
+  ceiling makes one busy tenant an outage for all of them.
+- ⚠️ **The platform key never leaves the server** — not in a response, a job payload
+  (Redis stores those in plaintext and Bull Board renders them), or a log line.
+- **The playground is metered like production.** An unmetered test surface on our key is
+  an open inference proxy behind a login page.
+- **Balance moves only through `grant_ai_credits` / `consume_ai_credits`** (SQL, atomic,
+  ledger written in the same statement). Both are SECURITY INVOKER with EXECUTE revoked
+  from PUBLIC — a DEFINER function granted to `authenticated` would be a mint-your-own-
+  credits endpoint. Concurrent auto-replies on one workspace make read-then-write in JS
+  wrong, not just untidy.
+- ⚠️ **Top-ups verify Razorpay's HMAC signature and price the pack server-side**
+  (`ai_credit_packs` → `ai_credit_orders` written *before* redirect). `credited_at` is the
+  idempotency latch so the browser callback and the webhook grant exactly once. Note the
+  neighbouring `subscription/razorpay/confirm-payment` does **not** verify a signature —
+  do not copy it; it needs the same fix.
 
 - **One assembly, three entry points.** `AgentRuntimeService.assemble()` retrieves
   knowledge, gathers tools and composes the prompt; the inbox draft button, the
@@ -184,8 +218,9 @@ account-scoped configuration on `ai_configs` (one row per workspace).
   `thoughtSignature` must be echoed back with the call it belongs to.
 - **Test mode** (`test_mode` + up to 3 `test_numbers`, E.164) is the honest "try before
   you go live": the bot answers only those numbers and leaves everyone else for a
-  human. There is deliberately **no message quota** — the provider bills the customer
-  directly, so a cap we invented would be theatre.
+  human. On `byok` there is deliberately **no message quota** — the provider bills the
+  customer directly, so a cap we invented would be theatre. On `platform` the credit
+  wallet *is* the cap, because we are the ones paying.
 - **Match RPCs stay `SECURITY INVOKER`** (migration 032 fixed a cross-tenant read by
   changing them from DEFINER). They are granted to `authenticated`; as DEFINER any
   signed-in user could pass a foreign `p_account_id` through PostgREST.

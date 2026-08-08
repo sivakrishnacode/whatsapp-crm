@@ -29,6 +29,9 @@ model Account {
   users                         users                           @relation(fields: [ownerUserId], references: [id], onUpdate: NoAction)
   ai_agent_actions              ai_agent_actions[]
   ai_configs                    ai_configs?
+  ai_credit_ledger              ai_credit_ledger[]
+  ai_credit_orders              ai_credit_orders[]
+  ai_credit_wallets             ai_credit_wallets?
   ai_knowledge_chunks           ai_knowledge_chunks[]
   ai_knowledge_documents        ai_knowledge_documents[]
   apiKeys                       ApiKey[]
@@ -568,6 +571,8 @@ model users {
   accounts                                                           Account?
   ai_agent_actions                                                   ai_agent_actions[]
   ai_configs                                                         ai_configs[]
+  ai_credit_ledger                                                   ai_credit_ledger[]
+  ai_credit_orders                                                   ai_credit_orders[]
   ai_knowledge_documents                                             ai_knowledge_documents[]
   api_keys                                                           ApiKey[]
   automationLogs                                                     AutomationLog[]
@@ -718,7 +723,7 @@ model ai_configs {
   created_by                      String?  @db.Uuid
   provider                        String
   model                           String
-  api_key                         String
+  api_key                         String?
   /// Legacy free-text business context, pre-069. Still appended after the
   /// structured profile fields — every pre-069 account has everything here.
   system_prompt                   String?
@@ -739,7 +744,7 @@ model ai_configs {
   tone_instructions               String?
   fallback_message                String?
   handoff_enabled                 Boolean  @default(false)
-  handoff_trigger_phrases         String[]
+  handoff_trigger_phrases         String[] @default([])
   handoff_message                 String?
   /// Per-skill state keyed by the registry id in src/ai/lib/skills.ts:
   /// {"<id>":{"enabled":bool,"config":{...}}}. Code owns the list of
@@ -747,12 +752,13 @@ model ai_configs {
   skills                          Json     @default("{}")
   /// When true the auto-reply bot answers ONLY test_numbers.
   test_mode                       Boolean  @default(false)
-  test_numbers                    String[]
+  test_numbers                    String[] @default([])
   embeddings_provider             String?
   /// Model that produced the vectors currently stored in
   /// ai_knowledge_chunks. Changing it invalidates them, so retrieval
   /// filters on it and the UI asks for a reindex.
   embeddings_model                String?
+  credit_mode                     String   @default("platform")
   accounts                        Account  @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                           users?   @relation(fields: [created_by], references: [id], onUpdate: NoAction)
 
@@ -787,7 +793,7 @@ model ai_agent_actions {
   users         users?    @relation(fields: [created_by], references: [id], onUpdate: NoAction)
 
   @@unique([account_id, name])
-  @@index([account_id])
+  @@index([account_id], map: "ai_agent_actions_account_idx")
   @@schema("public")
 }
 
@@ -800,10 +806,10 @@ model ai_knowledge_chunks {
   content                String
   fts                    Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, content)"))
   embedding              Unsupported("vector")?
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
   /// Which embedding model produced `embedding`. Vectors from different
   /// models are not comparable, so retrieval filters on this.
   embedding_model        String?
-  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
   accounts               Account                  @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   ai_knowledge_documents ai_knowledge_documents   @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -1167,6 +1173,7 @@ model conversations {
   channel               String                          @default("whatsapp")
   /// Most recent customer-sent message. Drives Instagram's 24h window.
   last_inbound_at       DateTime?                       @db.Timestamptz(6)
+  ai_credit_ledger      ai_credit_ledger[]
   accounts              Account                         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   contacts              contacts                        @relation(fields: [contact_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                 users                           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -2480,6 +2487,97 @@ model meta_lead_forms {
 
   @@index([account_id, created_at(sort: Desc)], map: "idx_meta_lead_forms_account")
   @@index([page_id], map: "idx_meta_lead_forms_page")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model ai_credit_ledger {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String         @db.Uuid
+  delta           Int
+  balance_after   Int
+  reason          String
+  feature         String?
+  provider        String?
+  model           String?
+  input_tokens    Int            @default(0)
+  output_tokens   Int            @default(0)
+  conversation_id String?        @db.Uuid
+  user_id         String?        @db.Uuid
+  order_id        String?        @db.Uuid
+  note            String?
+  created_at      DateTime       @default(now()) @db.Timestamptz(6)
+  accounts        Account        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  conversations   conversations? @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
+  users           users?         @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_ai_credit_ledger_account")
+  @@index([order_id], map: "idx_ai_credit_ledger_order", where: raw("(order_id IS NOT NULL)"))
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model ai_credit_orders {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id         String           @db.Uuid
+  user_id            String?          @db.Uuid
+  pack_id            String?          @db.Uuid
+  pack_code          String
+  credits            Int
+  amount_minor       BigInt
+  currency           String           @default("INR")
+  status             String           @default("created")
+  gateway            String           @default("razorpay")
+  gateway_order_id   String?          @unique
+  gateway_payment_id String?
+  credited_at        DateTime?        @db.Timestamptz(6)
+  created_at         DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime         @default(now()) @db.Timestamptz(6)
+  accounts           Account          @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  ai_credit_packs    ai_credit_packs? @relation(fields: [pack_id], references: [id], onUpdate: NoAction)
+  users              users?           @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_ai_credit_orders_account")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model ai_credit_packs {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code             String             @unique
+  display_name     String
+  credits          Int
+  price_minor      BigInt
+  currency         String             @default("INR")
+  badge            String?
+  sort_order       Int                @default(0)
+  is_active        Boolean            @default(true)
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime           @default(now()) @db.Timestamptz(6)
+  ai_credit_orders ai_credit_orders[]
+
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model ai_credit_wallets {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id              String    @unique @db.Uuid
+  balance                 Int       @default(0)
+  signup_granted_at       DateTime? @db.Timestamptz(6)
+  lifetime_purchased      Int       @default(0)
+  lifetime_consumed       Int       @default(0)
+  low_balance_notified_at DateTime? @db.Timestamptz(6)
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @db.Timestamptz(6)
+  accounts                Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
   @@schema("public")
 }
 

@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
 import { AlertSettingsMenu } from "@/components/layout/alert-settings-menu";
+import { AiCreditsBadge } from "@/components/ai/ai-credits-badge";
 
 interface HeaderProps {
   /** Wired to the shell's drawer state. Used only on mobile — the
@@ -100,6 +101,11 @@ export function Header({ onOpenSidebar, title, breadcrumb }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2">
+        {/* How much built-in AI is left. Sits before the bell because it
+            is the only thing here that can stop a feature working, and
+            it renders nothing on a bring-your-own-key workspace. */}
+        <AiCreditsBadge />
+
         {/* Notifications. The reference product has no rail entry for
             these, so the bell lives here next to the theme toggle. */}
         <Link

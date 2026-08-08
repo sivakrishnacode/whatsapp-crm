@@ -1,4 +1,9 @@
-import { AiError, type ChatMessage, type ToolCall, type ToolDefinition } from '../types';
+import {
+  AiError,
+  type ChatMessage,
+  type ToolCall,
+  type ToolDefinition,
+} from '../types';
 
 export interface ProviderArgs {
   apiKey: string;
@@ -11,6 +16,21 @@ export interface ProviderArgs {
 }
 
 /**
+ * What one provider call cost, in the provider's own accounting.
+ *
+ * Every provider reports this and every provider names it differently,
+ * so each adapter normalises to these two numbers. They are the basis
+ * of the credit charge when the call ran on OUR key, which is why a
+ * missing count is zero rather than an estimate: guessing high
+ * overcharges a customer for a number we could not read, and the
+ * per-call floor of one credit already stops a free ride.
+ */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
  * One provider turn. Either the model produced text, or it asked to run
  * tools — both can be present, and both must survive the round-trip or
  * the follow-up call loses the model's own reasoning.
@@ -18,7 +38,17 @@ export interface ProviderArgs {
 export interface ProviderTurn {
   text: string;
   toolCalls: ToolCall[];
+  usage: TokenUsage;
 }
+
+/** Coerce a provider's token count, which may be absent or nonsense. */
+export function asTokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : 0;
+}
+
+export const NO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
 export function toNetworkError(err: unknown): AiError {
   if (err instanceof DOMException && err.name === 'TimeoutError') {

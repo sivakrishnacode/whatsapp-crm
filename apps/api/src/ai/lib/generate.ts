@@ -73,6 +73,12 @@ export async function generateReply(
   const transcript: ChatMessage[] = [...messages];
   const trace: ToolTraceEntry[] = [];
 
+  // Accumulated across rounds, not overwritten: every round is its own
+  // paid call, and when the account is on our key every round is our
+  // bill. Charging for the last one only would let a tool-happy model
+  // run five rounds for the price of one.
+  const usage = { inputTokens: 0, outputTokens: 0, rounds: 0 };
+
   for (let round = 0; round <= maxRounds; round++) {
     const isFinalRound = round === maxRounds;
     const turn = await callProvider(config.provider, {
@@ -84,8 +90,12 @@ export async function generateReply(
       tools: useTools && !isFinalRound ? tools : undefined,
     });
 
+    usage.inputTokens += turn.usage.inputTokens;
+    usage.outputTokens += turn.usage.outputTokens;
+    usage.rounds += 1;
+
     if (turn.toolCalls.length === 0 || !useTools || isFinalRound) {
-      return { ...parseGeneration(turn.text), toolTrace: trace };
+      return { ...parseGeneration(turn.text), toolTrace: trace, usage };
     }
 
     const calls = turn.toolCalls.slice(0, 8);

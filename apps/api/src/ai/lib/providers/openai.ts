@@ -1,6 +1,7 @@
 import { AiError, type ChatMessage } from '../types';
 import { MAX_OUTPUT_TOKENS } from '../defaults';
 import {
+  asTokenCount,
   mergeConsecutive,
   parseToolArguments,
   providerHttpError,
@@ -20,6 +21,7 @@ interface OpenAiResponse {
   choices?: {
     message?: { content?: string; tool_calls?: OpenAiToolCall[] };
   }[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
 /** Map our neutral turns onto the chat-completions message shape. */
@@ -49,7 +51,9 @@ function toOpenAiMessages(messages: ChatMessage[]): unknown[] {
   });
 }
 
-export async function generateOpenAi(args: ProviderArgs): Promise<ProviderTurn> {
+export async function generateOpenAi(
+  args: ProviderArgs,
+): Promise<ProviderTurn> {
   const { apiKey, model, systemPrompt, messages, timeoutMs, tools } = args;
 
   const body: Record<string, unknown> = {
@@ -109,5 +113,12 @@ export async function generateOpenAi(args: ProviderArgs): Promise<ProviderTurn> 
     });
   }
 
-  return { text, toolCalls };
+  return {
+    text,
+    toolCalls,
+    usage: {
+      inputTokens: asTokenCount(data?.usage?.prompt_tokens),
+      outputTokens: asTokenCount(data?.usage?.completion_tokens),
+    },
+  };
 }

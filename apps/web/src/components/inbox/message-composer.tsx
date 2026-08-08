@@ -31,6 +31,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCan } from "@/hooks/use-can";
+import { useAiCredits } from "@/hooks/use-ai-credits";
+import { AiCreditsSheet } from "@/components/ai/ai-credits-sheet";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -151,6 +153,10 @@ export function MessageComposer({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [drafting, setDrafting] = useState(false);
+  // Opened from the "out of credits" toast so the fix is one click from
+  // where the failure happened.
+  const [creditsOpen, setCreditsOpen] = useState(false);
+  const { setBalance } = useAiCredits();
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -276,7 +282,19 @@ export function MessageComposer({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (data.code === "ai_not_configured") {
+        if (data.code === "ai_credits_exhausted") {
+          // The one failure here that has a fix the agent can reach.
+          // A plain red toast would leave them re-pressing a button
+          // that cannot work; the action opens the top-up directly.
+          toast.error("Out of AI credits.", {
+            description:
+              "Top up to keep drafting, or switch the agent to your own provider key.",
+            action: {
+              label: "Top up",
+              onClick: () => setCreditsOpen(true),
+            },
+          });
+        } else if (data.code === "ai_not_configured") {
           toast.error("AI isn't set up yet — enable it in Settings → AI Assistant.");
         } else if (data.code === "empty_response") {
           // The provider answered with nothing. Naming it as the model's
@@ -287,6 +305,12 @@ export function MessageComposer({
           toast.error(data.error ?? "Couldn't draft a reply.");
         }
         return;
+      }
+
+      // The draft response carries the wallet, so the header badge
+      // settles right away instead of after the next page load.
+      if (typeof data.credits_remaining === "number") {
+        setBalance(data.credits_remaining);
       }
       const draftText = typeof data.draft === "string" ? data.draft.trim() : "";
       if (!draftText) {
@@ -309,7 +333,7 @@ export function MessageComposer({
     } finally {
       setDrafting(false);
     }
-  }, [drafting, sessionExpired, conversationId, adjustHeight]);
+  }, [drafting, sessionExpired, conversationId, adjustHeight, setBalance]);
 
   // Upload a captured file to chat-media and stage it as a draft.
   const stageUpload = useCallback(
@@ -722,6 +746,9 @@ export function MessageComposer({
         onSelectProduct={onSendProduct || (() => {})}
         onSelectProductList={onSendProductList || (() => {})}
       />
+
+      {/* Opened by the "out of credits" toast above. */}
+      <AiCreditsSheet open={creditsOpen} onOpenChange={setCreditsOpen} />
     </div>
   );
 }

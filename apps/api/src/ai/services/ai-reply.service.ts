@@ -9,6 +9,7 @@ import { buildConversationContext } from '../lib/context';
 import { generateReply } from '../lib/generate';
 import { latestUserMessage, matchesHandoffPhrase } from '../lib/query';
 import { AgentRuntimeService } from './agent-runtime.service';
+import { AiCreditsService } from '../credits/ai-credits.service';
 import type { AiConfig } from '../lib/types';
 
 export interface DispatchArgs {
@@ -25,6 +26,7 @@ export class AiReplyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly runtime: AgentRuntimeService,
+    private readonly credits: AiCreditsService,
     @Inject(forwardRef(() => ChannelSenderService))
     private readonly channelSender: ChannelSenderService,
     @InjectQueue(AI_REPLY_QUEUE) private readonly queue: Queue,
@@ -167,6 +169,21 @@ export class AiReplyService {
       const config = await loadAiConfig(this.prisma, accountId);
       if (!config || !config.autoReplyEnabled) return;
 
+      // 1b. Gate: credits. An empty wallet with no key of their own
+      //     stops the bot BEFORE knowledge retrieval and the provider
+      //     call, and — unlike the two request-path entry points —
+      //     silently: there is nobody watching a queue job, and a
+      //     customer must not receive "this business is out of AI
+      //     credits" as an answer to their question. The thread simply
+      //     stays for a human, which is what an unanswered thread means
+      //     everywhere else in this service.
+      if (config.source === 'platform' && config.creditBalance < 1) {
+        this.logger.warn(
+          `[ai auto-reply] account ${accountId} is out of AI credits — conversation ${conversationId} left for a human.`,
+        );
+        return;
+      }
+
       // 2. Gate: an active keyword/new-message automation owns the reply.
       const activeAutomations = await this.prisma.automation.findFirst({
         where: {
@@ -248,6 +265,23 @@ export class AiReplyService {
         });
         text = result.text;
         handoff = result.handoff;
+
+        // Charged as soon as the provider answers, not after the send.
+        // The tokens are spent either way, and the paths below can exit
+        // without sending (handoff, empty reply, reply budget already
+        // claimed) — metering after the send would give away every one
+        // of those calls.
+        if (config.source === 'platform') {
+          await this.credits.chargeGeneration({
+            accountId,
+            feature: 'auto_reply',
+            provider: config.provider,
+            model: config.model,
+            usage: result.usage,
+            conversationId,
+            userId: configOwnerUserId,
+          });
+        }
       } catch (err) {
         // The provider failed (bad key, rate limit, timeout). If the
         // business wrote a fallback message, saying it beats leaving the
