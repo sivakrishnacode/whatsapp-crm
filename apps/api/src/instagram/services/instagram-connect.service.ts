@@ -364,6 +364,69 @@ export class InstagramConnectService {
     this.logger.log(`Instagram disconnected for account ${accountId}`);
   }
 
+  /**
+   * Delete every connection belonging to one Instagram user.
+   *
+   * Called by Meta's deauthorize and data-deletion callbacks, where we
+   * have an Instagram user id and no session — so this is keyed by the
+   * Meta-side identifier rather than by account, and the caller must
+   * have verified the `signed_request` signature before getting here.
+   *
+   * Matches on `ig_user_id` OR `ig_app_scoped_id` for the same reason
+   * the webhook router does: one Instagram account reports two
+   * different ids depending on which endpoint you ask, and which one
+   * arrives in a callback is not documented. Matching only one would
+   * silently honour a deletion request by doing nothing.
+   *
+   * Usually one row. A person can administer several workspaces, and
+   * all of them lose the connection — the grant they revoked is what
+   * every one of those connections was standing on.
+   *
+   * @returns how many connections were removed
+   */
+  async deleteForInstagramUser(igUserId: string): Promise<number> {
+    const configs = await this.prisma.instagram_config.findMany({
+      where: {
+        OR: [{ ig_user_id: igUserId }, { ig_app_scoped_id: igUserId }],
+      },
+    });
+
+    for (const config of configs) {
+      try {
+        await unsubscribeFromWebhooks({
+          igUserId: config.ig_user_id,
+          accessToken: decrypt(config.access_token),
+        });
+      } catch {
+        // Expected on this path: the user has just revoked the grant,
+        // so the token is already dead and cannot unsubscribe. Meta
+        // stops delivering regardless. Never let it block the delete —
+        // failing to honour a deletion request because a cleanup call
+        // failed is the worst possible trade.
+      }
+
+      await this.prisma.instagram_config
+        .delete({ where: { id: config.id } })
+        .catch((err: unknown) => {
+          // Logged, not thrown: Meta retries the callback, but failing
+          // the whole request because one of several workspaces could
+          // not be cleaned would leave the others unprocessed too.
+          this.logger.error(
+            `Data deletion: could not remove instagram_config ${config.id}`,
+            err,
+          );
+        });
+    }
+
+    if (configs.length > 0) {
+      this.logger.log(
+        `Instagram data deletion for ${igUserId}: removed ${configs.length} connection(s)`,
+      );
+    }
+
+    return configs.length;
+  }
+
   // ------------------------------------------------------------
   // Shared loader for the send / webhook paths
   // ------------------------------------------------------------

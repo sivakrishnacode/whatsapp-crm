@@ -10,7 +10,7 @@ import {
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { adsAppCredentials } from '../ads.config';
-import { parseSignedRequest } from '../utils/signed-request.util';
+import { parseSignedRequest } from '../../common/security/signed-request.util';
 
 /**
  * Meta's data-deletion and deauthorize callbacks.

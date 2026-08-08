@@ -1,10 +1,12 @@
 import {
+  Body,
   Controller,
   Get,
   Post,
   Delete,
   Query,
   Res,
+  HttpException,
   HttpStatus,
   UseGuards,
 } from '@nestjs/common';
@@ -12,6 +14,7 @@ import type { Response } from 'express';
 import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
+import { parseSignedRequest } from '../../common/security/signed-request.util';
 import { InstagramConnectService } from '../services/instagram-connect.service';
 import { decodeOAuthState } from '../utils/oauth-state.util';
 
@@ -158,28 +161,117 @@ export class InstagramConnectController {
    * Meta calls this when a business removes the app from their
    * Instagram account. Required for App Review.
    *
-   * Meta POSTs a `signed_request` here; we do not currently parse it,
-   * because a deauthorised token stops working regardless and the
-   * refresh sweep marks the row `token_expired` within a day. Returning
-   * 200 is what Meta checks for.
+   * Treated as a deletion of the connection, not merely a notification:
+   * revoking the grant makes our stored token useless, and holding a
+   * dead credential is strictly worse than holding none.
+   *
+   * This used to return a bare 200 without reading the body, on the
+   * reasoning that a revoked token stops working anyway and the refresh
+   * sweep would mark the row `token_expired` within a day. That reasoning
+   * was wrong twice over: a deletion signal is about the data we hold,
+   * not about whether the credential still functions, and "expired" is
+   * not "deleted" — the encrypted token stayed in the table.
    */
   @Post('deauthorize')
-  async deauthorize(@Res() res: Response) {
+  async deauthorize(
+    @Body() body: { signed_request?: string } | undefined,
+    @Res() res: Response,
+  ) {
+    const igUserId = this.verifySignedRequest(body?.signed_request).user_id;
+
+    if (igUserId) {
+      await this.connect.deleteForInstagramUser(igUserId);
+    }
+
     return res.status(HttpStatus.OK).json({ ok: true });
   }
 
   /**
    * Data deletion request endpoint. Required for App Review.
    *
-   * Meta expects a JSON body with a status URL and a confirmation code
-   * so the user can track the request.
+   * Meta expects JSON carrying a status URL a human can visit and a
+   * confirmation code. Any other shape is rejected, and a rejected
+   * response fails review.
    */
   @Post('data-deletion')
-  async dataDeletion(@Res() res: Response) {
-    const confirmationCode = `ig-del-${Date.now().toString(36)}`;
+  async dataDeletion(
+    @Body() body: { signed_request?: string } | undefined,
+    @Res() res: Response,
+  ) {
+    const igUserId = this.verifySignedRequest(body?.signed_request).user_id;
+
+    if (!igUserId) {
+      return res
+        .status(HttpStatus.BAD_REQUEST)
+        .json({ error: 'The request carried no user id.' });
+    }
+
+    await this.connect.deleteForInstagramUser(igUserId);
+
+    // Derived from the user id rather than random so the status page can
+    // answer without a lookup table. Not a secret: it only identifies
+    // which request is being asked about, and Meta shows it to the user.
+    const confirmationCode = `ig-${igUserId}`;
+
     return res.status(HttpStatus.OK).json({
-      url: `${appUrl()}/settings/data-deletion?code=${confirmationCode}`,
+      // A PUBLIC page. The previous value pointed at `/settings/...`,
+      // which lives inside the dashboard's auth gate — Meta's reviewer,
+      // and any real user who had just revoked access, would have hit a
+      // login wall on a product they have left.
+      url: `${appUrl()}/instagram-data-deletion?code=${encodeURIComponent(confirmationCode)}`,
       confirmation_code: confirmationCode,
     });
+  }
+
+  /**
+   * Verify Meta's `signed_request`, or reject.
+   *
+   * ⚠️ This signature is the ONLY authorisation these two endpoints have
+   * — no session, no bearer token, no guard. An unverified request would
+   * let anyone delete any workspace's Instagram connection by guessing an
+   * id, so a failure to verify must mean "reject", never "proceed".
+   *
+   * ⚠️ Signed with `INSTAGRAM_APP_SECRET`, not `META_APP_SECRET`. Meta
+   * signs everything on the Instagram Login surface with the Instagram
+   * app secret (the second credential pair inside the same Meta app), and
+   * using the wrong one rejects 100% of callbacks with no other symptom.
+   * Same trap as the webhook signature — see ig-webhook-signature.util.ts.
+   */
+  private verifySignedRequest(signedRequest: string | undefined): {
+    user_id?: string;
+  } {
+    // `body` is optional at the call sites, not just the field: a POST with
+    // no body and no Content-Type leaves it undefined, and reaching into it
+    // would turn a malformed request into a 500. These are public
+    // endpoints, so unparsed input has to land as a 400.
+    if (!signedRequest) {
+      throw new HttpException(
+        'Missing signed_request.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const appSecret = process.env.INSTAGRAM_APP_SECRET;
+    if (!appSecret) {
+      // Fails closed. Accepting unverified deletion requests because the
+      // server is misconfigured would be worse than returning an error
+      // Meta will retry.
+      throw new HttpException(
+        'INSTAGRAM_APP_SECRET is not configured on this server.',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    const payload = parseSignedRequest(signedRequest, appSecret);
+    if (!payload) {
+      // 400 rather than 403: Meta's own docs treat a malformed request
+      // this way, and it retries either way.
+      throw new HttpException(
+        'Invalid signed_request.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    return payload;
   }
 }

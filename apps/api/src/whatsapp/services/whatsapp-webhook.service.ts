@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import {
   Injectable,
   Logger,
@@ -195,6 +196,25 @@ export class WhatsappWebhookService {
 
   /**
    * Verify verification token from Meta Graph API subscribe request.
+   *
+   * TWO TOKENS, AND BOTH ARE NEEDED
+   *
+   * `WHATSAPP_WEBHOOK_VERIFY_TOKEN` is the **app-level** one, checked
+   * first. Under the Tech Provider / Embedded Signup model the webhook is
+   * configured ONCE in the Meta App Dashboard and we subscribe our app to
+   * each customer's WABA afterwards, so Meta's handshake arrives carrying
+   * a token that belongs to the app, not to any account.
+   *
+   * Without it a fresh deployment cannot get started at all: with zero
+   * connected accounts there is no row to match, we answer 403, and the
+   * Meta dashboard refuses to save the webhook — so no account can ever
+   * connect, so no row can ever exist. That deadlock is what this env var
+   * exists to break.
+   *
+   * The per-account walk below stays as the fallback for the older
+   * bring-your-own-Meta-app path, where each customer configured their own
+   * webhook and chose their own token. Removing it would break those
+   * connections on the next re-verification.
    */
   async handleVerification(
     mode: string,
@@ -206,6 +226,11 @@ export class WhatsappWebhookService {
         'Missing verification parameters',
         HttpStatus.BAD_REQUEST,
       );
+    }
+
+    const appToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+    if (appToken && safeEqual(verifyToken, appToken)) {
+      return challenge;
     }
 
     const configs = await this.prisma.whatsapp_config.findMany({
@@ -221,7 +246,7 @@ export class WhatsappWebhookService {
       if (!config.verify_token) continue;
       try {
         const decrypted = decrypt(config.verify_token);
-        if (decrypted === verifyToken) {
+        if (safeEqual(decrypted, verifyToken)) {
           matchedConfig = config;
           break;
         }
@@ -245,12 +270,12 @@ export class WhatsappWebhookService {
       return challenge;
     }
 
-    // Temporary fallback for development - accept "simple" token
-    if (verifyToken === 'simple') {
-      this.logger.warn('Using fallback verify token "simple" for development');
-      return challenge;
-    }
-
+    // There used to be a hardcoded `verifyToken === 'simple'` escape hatch
+    // here, active in every environment. It let anyone complete our webhook
+    // handshake, and — worse for an operator — it meant a misconfigured
+    // deployment appeared to verify successfully while matching nothing.
+    // Set WHATSAPP_WEBHOOK_VERIFY_TOKEN instead; it does the same job for
+    // local development without shipping a known-good token to production.
     throw new HttpException(
       'Verification token mismatch',
       HttpStatus.FORBIDDEN,
@@ -1371,4 +1396,25 @@ export class WhatsappWebhookService {
       return null;
     }
   }
+}
+
+/**
+ * Constant-time string compare for the webhook verify token.
+ *
+ * `===` on a secret leaks its prefix through timing. The handshake is a
+ * low-value target — the token only gates *configuring* a subscription,
+ * and every actual delivery is HMAC-verified separately — but it costs
+ * nothing to not leak it, and the per-account loop below compares against
+ * every tenant's token in turn, which is exactly the shape that makes a
+ * timing oracle practical.
+ *
+ * Length is compared first and non-constant-time on purpose: timingSafeEqual
+ * throws on a length mismatch, and the length of a random token is not the
+ * secret.
+ */
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
 }

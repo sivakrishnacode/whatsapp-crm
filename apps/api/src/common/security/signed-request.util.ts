@@ -16,9 +16,14 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  *   here would let anyone delete any workspace's ad connection by guessing
  *   a user id.
  *
- * Deliberately separate from `common/security/oauth-state.util.ts`: that
- * one is a blob WE mint and verify, this one is a blob META mints. They
- * share only the idea of an HMAC.
+ * Deliberately separate from `oauth-state.util.ts` alongside it: that one
+ * is a blob WE mint and verify, this one is a blob META mints. They share
+ * only the idea of an HMAC.
+ *
+ * Lives in `common/security` rather than under one feature because two
+ * surfaces receive these callbacks with DIFFERENT secrets — Ads signs with
+ * the app secret, Instagram with the Instagram app secret — so the secret
+ * is a parameter and neither module owns the parser.
  */
 
 export interface SignedRequestPayload {
