@@ -99,7 +99,10 @@ export function AgentStudio() {
   const status = resolveStatus(studio);
 
   return (
-    <div>
+    // Capped and centred like Settings: every tab here is a form, and a
+    // full-width text input on a 1080p monitor is unreadable. The cap sits
+    // on the root so the header, the tab bar and all six panels line up.
+    <div className="mx-auto max-w-4xl">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
