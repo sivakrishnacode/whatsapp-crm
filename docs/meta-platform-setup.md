@@ -23,6 +23,82 @@ documentation in August 2026.
 
 ---
 
+## Status — what is already live
+
+Our side of the work is deployed. Everything left is either in the Meta
+dashboard or is a value only you can supply.
+
+**Live on production** as of `9f05047` (8 Aug 2026):
+
+| Endpoint | Verified behaviour |
+|---|---|
+| `https://converse360.in/privacy` | 200 |
+| `https://converse360.in/terms` | 200 |
+| `https://app.converse360.in/instagram-data-deletion` | 200 |
+| `https://app.converse360.in/ads-data-deletion` | 200 |
+| `POST /instagram/deauthorize` · `/data-deletion` | verify `signed_request`, then delete |
+| `POST /ads/privacy/data-deletion` · `/deauthorize` | unchanged, already worked |
+| WhatsApp handshake with the app token | returns the challenge |
+| WhatsApp handshake with `simple` | **403** — the old bypass is gone |
+
+`WHATSAPP_WEBHOOK_VERIFY_TOKEN` is **already set in `apps/api/.env` on the VPS**
+and the api container has been restarted, so §4.4 needs nothing from you except
+pasting the same value into the Meta dashboard. The value is on the box; it is
+deliberately not written down here (same rule as the queue dashboard
+credentials):
+
+```bash
+ssh root@app.converse360.in \
+  "grep WHATSAPP_WEBHOOK_VERIFY_TOKEN /root/whatsapp-crm/apps/api/.env"
+```
+
+### What is NOT configured on the VPS yet
+
+Audited 8 Aug 2026 against the live `.env` files. Set on `apps/api/.env` today:
+`ENCRYPTION_KEY`, `META_APP_SECRET`, all five `INSTAGRAM_*`,
+`ADS_MANAGER_ENABLED`, `ADS_MANAGER_SANDBOX`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`.
+
+Everything below is **missing**, and each one is a feature that is silently off:
+
+| Missing | File | What is broken until it is set |
+|---|---|---|
+| `NEXT_PUBLIC_FACEBOOK_APP_ID` | `apps/web/.env.local` | **"Connect with Facebook" renders disabled.** No customer can onboard WhatsApp at all. |
+| `NEXT_PUBLIC_FACEBOOK_CONFIG_ID` | `apps/web/.env.local` | Same button, same reason. Comes from the Embedded Signup configuration in §5.1. |
+| `FACEBOOK_WEBHOOK_VERIFY_TOKEN` | `apps/api/.env` | The Lead Ads `leadgen` handshake cannot be saved in the dashboard. |
+| `META_APP_ID` | `apps/api/.env` | Template submission with an IMAGE header fails — the resumable upload is app-scoped. Text-only templates are unaffected. |
+| `META_ADS_REDIRECT_URI` | `apps/api/.env` | `/ads/oauth/start` throws. Irrelevant until §7, but set it with the rest. |
+| `ADS_MAX_DAILY_BUDGET_MINOR` | `apps/api/.env` | Falls back to the ₹10,000/day default. Pick a real number before ads go live. |
+
+⚠️ **`NEXT_PUBLIC_*` is inlined at build time.** Setting either of the first two
+in a running container does nothing — the web image must be rebuilt
+(`./scripts/deploy.sh --web-only`).
+
+Read the current state at any time:
+
+```bash
+ssh root@app.converse360.in \
+  "cd /root/whatsapp-crm && \
+   grep -oE '^[A-Z_]+=' apps/api/.env apps/web/.env.local | sort -u"
+```
+
+### Not done, and blocking App Review
+
+- [ ] Replace every `[BRACKETED]` placeholder in `privacy.html` / `terms.html`.
+      They render as orange dashed chips and are **publicly visible right now**.
+- [ ] Have a lawyer read both before the app goes Live.
+- [ ] Set the six env vars above.
+- [ ] Fill the Meta dashboard fields in §4.2, §4.3, §5.1–5.4.
+- [ ] Start Business Verification (§3) — the longest queue, and it gates
+      everything.
+
+**Known gap we created:** the privacy policy promises messages and contacts are
+purged 90 days after a subscription ends. **Nothing in the codebase does that
+today.** It is a promise without a mechanism — either build the sweep (a
+scheduled job on the existing BullMQ setup) or soften the wording. Do not leave
+it as it is.
+
+---
+
 ## 0. The answer: one app, not three
 
 **Create ONE Meta app.** Business type. One Business Portfolio. Add all four
@@ -229,8 +305,11 @@ popup.
 
 ### 4.4 The WhatsApp webhook verify token
 
-Set `WHATSAPP_WEBHOOK_VERIFY_TOKEN` in `apps/api/.env` to any random string
-(`openssl rand -hex 16`) and paste the same value into the Meta dashboard.
+> ✅ **Already set on the VPS** and the api restarted — read it with the `ssh`
+> one-liner in the Status section above, and paste that value into the Meta
+> dashboard. Nothing else to do here. For a *new* environment (staging, a second
+> box), set `WHATSAPP_WEBHOOK_VERIFY_TOKEN` in `apps/api/.env` to any random
+> string (`openssl rand -hex 16`) and use the same value in the dashboard.
 
 Worth understanding why it exists, because the old behaviour looked fine until
 the day it wasn't. The handshake originally loaded **every** `whatsapp_config`
@@ -497,7 +576,9 @@ WhatsApp, Instagram and Lead Ads first; keep `ADS_MANAGER_ENABLED=false`.
 
 ## 9. Credentials reference
 
-Every Meta value the code reads, and where in the dashboard it comes from.
+Every Meta value the code reads, and where in the dashboard it comes from. For
+which of these are actually set on the VPS today — six are not — see
+[What is NOT configured on the VPS yet](#what-is-not-configured-on-the-vps-yet).
 
 | Env var | Where | Notes |
 |---|---|---|
@@ -512,7 +593,7 @@ Every Meta value the code reads, and where in the dashboard it comes from.
 | `INSTAGRAM_API_VERSION` | `v23.0` | Pinned so a deprecation is a config change, not a deploy |
 | `INSTAGRAM_HUMAN_AGENT_ENABLED` | `false` | Flip only after separate approval |
 | `FACEBOOK_WEBHOOK_VERIFY_TOKEN` | You invent it | Lead Ads `leadgen` handshake |
-| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | You invent it | App-level WhatsApp handshake. **Required** for Embedded Signup — see §4.4 |
+| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | You invent it | ✅ **Already set on the VPS.** App-level WhatsApp handshake; **required** for Embedded Signup — see §4.4 |
 | `META_ADS_APP_ID` / `_SECRET` | — | **Leave unset** to share the main app |
 | `META_ADS_REDIRECT_URI` | You set it | Must match FLB → Valid OAuth Redirect URIs exactly |
 | `ADS_MANAGER_ENABLED` | `false` until §7 | API-side gate; `AdsEnabledGuard` 404s every `/ads/*` route |
@@ -550,6 +631,35 @@ through the app's `/api/*` proxy.
 Also not a Meta field but it silently breaks auth if missed — Supabase →
 Authentication → URL Configuration: Site URL `https://app.converse360.in`,
 Redirect URLs `https://app.converse360.in/**`.
+
+**Every URL above already answers.** Confirm before pasting, and again after —
+a 404 here is a proxy problem, a 502 is a container that is down, and neither
+looks any different from a typo in the dashboard:
+
+```bash
+# Legal + public status pages — expect 200 200 200 200
+for u in https://converse360.in/privacy https://converse360.in/terms \
+         https://app.converse360.in/instagram-data-deletion \
+         https://app.converse360.in/ads-data-deletion; do
+  curl -so /dev/null -w "$u %{http_code}\n" "$u"
+done
+
+# Webhook GET handshakes — 403 means reachable and correctly refusing a
+# wrong token. 404 means it is not being proxied at all.
+for p in whatsapp/webhook instagram/webhook webhooks/facebook-leads; do
+  curl -so /dev/null -w "$p %{http_code}\n" \
+    "https://api.converse360.in/$p?hub.mode=subscribe&hub.verify_token=x&hub.challenge=y"
+done
+
+# Privacy callbacks — 400 means reachable and demanding a signed_request.
+for p in instagram/deauthorize instagram/data-deletion \
+         ads/privacy/data-deletion ads/privacy/deauthorize; do
+  curl -so /dev/null -w "$p %{http_code}\n" -X POST "https://api.converse360.in/$p"
+done
+```
+
+The fuller list, including the payment webhooks, is in
+[../deploy/WEBHOOKS.md](../deploy/WEBHOOKS.md#quick-verification).
 
 ---
 
@@ -673,9 +783,14 @@ Not configurable. Know them before someone promises a customer otherwise.
 Run these in parallel, not in series. The three Meta queues below are
 independent and none of them are fast.
 
+Week 0's engineering is **done and deployed** — endpoints, legal pages and the
+verify token are all live (see the Status section at the top). What is left in
+week 0 is paperwork and dashboard clicking, and the long pole is Business
+Verification, which nothing in this repo can speed up.
+
 | Week | Work |
 |---|---|
-| **0** | Start **Business Verification** (§3). Fill the placeholders in `privacy.html` / `terms.html` and get them lawyer-read (§2). Create the app and add all four use cases (§4). |
+| **0** | Start **Business Verification** (§3) — do this first, today. Fill the placeholders in `privacy.html` / `terms.html` and get them lawyer-read (§2). Create the app and add all four use cases (§4). Decide the 90-day purge: build it or reword the policy. |
 | **0–1** | Configure all four surfaces (§5) against test assets. Walk each connect flow end to end. |
 | **1–2** | Record screencasts. **Submit WhatsApp App Review.** Verification should be back by now — if it isn't, that is your blocker, not the code. |
 | **2–3** | Submit Instagram, then Pages + Lead Ads. Expect one rejection round somewhere; budget for it. |
