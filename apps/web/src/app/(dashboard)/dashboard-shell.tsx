@@ -85,7 +85,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const { railExpanded, toggleRail, panelOpen, togglePanel } = useNavPrefs();
+  const { railLocked, toggleRailLock } = useNavPrefs();
 
   // Rail drawer state — only used on mobile. On lg+ the rail is always
   // visible and this stays closed (ignored by the component).
@@ -130,8 +130,8 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           <PresenceHeartbeat />
 
           <PrimaryRail
-            expanded={railExpanded}
-            onToggleExpanded={toggleRail}
+            locked={railLocked}
+            onToggleLock={toggleRailLock}
             activeRailId={nav.activeRailId}
             drawerOpen={drawerOpen}
             onCloseDrawer={closeDrawer}
@@ -151,8 +151,6 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
               channel={nav.activeChannel}
               icon={nav.activeChannel ? undefined : SettingsIcon}
               activeItemId={nav.activePanelItemId}
-              open={panelOpen}
-              onToggle={togglePanel}
             />
           ) : null}
 

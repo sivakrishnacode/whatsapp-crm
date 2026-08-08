@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LogOut, PanelLeft, Search, Settings as SettingsIcon, User, X } from 'lucide-react';
-import type { ReactElement, ReactNode } from 'react';
+import { LogOut, Pin, PinOff, Search, Settings as SettingsIcon, User, X } from 'lucide-react';
+import { useState, type ReactElement, type ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -35,13 +35,28 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 /**
  * The primary rail — first of the two sidebars.
  *
- * Structure mirrors the reference product: logo + collapse pin, a search
+ * Structure mirrors the reference product: logo + lock pin, a search
  * placeholder, Onboarding, then divider-separated blocks (workspace,
  * channels) with Settings and the user card pinned to the bottom. There
  * are deliberately **no group labels** — dividers carry the grouping,
  * which is what keeps a 10-row rail scannable.
  *
- * Collapsing is a **desktop-only** affordance (`lg:w-14` vs `lg:w-56`).
+ * Width is a **desktop-only** affordance (`lg:w-14` vs `lg:w-56`) fed by
+ * three inputs:
+ *
+ *   - **locked** — the persisted preference. Labelled, in-flow, stays put.
+ *   - **peek** — pointer (or keyboard focus) inside the collapsed rail.
+ *     It widens to `lg:w-56` *over* the page rather than pushing it: the
+ *     rail is absolutely positioned inside a wrapper that reserves only
+ *     the locked width, so a pointer crossing the rail on its way
+ *     somewhere else cannot reflow the whole three-column layout.
+ *   - **menuOpen** — the account menu is a portal, so the pointer moving
+ *     into it reads as leaving the rail. Without this the rail would
+ *     shrink out from under an open menu.
+ *
+ * Hover *is* the expand affordance, which is why there is no expand
+ * button at the collapsed width; the pin is what makes a peek permanent.
+ *
  * Below `lg` the rail is a 256px drawer where icons-only would waste the
  * width, so labels are hidden via the responsive `lg:hidden` class rather
  * than by conditional rendering — otherwise a user who collapsed the rail
@@ -52,8 +67,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 
 /**
  * Attaches a tooltip to an already-built element, or returns it
- * untouched when no tooltip is wanted (the labelled rail doesn't need
- * one — the label is right there).
+ * untouched when no tooltip is wanted (most rows: hovering one expands
+ * the rail, so the label is right there).
  *
  * `element` becomes the trigger itself rather than being wrapped: base-ui
  * positions the popup against the trigger's box, so wrapping it in a
@@ -184,9 +199,13 @@ function MobileInlinePanel({
 }
 
 interface PrimaryRailProps {
-  /** Labelled (`lg:w-56`) vs icons-only (`lg:w-14`). Desktop only. */
-  expanded: boolean;
-  onToggleExpanded: () => void;
+  /**
+   * Pinned open: labelled (`lg:w-56`) and holding its own column. When
+   * false the rail rests at `lg:w-14` and widens on hover instead.
+   * Desktop only.
+   */
+  locked: boolean;
+  onToggleLock: () => void;
   /** Rail row id to highlight, from `resolveNavContext`. */
   activeRailId: string | null;
   /** Mobile drawer state — ignored on `lg:` where the rail is static. */
@@ -200,8 +219,8 @@ interface PrimaryRailProps {
 }
 
 export function PrimaryRail({
-  expanded,
-  onToggleExpanded,
+  locked,
+  onToggleLock,
   activeRailId,
   drawerOpen,
   onCloseDrawer,
@@ -212,7 +231,24 @@ export function PrimaryRail({
   const totalUnread = useTotalUnread();
   const statuses = useChannelStatus();
 
+  // Peek and the account menu live here rather than in the shell:
+  // neither is a preference, and nothing outside this component reacts
+  // to them — a peeked rail floats over the layout instead of moving it.
+  const [peeking, setPeeking] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const expanded = locked || peeking || menuOpen;
   const collapsed = !expanded;
+  /** Expanded only for as long as the pointer stays — so it casts a shadow. */
+  const floating = expanded && !locked;
+
+  // Peek is a `lg`-and-up behaviour, because that is the only place the
+  // narrow rail exists. Below it the rail is a full-width drawer and
+  // `mouseenter` fires on *tap*, which would re-render the whole rail
+  // under the user's finger for no visual change at all.
+  const peekable = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia('(min-width: 1024px)').matches;
 
   // Collapse only takes effect at lg+, so every "is it narrow?" class is
   // an `lg:` variant. See the component docblock.
@@ -255,7 +291,9 @@ export function PrimaryRail({
     );
     return (
       <li key={item.id}>
-        {withTooltip(row, collapsed ? item.label : null)}
+        {/* No tooltip: you cannot hover this row without hovering the
+            rail, and that already shows the label. */}
+        {row}
         {/* A rail row may own a panel (Ads Manager). On mobile it nests
             here, exactly as a channel's does. */}
         {item.panel && isActive && mobilePanel ? (
@@ -279,121 +317,131 @@ export function PrimaryRail({
         )}
       />
 
-      <aside
-        aria-label="Primary"
-        data-sidebar-nav="true"
+      {/* Desktop: this wrapper reserves the rail's *layout* width — the
+          locked width, never the peeked one — while the rail itself is
+          absolutely positioned inside it. That is what lets a peek widen
+          over the page instead of shoving the three-column layout
+          sideways. On mobile it collapses to nothing: the rail is a fixed
+          drawer there and contributes no width to the flex row. */}
+      <div
+        onMouseEnter={() => setPeeking(peekable())}
+        onMouseLeave={() => setPeeking(false)}
+        // The keyboard's version of hover: tabbing into a collapsed rail
+        // expands it, so the labels are readable without a pointer.
+        // `relatedTarget` is null when focus leaves the document entirely
+        // — treat that as gone rather than as a reason to stay open.
+        onFocusCapture={() => setPeeking(peekable())}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget)) setPeeking(false);
+        }}
         className={cn(
-          // Mobile: fixed drawer sliding in from the left, always labelled.
-          'fixed inset-y-0 left-0 z-40 flex h-full w-64 shrink-0 flex-col border-r border-border bg-card',
-          'transition-transform duration-200 ease-out will-change-transform',
-          drawerOpen ? 'translate-x-0' : '-translate-x-full',
-          // Desktop: static column whose width follows the pref.
-          'lg:static lg:z-0 lg:translate-x-0 lg:transition-[width] lg:duration-150',
-          collapsed ? 'lg:w-14' : 'lg:w-56',
+          'relative z-40 shrink-0 lg:transition-[width] lg:duration-150',
+          locked ? 'lg:w-56' : 'lg:w-14',
         )}
       >
-        {/* Logo + collapse pin */}
-        <div
+        <aside
+          aria-label="Primary"
+          data-sidebar-nav="true"
           className={cn(
-            'flex h-14 shrink-0 items-center gap-2',
-            collapsed ? 'px-3 lg:justify-center lg:px-0' : 'px-3',
+            // Mobile: fixed drawer sliding in from the left, always labelled.
+            'fixed inset-y-0 left-0 z-40 flex h-full w-64 shrink-0 flex-col border-r border-border bg-card',
+            'transition-transform duration-200 ease-out will-change-transform',
+            drawerOpen ? 'translate-x-0' : '-translate-x-full',
+            // Desktop: absolute inside the wrapper above, so a width change
+            // costs the layout nothing.
+            'lg:absolute lg:inset-y-0 lg:left-0 lg:translate-x-0 lg:transition-[width] lg:duration-150',
+            collapsed ? 'lg:w-14' : 'lg:w-56',
+            floating ? 'lg:shadow-xl' : '',
           )}
         >
-          {/* Brand lockup.
-              Both assets sit on an explicit white plate: the wordmark's
-              type is #191919, which disappears against `bg-card` in dark
-              mode. The plate is the logo's background, not the rail's.
-
-              Two assets rather than one because the lockup is 6.8:1 — it
-              cannot render legibly in the 56px collapsed rail, so that
-              width gets the square "C" crop instead. Both are viewBox
-              crops of the same source artwork. */}
-          <Link
-            href="/dashboard"
+          {/* Logo + lock pin */}
+          <div
             className={cn(
-              'flex min-w-0 items-center',
-              // `flex-1` makes the link fill the row so the mobile close
-              // button is pushed to the far edge — but a stretched child
-              // cancels the parent's `lg:justify-center`, which left the
-              // collapsed mark pinned to the left. Release it at the
-              // collapsed width so the centring actually applies.
-              collapsed ? 'flex-1 lg:flex-none' : 'flex-1',
+              'flex h-14 shrink-0 items-center gap-2',
+              collapsed ? 'px-3 lg:justify-center lg:px-0' : 'px-3',
             )}
-            aria-label="Converse360 home"
           >
-            {/* Wordmark — hidden at the collapsed desktop width. */}
-            <span
+            {/* Brand lockup.
+                Both assets sit on an explicit white plate: the wordmark's
+                type is #191919, which disappears against `bg-card` in dark
+                mode. The plate is the logo's background, not the rail's.
+
+                Two assets rather than one because the lockup is 6.8:1 — it
+                cannot render legibly in the 56px collapsed rail, so that
+                width gets the square "C" crop instead. Both are viewBox
+                crops of the same source artwork. */}
+            <Link
+              href="/dashboard"
               className={cn(
-                'flex min-w-0 items-center rounded-lg bg-white px-2 py-1.5',
-                labelClass,
+                'flex min-w-0 items-center',
+                // `flex-1` makes the link fill the row so the mobile close
+                // button is pushed to the far edge — but a stretched child
+                // cancels the parent's `lg:justify-center`, which left the
+                // collapsed mark pinned to the left. Release it at the
+                // collapsed width so the centring actually applies.
+                collapsed ? 'flex-1 lg:flex-none' : 'flex-1',
               )}
+              aria-label="Converse360 home"
             >
-              <img
-                src="/brand/converse360-wordmark.svg"
-                alt="Converse360"
-                className="h-5 w-auto max-w-full object-contain"
-              />
-            </span>
-            {/* Square mark — only at the collapsed desktop width. */}
-            {collapsed ? (
-              <span className="hidden size-8 shrink-0 items-center justify-center rounded-lg bg-white lg:flex">
+              {/* Wordmark — hidden at the collapsed desktop width. */}
+              <span
+                className={cn(
+                  'flex min-w-0 items-center rounded-lg bg-white px-2 py-1.5',
+                  labelClass,
+                )}
+              >
                 <img
-                  src="/brand/converse360-mark.svg"
+                  src="/brand/converse360-wordmark.svg"
                   alt="Converse360"
-                  className="size-6 object-contain"
+                  className="h-5 w-auto max-w-full object-contain"
                 />
               </span>
-            ) : null}
-          </Link>
-          {/* Desktop collapse toggle — the "pin" from the reference. */}
-          <button
-            type="button"
-            onClick={onToggleExpanded}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            aria-expanded={expanded}
-            className={cn(
-              'ml-auto hidden size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
-              collapsed ? 'lg:hidden' : 'lg:flex',
-            )}
-          >
-            <PanelLeft className="size-4" />
-          </button>
-          {/* Mobile-only close button. */}
-          <button
-            type="button"
-            onClick={onCloseDrawer}
-            aria-label="Close menu"
-            className="ml-auto flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
-          >
-            <X className="size-5" />
-          </button>
-        </div>
-
-        {/* Expand affordance for the collapsed desktop rail — the pin
-            lives in the logo row when labelled, but there's no room at
-            w-14. Hidden on mobile, where the rail is never collapsed. */}
-        {collapsed ? (
-          <div className="hidden justify-center px-2 pb-1 lg:flex">
+              {/* Square mark — only at the collapsed desktop width. */}
+              {collapsed ? (
+                <span className="hidden size-8 shrink-0 items-center justify-center rounded-lg bg-white lg:flex">
+                  <img
+                    src="/brand/converse360-mark.svg"
+                    alt="Converse360"
+                    className="size-6 object-contain"
+                  />
+                </span>
+              ) : null}
+            </Link>
+            {/* The lock pin. Only reachable once the rail is already showing
+                labels — locked, or peeked under the pointer — which is the
+                whole shape of it: hover to look, pin to keep. At `lg:w-14`
+                there is no room for it anyway. */}
             {withTooltip(
               <button
                 type="button"
-                onClick={onToggleExpanded}
-                aria-label="Expand sidebar"
-                aria-expanded={false}
-                className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={onToggleLock}
+                aria-label={locked ? 'Unlock sidebar' : 'Lock sidebar open'}
+                aria-pressed={locked}
+                className={cn(
+                  'ml-auto hidden size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground',
+                  locked ? 'text-primary' : 'text-muted-foreground',
+                  expanded ? 'lg:flex' : 'lg:hidden',
+                )}
               >
-                <PanelLeft className="size-4 rotate-180" />
+                {locked ? <PinOff className="size-4" /> : <Pin className="size-4" />}
               </button>,
-              'Expand sidebar',
+              locked ? 'Unlock sidebar' : 'Lock sidebar open',
             )}
+            {/* Mobile-only close button. */}
+            <button
+              type="button"
+              onClick={onCloseDrawer}
+              aria-label="Close menu"
+              className="ml-auto flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+            >
+              <X className="size-5" />
+            </button>
           </div>
-        ) : null}
 
-        <nav className="flex flex-1 flex-col overflow-y-auto px-2 pb-2">
-          {/* Search — visual placeholder. Rendered as a real disabled
-              control so wiring a command palette later is a one-file
-              change, but it is not focusable or clickable today. */}
-          {withTooltip(
+          <nav className="flex flex-1 flex-col overflow-y-auto px-2 pb-2">
+            {/* Search — visual placeholder. Rendered as a real disabled
+                control so wiring a command palette later is a one-file
+                change, but it is not focusable or clickable today. */}
             <button
               type="button"
               disabled
@@ -421,228 +469,229 @@ export function PrimaryRail({
               >
                 K
               </kbd>
-            </button>,
-            collapsed ? 'Search (coming soon)' : null,
-          )}
+            </button>
 
-          <ul className="flex flex-col gap-0.5">{renderRailItem(RAIL_ONBOARDING)}</ul>
+            <ul className="flex flex-col gap-0.5">{renderRailItem(RAIL_ONBOARDING)}</ul>
 
-          <div className="my-2 border-t border-border" />
+            <div className="my-2 border-t border-border" />
 
-          <ul className="flex flex-col gap-0.5">{RAIL_WORKSPACE.map(renderRailItem)}</ul>
+            <ul className="flex flex-col gap-0.5">{RAIL_WORKSPACE.map(renderRailItem)}</ul>
 
-          <div className="my-2 border-t border-border" />
+            <div className="my-2 border-t border-border" />
 
-          {/* Channel block — brand-coloured icons, which is what makes
-              this read as a distinct group rather than more nav. */}
-          <ul className="flex flex-col gap-0.5">
-            {CHANNEL_ORDER.map((id) => {
-              const channel = CHANNELS[id];
-              const isActive = activeRailId === `channel-${channel.id}`;
-              const locked = channel.status === 'locked';
-              const status = statuses[channel.id];
+            {/* Channel block — brand-coloured icons, which is what makes
+                this read as a distinct group rather than more nav. */}
+            <ul className="flex flex-col gap-0.5">
+              {CHANNEL_ORDER.map((id) => {
+                const channel = CHANNELS[id];
+                const isActive = activeRailId === `channel-${channel.id}`;
+                // Not to be confused with the rail's own `locked` (pinned
+                // open) — this one means the channel isn't shipped yet.
+                const comingSoon = channel.status === 'locked';
+                const status = statuses[channel.id];
 
-              // Connection state, as a pip colour. Replaces the old red
-              // warning dot that used to hang off the Settings row.
-              const pipClass =
-                status?.state === 'connected'
-                  ? PRESENCE_DOT_CLASS.online
-                  : status?.state === 'not_connected'
-                    ? 'bg-red-500'
-                    : null;
-              const pipLabel =
-                status?.state === 'connected'
-                  ? `${channel.label} connected`
-                  : status?.state === 'not_connected'
-                    ? `${channel.label} not connected`
-                    : undefined;
+                // Connection state, as a pip colour. Replaces the old red
+                // warning dot that used to hang off the Settings row.
+                const pipClass =
+                  status?.state === 'connected'
+                    ? PRESENCE_DOT_CLASS.online
+                    : status?.state === 'not_connected'
+                      ? 'bg-red-500'
+                      : null;
+                const pipLabel =
+                  status?.state === 'connected'
+                    ? `${channel.label} connected`
+                    : status?.state === 'not_connected'
+                      ? `${channel.label} not connected`
+                      : undefined;
 
-              // Row innards are identical whether the row is a link or a
-              // locked span, so build them once.
-              const inner = (
-                <>
-                  <RailIconSlot
-                    icon={channel.icon}
-                    iconClassName={!locked ? channel.accentClass : undefined}
-                    pipClass={pipClass}
-                    pipLabel={pipLabel}
-                    pipTitle={status?.message}
-                    badgeClass={badgeClass}
-                  />
-                  <span className={cn('flex-1 truncate', labelClass)}>
-                    {channel.label}
-                  </span>
-                  {/* Inline pip for the labelled widths; the corner badge
-                      in the icon slot covers the collapsed one. */}
-                  {pipClass ? (
-                    <span
-                      aria-label={pipLabel}
-                      title={status?.message}
-                      className={cn(
-                        'inline-block size-2 shrink-0 rounded-full',
-                        pipClass,
-                        labelClass,
-                      )}
+                // Row innards are identical whether the row is a link or a
+                // coming-soon span, so build them once.
+                const inner = (
+                  <>
+                    <RailIconSlot
+                      icon={channel.icon}
+                      iconClassName={!comingSoon ? channel.accentClass : undefined}
+                      pipClass={pipClass}
+                      pipLabel={pipLabel}
+                      pipTitle={status?.message}
+                      badgeClass={badgeClass}
                     />
-                  ) : null}
-                </>
-              );
-
-              const row = locked ? (
-                <span
-                  aria-disabled="true"
-                  className={rowShell(
-                    isActive,
-                    'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
-                  )}
-                >
-                  {inner}
-                </span>
-              ) : (
-                <Link
-                  href={channelLandingHref(channel.id)}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={rowShell(isActive)}
-                >
-                  {inner}
-                </Link>
-              );
-
-              return (
-                <li key={channel.id}>
-                  {/* A locked channel always gets its tooltip — that's the
-                      only place the "coming soon" reason is stated. */}
-                  {withTooltip(
-                    row,
-                    locked
-                      ? `${channel.label} — coming soon`
-                      : collapsed
-                        ? channel.label
-                        : null,
-                  )}
-
-                  {/* Mobile: the active channel's panel inlined here, so
-                      the single drawer carries both sidebars. */}
-                  {mobilePanel && isActive ? (
-                    <MobileInlinePanel
-                      groups={mobilePanel.groups}
-                      pathname={pathname}
-                    />
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-
-          {/* Spacer pushes Settings + the user card to the bottom. */}
-          <div className="flex-1" />
-
-          <ul className="flex flex-col gap-0.5">{RAIL_BOTTOM.map(renderRailItem)}</ul>
-        </nav>
-
-        {/* User card — avatar, full name, presence dot + account name. */}
-        <div className="shrink-0 border-t border-border p-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              aria-label="Open account menu"
-              className={cn(
-                'flex w-full items-center gap-2.5 rounded-lg py-2 text-left transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none data-popup-open:bg-muted/60',
-                collapsed ? 'px-2 lg:justify-center lg:px-0' : 'px-2',
-              )}
-            >
-              <Avatar className="size-8 shrink-0">
-                {profile?.avatar_url ? (
-                  <AvatarImage
-                    src={profile.avatar_url}
-                    alt={profile.full_name ?? 'Avatar'}
-                  />
-                ) : null}
-                <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
-                  {profile?.full_name?.charAt(0)?.toUpperCase() ??
-                    profile?.email?.charAt(0)?.toUpperCase() ??
-                    'U'}
-                </AvatarFallback>
-              </Avatar>
-              <div className={cn('min-w-0 flex-1', labelClass)}>
-                <p className="truncate text-sm font-medium text-foreground">
-                  {profile?.full_name ?? 'User'}
-                </p>
-                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <PresenceDot status="online" />
-                  <span className="truncate" title={account?.name ?? undefined}>
-                    {account?.name ?? profile?.email ?? ''}
-                  </span>
-                </p>
-              </div>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              side="top"
-              sideOffset={6}
-              className="min-w-56 bg-popover text-popover-foreground ring-border"
-            >
-              <div className="px-2 py-1.5">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {profile?.full_name ?? 'User'}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {profile?.email ?? ''}
-                </p>
-                {accountRole
-                  ? (() => {
-                    const meta = ROLE_META[accountRole];
-                    const Icon = meta.icon;
-                    return (
+                    <span className={cn('flex-1 truncate', labelClass)}>
+                      {channel.label}
+                    </span>
+                    {/* Inline pip for the labelled widths; the corner badge
+                        in the icon slot covers the collapsed one. */}
+                    {pipClass ? (
                       <span
+                        aria-label={pipLabel}
+                        title={status?.message}
                         className={cn(
-                          'mt-1.5 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase',
-                          meta.className,
+                          'inline-block size-2 shrink-0 rounded-full',
+                          pipClass,
+                          labelClass,
                         )}
-                      >
-                        <Icon className="size-3" />
-                        {meta.label}
-                      </span>
-                    );
-                  })()
-                  : null}
-              </div>
-              <DropdownMenuSeparator className="bg-border" />
-              <DropdownMenuItem
-                render={
+                      />
+                    ) : null}
+                  </>
+                );
+
+                const row = comingSoon ? (
+                  <span
+                    aria-disabled="true"
+                    className={rowShell(
+                      isActive,
+                      'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
+                    )}
+                  >
+                    {inner}
+                  </span>
+                ) : (
                   <Link
-                    href="/settings?tab=profile"
-                    onClick={onCloseDrawer}
-                    className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
-                  />
-                }
+                    href={channelLandingHref(channel.id)}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={rowShell(isActive)}
+                  >
+                    {inner}
+                  </Link>
+                );
+
+                return (
+                  <li key={channel.id}>
+                    {/* The only rail tooltip left: a disabled row can't say
+                        *why* it's disabled any other way. Labels no longer
+                        need one — hovering the row expands the rail. */}
+                    {withTooltip(
+                      row,
+                      comingSoon ? `${channel.label} — coming soon` : null,
+                    )}
+
+                    {/* Mobile: the active channel's panel inlined here, so
+                        the single drawer carries both sidebars. */}
+                    {mobilePanel && isActive ? (
+                      <MobileInlinePanel
+                        groups={mobilePanel.groups}
+                        pathname={pathname}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+
+            {/* Spacer pushes Settings + the user card to the bottom. */}
+            <div className="flex-1" />
+
+            <ul className="flex flex-col gap-0.5">{RAIL_BOTTOM.map(renderRailItem)}</ul>
+          </nav>
+
+          {/* User card — avatar, full name, presence dot + account name. */}
+          <div className="shrink-0 border-t border-border p-2">
+            {/* Controlled so the rail can stay expanded while the menu is
+                open — the popup is a portal, so a pointer moving into it
+                has technically left the rail. */}
+            <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+              <DropdownMenuTrigger
+                aria-label="Open account menu"
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-lg py-2 text-left transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none data-popup-open:bg-muted/60',
+                  collapsed ? 'px-2 lg:justify-center lg:px-0' : 'px-2',
+                )}
               >
-                <User className="size-4" />
-                Profile
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                render={
-                  <Link
-                    href="/settings"
-                    onClick={onCloseDrawer}
-                    className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
-                  />
-                }
+                <Avatar className="size-8 shrink-0">
+                  {profile?.avatar_url ? (
+                    <AvatarImage
+                      src={profile.avatar_url}
+                      alt={profile.full_name ?? 'Avatar'}
+                    />
+                  ) : null}
+                  <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
+                    {profile?.full_name?.charAt(0)?.toUpperCase() ??
+                      profile?.email?.charAt(0)?.toUpperCase() ??
+                      'U'}
+                  </AvatarFallback>
+                </Avatar>
+                <div className={cn('min-w-0 flex-1', labelClass)}>
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {profile?.full_name ?? 'User'}
+                  </p>
+                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <PresenceDot status="online" />
+                    <span className="truncate" title={account?.name ?? undefined}>
+                      {account?.name ?? profile?.email ?? ''}
+                    </span>
+                  </p>
+                </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                side="top"
+                sideOffset={6}
+                className="min-w-56 bg-popover text-popover-foreground ring-border"
               >
-                <SettingsIcon className="size-4" />
-                Settings
-              </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-border" />
-              <DropdownMenuItem
-                onClick={signOut}
-                className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
-              >
-                <LogOut className="size-4" />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </aside>
+                <div className="px-2 py-1.5">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {profile?.full_name ?? 'User'}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {profile?.email ?? ''}
+                  </p>
+                  {accountRole
+                    ? (() => {
+                      const meta = ROLE_META[accountRole];
+                      const Icon = meta.icon;
+                      return (
+                        <span
+                          className={cn(
+                            'mt-1.5 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase',
+                            meta.className,
+                          )}
+                        >
+                          <Icon className="size-3" />
+                          {meta.label}
+                        </span>
+                      );
+                    })()
+                    : null}
+                </div>
+                <DropdownMenuSeparator className="bg-border" />
+                <DropdownMenuItem
+                  render={
+                    <Link
+                      href="/settings?tab=profile"
+                      onClick={onCloseDrawer}
+                      className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                    />
+                  }
+                >
+                  <User className="size-4" />
+                  Profile
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  render={
+                    <Link
+                      href="/settings"
+                      onClick={onCloseDrawer}
+                      className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                    />
+                  }
+                >
+                  <SettingsIcon className="size-4" />
+                  Settings
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-border" />
+                <DropdownMenuItem
+                  onClick={signOut}
+                  className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                >
+                  <LogOut className="size-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </aside>
+      </div>
     </>
   );
 }

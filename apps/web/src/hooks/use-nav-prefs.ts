@@ -3,8 +3,10 @@
 import { useCallback, useSyncExternalStore } from 'react';
 
 /**
- * Device-scoped layout preferences for the dual sidebar: whether the
- * primary rail shows labels, and whether the second panel is open.
+ * Device-scoped layout preference for the dual sidebar: whether the
+ * primary rail is locked open. It is the only one — the second panel has
+ * no collapse control, and the rail's hover peek is transient state that
+ * belongs to the component, not to localStorage.
  *
  * Backed by `useSyncExternalStore` rather than `useState` + a
  * read-localStorage-on-mount effect. localStorage *is* an external store,
@@ -21,8 +23,9 @@ import { useCallback, useSyncExternalStore } from 'react';
  *     subscription, so collapsing the rail in one tab updates the others.
  */
 
+// Key kept from when this pref was called "expanded" — same meaning,
+// same value, and renaming it would silently reset everyone's rail.
 const RAIL_KEY = 'converse360:nav:rail-expanded';
-const PANEL_KEY = 'converse360:nav:panel-open';
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -79,16 +82,15 @@ function useStoredBool(key: string, fallback: boolean) {
 }
 
 export interface NavPrefs {
-  /** Rail shows labels (`lg:w-56`) rather than icons only (`lg:w-14`). */
-  railExpanded: boolean;
-  toggleRail: () => void;
-  /** Second sidebar is open (only meaningful on panel-bearing routes). */
-  panelOpen: boolean;
-  togglePanel: () => void;
+  /**
+   * Rail is pinned open — labelled (`lg:w-56`) and holding its own
+   * column. Unlocked it rests at `lg:w-14` and widens on hover instead.
+   */
+  railLocked: boolean;
+  toggleRailLock: () => void;
 }
 
 export function useNavPrefs(): NavPrefs {
-  const [railExpanded, toggleRail] = useStoredBool(RAIL_KEY, true);
-  const [panelOpen, togglePanel] = useStoredBool(PANEL_KEY, true);
-  return { railExpanded, toggleRail, panelOpen, togglePanel };
+  const [railLocked, toggleRailLock] = useStoredBool(RAIL_KEY, true);
+  return { railLocked, toggleRailLock };
 }

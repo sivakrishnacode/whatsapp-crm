@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import type { NavIcon } from '@/lib/nav/channels';
 
 import { cn } from '@/lib/utils';
@@ -17,6 +16,11 @@ import type { ChannelDef, PanelGroup } from '@/lib/nav/nav-config';
  * Rows are links rather than buttons even for Settings, where selection
  * used to be local state: `?tab=` remains the source of truth, so every
  * existing deep link keeps working and the panel needs no callback.
+ *
+ * It has **no collapse control**. It only renders on routes that have
+ * one, it is the only place those routes' sub-navigation exists, and the
+ * primary rail already carries a width control — a second toggle right
+ * next to it was two controls for one column of chrome.
  *
  * Hidden below `lg` — on mobile these groups render inline inside the
  * primary rail's drawer instead (one drawer, no nested focus trap).
@@ -71,8 +75,6 @@ interface SecondaryPanelProps {
   icon?: NavIcon;
   /** Row to highlight, from `resolveNavContext`. */
   activeItemId: string | null;
-  open: boolean;
-  onToggle: () => void;
 }
 
 export function SecondaryPanel({
@@ -81,32 +83,12 @@ export function SecondaryPanel({
   channel,
   icon: FallbackIcon,
   activeItemId,
-  open,
-  onToggle,
 }: SecondaryPanelProps) {
   const { canEditSettings, isOwner } = useAuth();
   const statuses = useChannelStatus();
 
   const HeaderIcon = channel?.icon ?? FallbackIcon;
   const status = channel ? statuses[channel.id] : null;
-
-  // Collapsed: a thin reopen strip rather than nothing, so the panel is
-  // recoverable without going back through the rail.
-  if (!open) {
-    return (
-      <div className="hidden w-10 shrink-0 flex-col items-center border-r border-border bg-card pt-4 lg:flex">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label={`Show ${title} menu`}
-          aria-expanded={false}
-          className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <PanelLeftOpen className="size-4" />
-        </button>
-      </div>
-    );
-  }
 
   return (
     <aside
@@ -120,15 +102,6 @@ export function SecondaryPanel({
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
           {title}
         </span>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label={`Hide ${title} menu`}
-          aria-expanded
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <PanelLeftClose className="size-4" />
-        </button>
       </div>
 
       {status ? (
