@@ -275,6 +275,11 @@ export function MessageComposer({
       if (!res.ok) {
         if (data.code === "ai_not_configured") {
           toast.error("AI isn't set up yet — enable it in Settings → AI Assistant.");
+        } else if (data.code === "empty_response") {
+          // The provider answered with nothing. Naming it as the model's
+          // silence rather than "couldn't draft" is what tells the agent
+          // that trying again is worth a click.
+          toast.error("The assistant came back empty — try again.");
         } else {
           toast.error(data.error ?? "Couldn't draft a reply.");
         }

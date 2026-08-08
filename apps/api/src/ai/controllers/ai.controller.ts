@@ -21,7 +21,7 @@ import { encrypt, decrypt } from '../../common/security/encryption.util';
 import { validateAiCredentials } from '../lib/validate';
 import { EMBEDDING_MODEL, embedTexts } from '../lib/embeddings';
 import { loadAiConfig } from '../lib/config';
-import { buildConversationContext } from '../lib/context';
+import { buildConversationContext, withDraftNudge } from '../lib/context';
 import { generateReply } from '../lib/generate';
 import { AiError, type AiProvider, type ChatMessage, type EmbeddingsProvider } from '../lib/types';
 
@@ -471,13 +471,32 @@ export class AiController {
       },
     });
 
-    const { text } = await generateReply({
-      config,
-      systemPrompt: run.systemPrompt,
-      messages,
-      tools: run.tools,
-      executeTool: run.executeTool,
-    });
+    // `assemble` above got the real transcript, so knowledge was retrieved
+    // for what the customer actually asked. Only generation gets the
+    // nudged copy — see `withDraftNudge`.
+    let text: string;
+    try {
+      ({ text } = await generateReply({
+        config,
+        systemPrompt: run.systemPrompt,
+        messages: withDraftNudge(messages),
+        tools: run.tools,
+        executeTool: run.executeTool,
+      }));
+    } catch (err) {
+      // A provider failure here is the user's own key talking to their own
+      // provider: their message is the useful one, and letting it escape as
+      // an unhandled 500 costs them the only diagnosis available.
+      if (err instanceof AiError) {
+        throw new HttpException(
+          { error: err.message, code: err.code },
+          err.status >= 400 && err.status < 600
+            ? err.status
+            : HttpStatus.BAD_GATEWAY,
+        );
+      }
+      throw err;
+    }
 
     return {
       draft: text,
