@@ -50,12 +50,17 @@ describe('buildSystemPrompt', () => {
       escalation,
       skills: resolveSkills({ faq: { enabled: true, config: {} } }),
       knowledge: [
-        { chunkId: 'c1', documentId: 'd1', content: 'Delivery takes 3 days.', title: 'Delivery' },
+        {
+          chunkId: 'c1',
+          documentId: 'd1',
+          content: 'Delivery takes 3 days.',
+          title: 'Delivery',
+        },
       ],
     });
 
     const rulesAt = prompt.indexOf('Never promise same-day delivery.');
-    const skillsAt = prompt.indexOf('Your jobs.');
+    const skillsAt = prompt.indexOf('Your jobs:');
     const knowledgeAt = prompt.indexOf('Knowledge base —');
 
     expect(rulesAt).toBeGreaterThan(-1);
@@ -125,5 +130,84 @@ describe('buildSystemPrompt', () => {
 
     expect(prompt).toContain('Tools available: lookup_orders, check_stock');
     expect(prompt).toContain('never invent a result when a call fails');
+  });
+
+  /**
+   * ============================================================
+   * Thread continuity.
+   *
+   * These pin the fix for the worst behaviour this agent had: it would
+   * answer the second message of a conversation as though it were the
+   * first, re-introduce itself, and recite the business's services.
+   *
+   *   customer: where is my order?
+   *   agent:    I couldn't find one — what's your order reference?
+   *   customer: i don't have one, my mobile is 78100…
+   *   agent:    I'm Nova! As a branding agency we don't have orders to
+   *             look up. Would you like to explore our web design…?
+   *
+   * The cause was the prompt, not the model. The skills block told it to
+   * judge "the customer's LATEST MESSAGE" — which invites reading a
+   * follow-up in isolation — and then, when no job matched, to "say what
+   * you can help with", which is a brochure recital. It was obeying.
+   *
+   * The assertions below are deliberately about MEANING rather than
+   * exact phrasing: reword freely, but a build where the agent is told
+   * to judge a message on its own, or to answer a live question with a
+   * capability list, is the regression.
+   * ============================================================
+   */
+  describe('holding a conversation', () => {
+    const withSkills = () =>
+      buildSystemPrompt({
+        userPrompt: null,
+        mode: 'auto_reply',
+        profile,
+        skills: resolveSkills({ order_status: { enabled: true, config: {} } }),
+      });
+
+    it('reads the newest message in the context of the conversation', () => {
+      const prompt = withSkills();
+      expect(prompt).toContain('not on its own');
+      expect(prompt).toMatch(
+        /continuation of what you were already discussing/i,
+      );
+    });
+
+    it('never tells the agent to judge the latest message alone', () => {
+      // The exact wording that caused the reset. If it comes back — in
+      // this form or by someone "simplifying" the paragraph — the bug
+      // comes back with it.
+      expect(withSkills()).not.toMatch(/fits the customer’?s latest message/i);
+    });
+
+    it('answers a dead end by staying on the thread, not by pitching', () => {
+      const prompt = withSkills();
+      expect(prompt).toMatch(/stay on the thread you are already in/i);
+      expect(prompt).toMatch(
+        /never a way to answer a question already in progress/i,
+      );
+    });
+
+    it('allows the agent to name itself only at the start or on request', () => {
+      const prompt = withSkills();
+      expect(prompt).toContain('never re-introduce yourself partway through');
+      expect(prompt).toContain('Never claim to be a human being');
+    });
+
+    it('tells the agent to answer from retrieved knowledge, not recite it', () => {
+      // Knowledge is last in the prompt, so it is the freshest thing in
+      // the window — which is exactly why an "about us" excerpt could
+      // become the reply. It is background, not a script.
+      const prompt = buildSystemPrompt({
+        userPrompt: null,
+        mode: 'auto_reply',
+        knowledge: ['Acme is a branding and design agency.'],
+      });
+      expect(prompt).toMatch(/answer FROM them rather than reciting them/i);
+      expect(prompt).toMatch(
+        /never a cue to pitch the business mid-conversation/i,
+      );
+    });
   });
 });
