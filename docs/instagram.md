@@ -17,7 +17,7 @@ These are not cosmetic. Each one shaped a design decision.
 | | WhatsApp | Instagram |
 |---|---|---|
 | Host | `graph.facebook.com/v21.0` | `graph.instagram.com/v23.0` |
-| App credentials | `META_APP_ID` / `META_APP_SECRET` | **`INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET`** — a different app |
+| App credentials | `META_APP_ID` / `META_APP_SECRET` | **`INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET`** — a second credential pair inside the *same* Meta app (see below) |
 | Identity | E.164 phone (`wa_id`) | IGSID — app-scoped, **no phone** |
 | Webhook envelope | `entry[].changes[].value.messages[]` | `entry[].messaging[]` (Messenger-shaped) |
 | Timestamps | epoch **seconds** | epoch **milliseconds** |
@@ -74,7 +74,18 @@ route a reply to the wrong platform.
 ## Setup
 
 Operator-side steps (Meta dashboard, App Review, business prerequisites)
-are in `notes/instagram-meta-setup-checklist.md`. In brief:
+are in `docs/meta-platform-setup.md` — the runbook covering all four Meta
+surfaces at once — and `notes/instagram-meta-setup-checklist.md`.
+
+> **These are not a separate Meta app.** Meta generates an *Instagram app
+> ID* and *Instagram app secret* inside your existing app, shown at
+> **Instagram → API setup with Instagram login**. They are genuinely
+> different values from `META_APP_ID` / `META_APP_SECRET` — Instagram
+> webhooks are signed with the Instagram secret — but one app holds both.
+> Do not create a second app: `ig_scoped_id` is app-scoped, so moving
+> Instagram to another app invalidates every stored Instagram identity.
+
+In brief:
 
 ```bash
 INSTAGRAM_APP_ID=

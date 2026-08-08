@@ -14,7 +14,7 @@ error anywhere in this app, because the webhook never reaches it.
 | Field | Value |
 |---|---|
 | Callback URL | `https://api.converse360.in/whatsapp/webhook` |
-| Verify token | **per account, from the dashboard — not an env var.** See below. |
+| Verify token | `WHATSAPP_WEBHOOK_VERIFY_TOKEN` in `apps/api/.env`. See below. |
 
 *Where:* Meta App Dashboard → WhatsApp → Configuration → Webhook → Edit.
 
@@ -26,18 +26,28 @@ silently — the feature just never fires):
 - `message_template_status_update` — template approvals/rejections.
 - `business_capability_update` — messaging tier and quality-rating changes.
 
-> **The verify token is not in `.env`.** This is multi-tenant: each account
-> connects its own WABA and sets its own token in **Channels → WhatsApp →
-> Channel Settings**. The handshake walks the configured accounts and matches
-> against `whatsapp_config.verify_token`, which is encrypted at rest.
+> **Two tokens are accepted, and you want the first one.**
 >
-> Consequence: **changing `ENCRYPTION_KEY` breaks every stored verify token and
-> access token at once.** Keep it stable across deploys.
+> `WHATSAPP_WEBHOOK_VERIFY_TOKEN` is the **app-level** token, checked first.
+> Under Tech Provider / Embedded Signup the webhook is configured once at app
+> level and we subscribe our app to each customer's WABA afterwards, so this is
+> the value that belongs in the dashboard field above. **Without it a fresh
+> deployment deadlocks**: no connected accounts means no per-account token to
+> match, so the handshake 403s, so Meta refuses to save the webhook, so no
+> account can connect.
+>
+> The **per-account** fallback remains for the older bring-your-own-Meta-app
+> path, where each customer set their own token in *Channels → WhatsApp →
+> Channel Settings*. The handshake walks those accounts and matches against
+> `whatsapp_config.verify_token`, which is encrypted at rest.
+>
+> Consequence of the fallback: **changing `ENCRYPTION_KEY` breaks every stored
+> verify token and access token at once.** Keep it stable across deploys.
 
-Handshake check (only works once a WABA is connected and its token saved):
+Handshake check — works on a completely fresh deployment:
 
 ```bash
-curl -s "https://api.converse360.in/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=THE_ACCOUNTS_TOKEN&hub.challenge=ok123"
+curl -s "https://api.converse360.in/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=$WHATSAPP_WEBHOOK_VERIFY_TOKEN&hub.challenge=ok123"
 # -> ok123
 ```
 
@@ -69,8 +79,16 @@ shows which are actually live:
 > validated" that says nothing about which part is wrong.
 
 > Deauthorize and Data Deletion are **required to pass app review**. Nothing in
-> this app ever calls them, so their absence shows up as a review rejection
+> this app ever calls them, so a misconfiguration shows up as a review rejection
 > rather than a runtime error.
+>
+> Both verify Meta's `signed_request` HMAC using **`INSTAGRAM_APP_SECRET`** and
+> then actually delete the connection and its encrypted token. If that env var
+> is unset they return 500 rather than accepting the request — failing closed,
+> because honouring an unverified deletion request would let anyone delete any
+> workspace's Instagram connection. The status URL Meta shows the user is the
+> **public** `/instagram-data-deletion` page on the web app, not anything behind
+> the dashboard's auth gate.
 
 ```bash
 curl -s "https://api.converse360.in/instagram/webhook?hub.mode=subscribe&hub.verify_token=$INSTAGRAM_WEBHOOK_VERIFY_TOKEN&hub.challenge=ok123"
