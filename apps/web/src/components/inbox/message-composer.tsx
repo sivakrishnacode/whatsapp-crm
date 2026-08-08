@@ -263,7 +263,10 @@ export function MessageComposer({
   // composer for the agent to edit + send. Read-only server-side —
   // nothing is sent until the agent hits Send.
   const handleDraft = useCallback(async () => {
-    if (drafting) return;
+    // Nothing drafted out of window. The generate call runs on the
+    // account's own provider key, so a draft nobody can send is billed
+    // to them for text that dies in the composer.
+    if (drafting || sessionExpired) return;
     setDrafting(true);
     try {
       const res = await fetch("/api/ai/draft", {
@@ -306,7 +309,7 @@ export function MessageComposer({
     } finally {
       setDrafting(false);
     }
-  }, [drafting, conversationId, adjustHeight]);
+  }, [drafting, sessionExpired, conversationId, adjustHeight]);
 
   // Upload a captured file to chat-media and stage it as a draft.
   const stageUpload = useCallback(
@@ -642,8 +645,19 @@ export function MessageComposer({
             size="sm"
             canAct={!readOnly}
             gateReason="send messages"
-            disabled={drafting}
-            title={readOnly ? undefined : "Draft a reply with AI"}
+            // Dies with the composer, not with the thread. Drafting spends
+            // the account's own provider credit, and out of window the
+            // reply cannot be sent by any route — on Instagram there is no
+            // template to fall back to at all — so the tokens would buy
+            // text that can only be deleted.
+            disabled={drafting || sessionExpired}
+            title={
+              readOnly
+                ? undefined
+                : sessionExpired
+                  ? "Reply window closed — nothing to draft until this person messages again"
+                  : "Draft a reply with AI"
+            }
             className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-primary"
             onClick={handleDraft}
           >
@@ -693,8 +707,10 @@ export function MessageComposer({
 
       {/* Hint sits outside the flex row so its height doesn't push
           `items-end` buttons below the textarea. Indented to line up
-          under the textarea left edge. */}
-      {!draft && !recording && (
+          under the textarea left edge. Hidden once the window closes —
+          the amber banner above already says why, and an instruction to
+          tap a disabled button reads as a broken button. */}
+      {!draft && !recording && !sessionExpired && (
         <p className="mt-1 pl-[5.5rem] text-[10px] text-muted-foreground">
           Tap the ✨ to draft a reply with AI — you can edit it before sending
         </p>
