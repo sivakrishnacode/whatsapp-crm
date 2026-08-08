@@ -1334,8 +1334,24 @@ export function MessageThread({
         )}
       </div>
 
-      {/* Composer */}
+      {/* Composer.
+
+          `key` is load-bearing, not decoration. Everything the composer
+          holds — typed text, an AI draft, a staged attachment, a live
+          recording — belongs to ONE conversation, but the element itself
+          persists across a switch, so without this React keeps that state
+          and it surfaces under the next contact's name. Keying on the id
+          remounts it, which resets all of it at once and runs the unmount
+          cleanup (mic released, unsent attachment GC'd from the bucket).
+
+          Deliberately structural rather than an effect that nulls each
+          piece of state: the next thing added to the composer is covered
+          for free, where a reset list is one someone has to remember to
+          extend. Same principle as the `replyTo` reset above — that one
+          stays here because it is this component's state, not the
+          composer's. */}
       <MessageComposer
+        key={conversation.id}
         conversationId={conversation.id}
         channel={channel}
         sessionExpired={sessionInfo.expired}
