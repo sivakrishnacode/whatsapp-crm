@@ -9,11 +9,31 @@
     means a re-export cannot silently delete it.
 
   BEFORE PUBLISHING
-    Every <span class="fill"> below is a placeholder that must be replaced with
-    real values, and the whole document should be read by a lawyer. The factual
-    sections — what data is collected, where it goes, how it is secured — were
-    written against what the code actually does and should not be softened
-    without changing the code to match.
+    Company details are filled in and the document reads end to end, but it has
+    NOT been reviewed by a lawyer — do that before this is relied on. The
+    factual sections — what data is collected, where it goes, how it is secured
+    — were written against what the code actually does and must not be softened
+    without changing the code to match. In particular:
+      · the AI section (§5) describes BOTH credit modes (ai_configs.credit_mode,
+        migration 072). Platform mode sends conversation content to Google on
+        OUR key and is the DEFAULT, so it cannot be described as opt-in;
+      · the database region in §6 and §12 is the Supabase project's real region
+        (aws-1-ap-northeast-2, Seoul). If the project is ever migrated, both
+        sections are wrong until updated.
+
+  ⚠ BLOCKER BEFORE THIS PAGE IS TRUE
+    §5 states that we use PAID API tiers, "whose terms prohibit the provider from
+    using the content to train or improve its models". On Google's FREE Gemini
+    tier the opposite holds — Google may use prompts and responses to improve its
+    products, and human reviewers may read them. As of writing, the shared
+    AI_PLATFORM_GEMINI_KEY is on a constrained quota tier with billing not yet
+    enabled on its Google Cloud project.
+
+    Enable billing (paid tier) on that project BEFORE platform mode is offered to
+    real customers. Until then this sentence is inaccurate, and routing WhatsApp
+    message content through a free-tier key also conflicts with Meta's WhatsApp
+    Business Solution Terms, which prohibit using WhatsApp Business data to train
+    or develop AI models.
 -->
 <html lang="en">
 <head>
@@ -31,7 +51,6 @@
     --muted: #8C978F;
     --accent: #4ADE80;
     --accent-deep: #16A34A;
-    --warn: #F6C177;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
@@ -64,16 +83,6 @@
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; margin: 20px 0; }
   .card p:first-child { margin-top: 0; }
   .card p:last-child { margin-bottom: 0; }
-  .fill {
-    background: rgba(246, 193, 119, 0.14);
-    border: 1px dashed var(--warn);
-    color: var(--warn);
-    border-radius: 5px;
-    padding: 1px 7px;
-    font-size: 0.92em;
-    font-weight: 600;
-    white-space: nowrap;
-  }
   nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 22px; margin: 32px 0 8px; }
   nav.toc ol { margin: 8px 0 0 20px; }
   nav.toc li { margin: 5px 0; }
@@ -94,7 +103,7 @@
 
 <h1>Privacy Policy</h1>
 <p class="meta">
-  Effective <span class="fill">[EFFECTIVE DATE]</span> · Last updated <span class="fill">[LAST UPDATED]</span>
+  Effective 9 August 2026 · Last updated 9 August 2026
 </p>
 
 <p>
@@ -106,11 +115,11 @@
 
 <div class="card">
   <p><strong>Who we are.</strong>
-  Converse360 is operated by <span class="fill">[REGISTERED LEGAL ENTITY NAME]</span>,
-  registered at <span class="fill">[REGISTERED ADDRESS]</span>,
-  <span class="fill">[COUNTRY]</span>. In this policy "we", "us" and "Converse360"
-  mean that company. You can reach us about anything in this policy at
-  <a href="mailto:privacy@converse360.in">privacy@converse360.in</a>.</p>
+  Converse360 is operated by <strong>Conceps Media Works</strong>, at
+  No. 38/4, Hindustan College Road, Near Nava India, Sowripalayam,
+  Coimbatore, Tamil Nadu – 641028, India. In this policy "we", "us" and
+  "Converse360" mean that business. You can reach us about anything in this
+  policy at <a href="mailto:support@converse360.in">support@converse360.in</a>.</p>
 </div>
 
 <nav class="toc" aria-label="Contents">
@@ -120,7 +129,7 @@
     <li><a href="#what">What we collect</a></li>
     <li><a href="#meta">Data from Meta platforms</a></li>
     <li><a href="#why">Why we use it</a></li>
-    <li><a href="#ai">AI features and your provider key</a></li>
+    <li><a href="#ai">AI features</a></li>
     <li><a href="#share">Who we share it with</a></li>
     <li><a href="#send-meta">What we send to Meta</a></li>
     <li><a href="#retention">How long we keep it</a></li>
@@ -230,14 +239,34 @@
   to.</p>
 </div>
 
-<h2 id="ai">5. AI features and your provider key</h2>
+<h2 id="ai">5. AI features</h2>
 <p>
-  Converse360 includes an optional AI assistant. It is <strong>bring-your-own-key</strong>:
-  a business supplies its own OpenAI, Anthropic or Google Gemini API key, which we
-  store encrypted, and conversation content is sent <em>directly to that provider
-  under the business's own agreement with them</em> — not through an account of ours.
-  A business that never adds a key never has any conversation content leave our
-  systems for an AI provider.
+  Converse360 includes an optional AI assistant. A business chooses which of two
+  ways it runs on, and the choice decides where conversation content goes.
+</p>
+<table>
+  <tr><th>Mode</th><th>Whose key</th><th>What that means for your data</th></tr>
+  <tr>
+    <td><strong>Built-in AI</strong><br>(the default)</td>
+    <td>Ours — a Converse360 account with <strong>Google Gemini</strong></td>
+    <td>When the assistant is used, the conversation content it needs is sent to
+    Google under <em>our</em> agreement with Google, and the usage is metered against
+    the workspace's credit balance. We use paid API tiers, whose terms prohibit the
+    provider from using the content to train or improve its models.</td>
+  </tr>
+  <tr>
+    <td><strong>Your own key</strong></td>
+    <td>Yours — OpenAI, Anthropic or Google</td>
+    <td>The business supplies its own API key, which we store encrypted, and content
+    goes <em>directly to that provider under the business's own agreement with
+    them</em> — never through an account of ours, and nothing is metered.</td>
+  </tr>
+</table>
+<p>
+  <strong>The assistant only runs when it is switched on.</strong> A workspace that
+  never enables it sends no conversation content to any AI provider in either mode.
+  A workspace that does enable it should assume that the messages the assistant reads
+  in order to answer are sent to the provider for that mode.
 </p>
 <p>
   Businesses may also upload documents (PDF, Word, plain text) or point us at a
@@ -261,10 +290,11 @@
 <table>
   <tr><th>Provider</th><th>What it handles</th><th>Where</th></tr>
   <tr><td>Meta Platforms</td><td>WhatsApp, Instagram, Facebook and Ads message and campaign delivery</td><td>Global</td></tr>
-  <tr><td>Supabase</td><td>Database, authentication and file storage</td><td><span class="fill">[SUPABASE REGION]</span></td></tr>
+  <tr><td>Supabase</td><td>Database, authentication and file storage</td><td>Seoul, South Korea (AWS <code>ap-northeast-2</code>)</td></tr>
   <tr><td>Stripe / Razorpay</td><td>Subscription payments and card processing</td><td>Global / India</td></tr>
+  <tr><td>Google (Gemini)</td><td>AI replies in <strong>built-in AI</strong> mode, on our key, under our contract with Google</td><td>Global</td></tr>
   <tr><td>OpenAI, Anthropic or Google</td><td>AI replies — <strong>only</strong> if the business has added its own key, and under that business's own contract with the provider</td><td>Global</td></tr>
-  <tr><td><span class="fill">[HOSTING PROVIDER]</span></td><td>Application servers and queues</td><td><span class="fill">[HOSTING REGION]</span></td></tr>
+  <tr><td>Hostinger</td><td>Application servers and queues</td><td>Mumbai, India</td></tr>
 </table>
 <p>
   We also disclose data where the law requires it — a valid court order or a binding
@@ -297,9 +327,9 @@
   <tr><td>Messages, contacts and conversation history</td><td>For as long as the workspace is active, then <strong>90 days after the subscription ends</strong>, after which it is permanently deleted.</td></tr>
   <tr><td>Access tokens for Meta channels</td><td>Deleted immediately on disconnection, deauthorisation, or account closure.</td></tr>
   <tr><td>Account and workspace records</td><td>90 days after closure.</td></tr>
-  <tr><td>Billing and tax records</td><td>Kept for as long as tax law requires, typically <span class="fill">[TAX RETENTION PERIOD]</span>, even after the account closes.</td></tr>
+  <tr><td>Billing and tax records</td><td>Kept for as long as Indian tax and company law requires — <strong>up to 8 years</strong> from the end of the relevant financial year — even after the account closes.</td></tr>
   <tr><td>Advertising records (which campaigns ran, what they spent)</td><td>Retained as the business's own financial history. These contain no personal data.</td></tr>
-  <tr><td>Security and audit logs</td><td><span class="fill">[LOG RETENTION PERIOD]</span></td></tr>
+  <tr><td>Security and audit logs</td><td>90 days, unless a longer period is needed to investigate a specific incident.</td></tr>
 </table>
 <p>
   A business can delete individual contacts, conversations or messages from inside the
@@ -312,7 +342,7 @@
 <p>
   Disconnect a channel from Settings to remove its tokens immediately. To delete the
   whole workspace, email
-  <a href="mailto:privacy@converse360.in">privacy@converse360.in</a> from the address
+  <a href="mailto:support@converse360.in">support@converse360.in</a> from the address
   on the account. We action verified requests within <strong>30 days</strong>.
 </p>
 
@@ -320,7 +350,7 @@
 <p>
   That business controls your data. Contact them first. If you cannot reach them, or
   they do not respond, write to us at
-  <a href="mailto:privacy@converse360.in">privacy@converse360.in</a> with enough
+  <a href="mailto:support@converse360.in">support@converse360.in</a> with enough
   detail to identify the records — the business's name and the phone number or
   Instagram handle you used — and we will locate and delete them.
 </p>
@@ -357,7 +387,7 @@
   <li>withdraw consent, where we relied on consent.</li>
 </ul>
 <p>
-  Email <a href="mailto:privacy@converse360.in">privacy@converse360.in</a>. We respond
+  Email <a href="mailto:support@converse360.in">support@converse360.in</a>. We respond
   within 30 days and do not charge for reasonable requests. We may need to verify your
   identity first — the alternative is a deletion endpoint anyone can point at anyone.
 </p>
@@ -369,36 +399,47 @@
 
 <h2 id="transfers">12. International transfers</h2>
 <p>
-  Our providers operate globally, so your data may be processed outside your country —
-  including in <span class="fill">[LIST PROCESSING COUNTRIES]</span>. Where data
-  leaves a jurisdiction that restricts transfers, we rely on
-  <span class="fill">[TRANSFER MECHANISM — e.g. Standard Contractual Clauses]</span>
-  and require equivalent protection from every provider we use.
+  We are based in India, but our providers operate globally, so your data is
+  processed outside India. Specifically:
+</p>
+<ul>
+  <li>our <strong>application servers and queues</strong> are in <strong>Mumbai, India</strong>;</li>
+  <li>our <strong>database and uploaded files</strong> are in <strong>Seoul, South Korea</strong>, on Supabase's AWS <code>ap-northeast-2</code> region — this includes contacts, messages and media;</li>
+  <li><strong>Meta, Stripe, Google and any AI provider</strong> operate globally and may process data in the United States, the European Union and elsewhere.</li>
+</ul>
+<p>
+  Where data leaves a jurisdiction that restricts transfers, we rely on the transfer
+  terms in each provider's data processing agreement — Standard Contractual Clauses
+  or the provider's equivalent mechanism — and we require protection equivalent to
+  this policy from every provider we use.
 </p>
 
 <h2 id="children">13. Children</h2>
 <p>
   Converse360 is a business tool and is not directed at children. We do not knowingly
-  collect personal data from anyone under <span class="fill">[AGE THRESHOLD]</span>.
+  collect personal data from anyone under <strong>18</strong>, the age at which India's
+  Digital Personal Data Protection Act 2023 stops treating a person as a child.
   If you believe a child's data has reached us, tell us and we will delete it.
 </p>
 
 <h2 id="changes">14. Changes to this policy</h2>
 <p>
   We update this page when the product changes. Material changes are announced in the
-  app and by email to workspace owners at least <span class="fill">[NOTICE PERIOD]</span>
+  app and by email to workspace owners at least <strong>30 days</strong>
   before they take effect. The "last updated" date at the top always reflects the
   current version.
 </p>
 
 <h2 id="contact">15. Contact and complaints</h2>
 <p>
+  <strong>Conceps Media Works</strong><br>
   <strong>Privacy enquiries and data requests:</strong>
-  <a href="mailto:privacy@converse360.in">privacy@converse360.in</a><br>
-  <strong>Postal address:</strong> <span class="fill">[REGISTERED ADDRESS]</span><br>
-  <strong>Grievance Officer (India, DPDP Act 2023):</strong>
-  <span class="fill">[OFFICER NAME]</span>,
-  <span class="fill">[OFFICER EMAIL]</span>
+  <a href="mailto:support@converse360.in">support@converse360.in</a><br>
+  <strong>Postal address:</strong> No. 38/4, Hindustan College Road, Near Nava India,
+  Sowripalayam, Coimbatore, Tamil Nadu – 641028, India<br>
+  <strong>Grievance Officer (India, DPDP Act 2023):</strong> The Grievance Officer,
+  Conceps Media Works, at the address above or
+  <a href="mailto:support@converse360.in">support@converse360.in</a>
 </p>
 <p>
   If you are unhappy with our response you can complain to your local data protection
@@ -409,7 +450,7 @@
 <footer class="bottom">
   <a href="/">Home</a>
   <a href="/terms">Terms of Service</a>
-  <a href="mailto:privacy@converse360.in">Contact</a>
+  <a href="mailto:support@converse360.in">Contact</a>
 </footer>
 
 </div>

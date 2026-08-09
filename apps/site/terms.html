@@ -7,11 +7,15 @@
   change. See the comment at the top of privacy.html.
 
   BEFORE PUBLISHING
-    Replace every <span class="fill"> and have a lawyer read it. The commercial
-    facts — that Meta bills the customer directly for conversations and ad spend,
-    that we never hold a credit line, that the WABA and ad account belong to the
-    customer — describe how the product actually works and must not be changed
-    without changing the product.
+    Company details are filled in, but a lawyer has NOT read this — do that
+    before it is relied on. The commercial facts — that Meta bills the customer
+    directly for conversations and ad spend, that we never hold a credit line,
+    that the WABA and ad account belong to the customer — describe how the
+    product actually works and must not be changed without changing the product.
+
+    Note the ONE exception to "we never hold your money for usage": AI credits
+    (migration 072) ARE sold by us, through Razorpay, and §5/§7 say so. Do not
+    collapse that back into the Meta paragraph — they are different flows.
 -->
 <html lang="en">
 <head>
@@ -28,7 +32,6 @@
     --text: #E8EBE6;
     --muted: #8C978F;
     --accent: #4ADE80;
-    --warn: #F6C177;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
@@ -61,16 +64,6 @@
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; margin: 20px 0; }
   .card p:first-child { margin-top: 0; }
   .card p:last-child { margin-bottom: 0; }
-  .fill {
-    background: rgba(246, 193, 119, 0.14);
-    border: 1px dashed var(--warn);
-    color: var(--warn);
-    border-radius: 5px;
-    padding: 1px 7px;
-    font-size: 0.92em;
-    font-weight: 600;
-    white-space: nowrap;
-  }
   nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 22px; margin: 32px 0 8px; }
   nav.toc ol { margin: 8px 0 0 20px; }
   nav.toc li { margin: 5px 0; }
@@ -90,13 +83,14 @@
 
 <h1>Terms of Service</h1>
 <p class="meta">
-  Effective <span class="fill">[EFFECTIVE DATE]</span> · Last updated <span class="fill">[LAST UPDATED]</span>
+  Effective 9 August 2026 · Last updated 9 August 2026
 </p>
 
 <p>
   These terms are the agreement between
-  <span class="fill">[REGISTERED LEGAL ENTITY NAME]</span> ("Converse360", "we",
-  "us") and the business that opens an account ("you"). By creating an account or
+  <strong>Conceps Media Works</strong>, Coimbatore, Tamil Nadu, India
+  ("Converse360", "we", "us") and the business that opens an account ("you").
+  By creating an account or
   using the service you accept them. If you are accepting on behalf of a company,
   you confirm you are authorised to bind it.
 </p>
@@ -156,9 +150,11 @@
   money.</strong></p>
   <p>WhatsApp conversation charges are billed by Meta to the payment method on your
   own WhatsApp Business Account. Advertising spend is billed by Meta to your own ad
-  account's funding source. There is no wallet, no credit line and no ad credit in
-  Converse360, and we do not extend credit to you or invoice you for Meta's charges.
-  Your Converse360 subscription is a separate, software-only fee.</p>
+  account's funding source. We hold no wallet, no credit line and no ad credit for
+  Meta's charges, and we do not extend credit to you or invoice you for what Meta
+  bills. Your Converse360 subscription — and any AI credits you choose to buy from us
+  (<a href="#ai">§5</a>) — are separate fees payable to us, and neither one pays for
+  anything Meta charges.</p>
   <p><strong>Until you add a payment method to your WhatsApp Business Account, you
   will not be able to start conversations with customers.</strong> That is Meta's
   requirement, not ours.</p>
@@ -197,11 +193,30 @@
 
 <h2 id="ai">5. AI features</h2>
 <p>
-  The AI assistant is optional and <strong>bring-your-own-key</strong>: you supply
-  your own OpenAI, Anthropic or Google API key, and your conversations are sent to
-  that provider under <em>your</em> agreement with them. You are responsible for that
-  agreement, for the provider's charges, and for the content the assistant produces
-  on your behalf.
+  The AI assistant is optional, and runs one of two ways — you choose which in your
+  workspace settings.
+</p>
+<ul>
+  <li>
+    <strong>Built-in AI (the default).</strong> It runs on our provider account, and
+    each use spends <strong>AI credits</strong> from your workspace balance. New
+    workspaces get a starting allowance of free credits; after that you can buy more.
+    Credits are sold by us, are consumed as you use the assistant, and are
+    <strong>non-refundable and non-transferable</strong>; unused credits do not expire
+    while your workspace is active and are forfeited when it closes. We may change
+    credit pricing prospectively on notice, and metering is measured by the tokens a
+    request actually consumes.
+  </li>
+  <li>
+    <strong>Your own key.</strong> You supply your own OpenAI, Anthropic or Google API
+    key, and your conversations are sent to that provider under <em>your</em>
+    agreement with them. You are responsible for that agreement and for the provider's
+    charges. Nothing is metered by us in this mode.
+  </li>
+</ul>
+<p>
+  In either mode you are responsible for the content the assistant produces on your
+  behalf.
 </p>
 <p>
   AI output can be wrong. You are responsible for reviewing it and for any commitment
@@ -243,15 +258,16 @@
 <table>
   <tr><th>Item</th><th>Terms</th></tr>
   <tr><td>Plans</td><td>Starter, Growth and Enterprise. Current prices are on our pricing page and in the app.</td></tr>
-  <tr><td>Trial</td><td>Selecting a plan during onboarding starts a trial. No payment is taken at that point.</td></tr>
+  <tr><td>Trial</td><td>Selecting a plan during onboarding starts a free trial of the length shown for that plan. No payment is taken at that point. <strong>One trial per workspace</strong> — switching plans during a trial carries the same clock forward and does not start a new one.</td></tr>
+  <tr><td>AI credits</td><td>Sold separately from your subscription and consumed as you use the built-in assistant. Priced per pack at checkout. <strong>Non-refundable and non-transferable</strong> once purchased — see <a href="#ai">§5</a>.</td></tr>
   <tr><td>Billing</td><td>Subscriptions are charged in advance for the period you choose, and renew automatically until cancelled.</td></tr>
   <tr><td>Payment</td><td>Processed by Stripe or Razorpay. We do not store card details.</td></tr>
   <tr><td>Taxes</td><td>Prices exclude taxes unless stated. You are responsible for any applicable tax, including GST.</td></tr>
   <tr><td>Enterprise</td><td>Priced by quotation under a separate order form, which prevails over these terms where they conflict.</td></tr>
-  <tr><td>Price changes</td><td>We will give at least <span class="fill">[PRICE CHANGE NOTICE]</span> notice before a change affects your renewal.</td></tr>
+  <tr><td>Price changes</td><td>We will give at least <strong>30 days'</strong> notice before a change affects your renewal.</td></tr>
   <tr><td>Cancellation</td><td>Cancel any time from Settings. Access continues to the end of the paid period.</td></tr>
-  <tr><td>Refunds</td><td><span class="fill">[REFUND POLICY]</span></td></tr>
-  <tr><td>Non-payment</td><td>If a payment fails we may suspend the workspace after notice, and terminate if it stays unpaid for <span class="fill">[GRACE PERIOD]</span>.</td></tr>
+  <tr><td>Refunds</td><td><strong>Subscription fees are non-refundable.</strong> Every plan begins with a free trial so you can evaluate Converse360 before paying. You may cancel at any time and keep access until the end of the period you have already paid for; we do not refund unused time in a current period, and we do not refund AI credits.</td></tr>
+  <tr><td>Non-payment</td><td>If a payment fails we may suspend the workspace after notice, and terminate if it stays unpaid for <strong>14 days</strong>.</td></tr>
 </table>
 <p class="meta">
   Again: none of the above covers Meta's charges for conversations or ad spend. Those
@@ -329,16 +345,16 @@
 <h2 id="changes">14. Changes to these terms</h2>
 <p>
   We may update these terms. Material changes are notified in the app and by email to
-  workspace owners at least <span class="fill">[NOTICE PERIOD]</span> before they take
+  workspace owners at least <strong>30 days</strong> before they take
   effect. Continuing to use the service after that means you accept them; if you do
   not, cancel before the effective date.
 </p>
 
 <h2 id="law">15. Governing law</h2>
 <p>
-  These terms are governed by the laws of <span class="fill">[JURISDICTION]</span>,
-  and the courts of <span class="fill">[COURTS / CITY]</span> have exclusive
-  jurisdiction, without regard to conflict-of-law rules.
+  These terms are governed by the laws of <strong>India</strong>, and the courts of
+  <strong>Coimbatore, Tamil Nadu</strong> have exclusive jurisdiction, without regard
+  to conflict-of-law rules.
 </p>
 <p>
   If any provision is unenforceable, the rest stands. Our failure to enforce a
@@ -348,8 +364,9 @@
 
 <h2 id="contact">16. Contact</h2>
 <p>
-  <span class="fill">[REGISTERED LEGAL ENTITY NAME]</span><br>
-  <span class="fill">[REGISTERED ADDRESS]</span><br>
+  <strong>Conceps Media Works</strong><br>
+  No. 38/4, Hindustan College Road, Near Nava India, Sowripalayam,
+  Coimbatore, Tamil Nadu – 641028, India<br>
   <a href="mailto:support@converse360.in">support@converse360.in</a>
 </p>
 
