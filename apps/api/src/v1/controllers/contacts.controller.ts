@@ -12,6 +12,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { RequiresEntitlement } from '../../subscription/guards/entitlement.guard';
 import { ApiKeyGuard } from '../../auth/guards/api-key.guard';
 import { RequireScope } from '../../auth/decorators/require-scope.decorator';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
@@ -106,6 +107,7 @@ export class ContactsController {
   }
 
   @Post()
+  @RequiresEntitlement('contacts')
   @RequireScope('contacts:write')
   async createContact(
     @CurrentAccount() ctx: AccountContext,

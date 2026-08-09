@@ -13,6 +13,7 @@ import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RequiresEntitlement } from '../../subscription/guards/entitlement.guard';
 import { MessageSendService } from '../../v1/services/message-send.service';
 import { MessagingLimitsService } from '../services/messaging-limits.service';
 import { sendReactionMessage, sendTemplateMessage } from '../meta-api.util';
@@ -97,6 +98,7 @@ export class WhatsappDashboardController {
    * (inbox) or a contact_id (contact detail → find-or-create conversation).
    */
   @Post('send')
+  @RequiresEntitlement('messages')
   async send(
     @CurrentAccount() account: SupabaseAccountContext,
     @Body() body: any,

@@ -15,6 +15,7 @@ import { AccountModule } from './account/account.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { EcommerceModule } from './ecommerce/ecommerce.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
+import { EntitlementModule } from './subscription/entitlement.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { AiModule } from './ai/ai.module';
@@ -41,6 +42,9 @@ import { AdsModule } from './ads/ads.module';
     IntegrationsModule,
     EcommerceModule,
     CampaignsModule,
+    // Global: @RequiresEntitlement() resolves EntitlementGuard from the
+    // controller's module context, and gated routes live in eight of them.
+    EntitlementModule,
     SubscriptionModule,
     OnboardingModule,
     AiModule,

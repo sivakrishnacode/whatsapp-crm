@@ -6,6 +6,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EntitlementService } from '../../subscription/services/entitlement.service';
 import {
   InstagramSendService,
   InstagramWindowClosedError,
@@ -107,6 +108,7 @@ export class MessageSendService {
     // fan-out, so this is a genuine cycle.
     @Inject(forwardRef(() => InstagramSendService))
     private readonly instagramSend: InstagramSendService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   validateSendMessageParams(params: {
@@ -599,6 +601,15 @@ export class MessageSendService {
         `[flows] pause-on-agent-send failed: ${err?.message || err}`,
       );
     }
+
+    // Counted here rather than in the two controllers above it, because
+    // this method is the single funnel every outbound message passes
+    // through — the dashboard's POST /whatsapp/send and the public API's
+    // POST /v1/messages both land here. Recorded after the send, so a
+    // message that never left is never charged against the plan, and
+    // never throwing: the message is already gone, and failing the
+    // request because a counter did not move would be the wrong trade.
+    await this.entitlements.recordUsage(accountId, 'messages');
 
     return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
   }

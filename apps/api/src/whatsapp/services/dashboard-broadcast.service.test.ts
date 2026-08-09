@@ -10,6 +10,7 @@ import {
 } from './dashboard-broadcast.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { BroadcastQueueService } from '../../queue/broadcast-queue.service';
+import type { EntitlementService } from '../../subscription/services/entitlement.service';
 
 vi.mock('../../common/security/encryption.util', () => ({
   decrypt: vi.fn(() => 'decrypted-token'),
@@ -62,6 +63,25 @@ const basePayload = {
   audience: { type: 'all' as const },
   variables: {},
 };
+
+/**
+ * Entitlement is a cross-cutting gate, not this service's subject. The
+ * stub allows everything and records nothing, so these tests keep
+ * asserting what they were written to assert; the gate's own behaviour is
+ * covered in subscription/services/entitlement.service.test.ts.
+ */
+function makeEntitlementsMock() {
+  return {
+    checkLimit: vi.fn().mockResolvedValue({
+      allowed: true,
+      currentUsage: 0,
+      limitValue: null,
+      standing: 'good',
+      reason: 'ok',
+    }),
+    recordUsage: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 describe('resolveBroadcastVariables', () => {
   const contact = CONTACT;
@@ -142,6 +162,7 @@ describe('DashboardBroadcastService.createAndQueue', () => {
     service = new DashboardBroadcastService(
       prisma as unknown as PrismaService,
       queue as unknown as BroadcastQueueService,
+      makeEntitlementsMock() as unknown as EntitlementService,
     );
   });
 

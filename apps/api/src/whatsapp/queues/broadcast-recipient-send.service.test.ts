@@ -21,6 +21,7 @@ vi.mock('../../common/security/encryption.util', () => ({
 }));
 
 import { sendTemplateMessage } from '../meta-api.util';
+import type { EntitlementService } from '../../subscription/services/entitlement.service';
 
 const CONTACT = {
   id: 'c-1',
@@ -68,6 +69,25 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * Entitlement is a cross-cutting gate, not this service's subject. The
+ * stub allows everything and records nothing, so these tests keep
+ * asserting what they were written to assert; the gate's own behaviour is
+ * covered in subscription/services/entitlement.service.test.ts.
+ */
+function makeEntitlementsMock() {
+  return {
+    checkLimit: vi.fn().mockResolvedValue({
+      allowed: true,
+      currentUsage: 0,
+      limitValue: null,
+      standing: 'good',
+      reason: 'ok',
+    }),
+    recordUsage: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe('isTransientSendError', () => {
   it('retries throttling and 5xx, not a rejected template', () => {
     expect(
@@ -103,6 +123,7 @@ describe('BroadcastRecipientSendService.sendOne', () => {
     prisma = makePrisma();
     service = new BroadcastRecipientSendService(
       prisma as unknown as PrismaService,
+      makeEntitlementsMock() as unknown as EntitlementService,
     );
     sendMock.mockResolvedValue({ messageId: 'wamid.1' });
   });
@@ -259,6 +280,7 @@ describe('BroadcastRecipientSendService.markRecipient', () => {
     prisma = makePrisma();
     service = new BroadcastRecipientSendService(
       prisma as unknown as PrismaService,
+      makeEntitlementsMock() as unknown as EntitlementService,
     );
   });
 

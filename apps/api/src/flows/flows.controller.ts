@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { RequiresEntitlement } from '../subscription/guards/entitlement.guard';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
 import { RequireRole } from '../auth/decorators/require-role.decorator';
 import { CurrentAccount } from '../auth/decorators/current-account.decorator';
@@ -104,6 +105,7 @@ export class FlowsController {
   }
 
   @Post(':id/activate')
+  @RequiresEntitlement('flows')
   @RequireRole('agent')
   async activate(
     @Param('id') id: string,

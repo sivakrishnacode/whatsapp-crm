@@ -70,6 +70,13 @@ export const IG_FUNNEL_QUEUE = 'ig-comment-funnel';
 export const ADS_SYNC_QUEUE = 'ads-sync';
 
 /**
+ * Hourly pass that expires lapsed trials and flags unbacked
+ * subscriptions past their period end. Nothing else ever moved a
+ * subscription out of `trial`.
+ */
+export const SUBSCRIPTION_SWEEP_QUEUE = 'subscription-sweep';
+
+/**
  * The dashboard's queue list, in the order it should be displayed:
  * the paths that carry customer messages first, housekeeping last.
  *
@@ -87,6 +94,7 @@ export const ALL_QUEUE_NAMES = [
   LEAD_FETCH_QUEUE,
   ECOMMERCE_SYNC_QUEUE,
   ADS_SYNC_QUEUE,
+  SUBSCRIPTION_SWEEP_QUEUE,
   LIMITS_QUEUE,
   IG_TOKEN_QUEUE,
   IG_FUNNEL_QUEUE,

@@ -1,5 +1,12 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EntitlementService } from '../../subscription/services/entitlement.service';
 import { toE164 } from '../../v1/utils/phone.util';
 import { resolveAccountCountry } from '../../common/phone/account-country.util';
 import { BroadcastQueueService } from '../../queue/broadcast-queue.service';
@@ -158,7 +165,47 @@ export class DashboardBroadcastService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly broadcastQueue: BroadcastQueueService,
+    private readonly entitlements: EntitlementService,
   ) {}
+
+  /**
+   * Refuse a broadcast whose message cost the plan cannot cover.
+   *
+   * 402 rather than 400: the request is well formed and the fix is a
+   * payment. Same shape and code as `EntitlementGuard`, so the web app has
+   * one thing to render.
+   */
+  private async assertCanSendBroadcast(
+    accountId: string,
+    recipients: number,
+  ): Promise<void> {
+    const check = await this.entitlements.checkLimit(
+      accountId,
+      'messages',
+      recipients,
+    );
+    if (check.allowed) return;
+
+    throw new HttpException(
+      {
+        error:
+          check.reason === 'subscription_lapsed'
+            ? this.entitlements.refusalMessage('messages', check)
+            : `This broadcast needs ${recipients} messages, but you have ` +
+              `used ${check.currentUsage} of ${check.limitValue ?? 0} this ` +
+              'month. Upgrade, or send to a smaller audience.',
+        code:
+          check.reason === 'subscription_lapsed'
+            ? 'subscription_lapsed'
+            : 'plan_limit_reached',
+        limit: 'messages',
+        used: check.currentUsage,
+        max: check.limitValue,
+        required: recipients,
+      },
+      HttpStatus.PAYMENT_REQUIRED,
+    );
+  }
 
   async createAndQueue(
     accountId: string,
@@ -236,6 +283,15 @@ export class DashboardBroadcastService {
       templateVariables[BUTTON_PARAMS_KEY] = trimmedButtonParams;
     }
 
+    // The route's @RequiresEntitlement('broadcasts') has already checked
+    // that this account may send one more broadcast. This is the other
+    // half: the MESSAGES it will cost, all of them, before a single row
+    // is written. Checking one message at a time would let a 4,000-person
+    // broadcast start on a plan with 300 messages left and stop
+    // three-quarters of the way through — the worst outcome available,
+    // because the recipients who did get it cannot be un-sent.
+    await this.assertCanSendBroadcast(accountId, contacts.length);
+
     const broadcast = await this.prisma.broadcasts.create({
       data: {
         user_id: userId,
@@ -269,6 +325,9 @@ export class DashboardBroadcastService {
     });
 
     await this.broadcastQueue.enqueueBroadcast(broadcast.id);
+
+    // See the API path: counted at acceptance, not completion.
+    await this.entitlements.recordUsage(accountId, 'broadcasts');
 
     return { id: broadcast.id, totalRecipients: contacts.length };
   }

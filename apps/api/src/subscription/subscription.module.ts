@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { PrismaModule } from '../prisma/prisma.module';
+import { SUBSCRIPTION_SWEEP_QUEUE } from '../queue/queue.constants';
+import { SubscriptionSweepService } from './services/subscription-sweep.service';
+import { SubscriptionSweepProcessor } from './subscription-sweep.processor';
 import { SubscriptionService } from './services/subscription.service';
 import { SubscriptionController } from './controllers/subscription.controller';
 import { RazorpayController } from './controllers/razorpay.controller';
@@ -25,16 +29,24 @@ import { AiCreditsModule } from '../ai/credits/ai-credits.module';
  * is exactly why its auth is separate.
  */
 @Module({
-  // Razorpay's webhook carries AI credit top-ups alongside plan
-  // payments, so the handler needs to be able to grant them.
-  imports: [PrismaModule, AiCreditsModule],
+  imports: [
+    PrismaModule,
+    // Razorpay's webhook carries AI credit top-ups alongside plan
+    // payments, so the handler needs to be able to grant them.
+    AiCreditsModule,
+    BullModule.registerQueue({ name: SUBSCRIPTION_SWEEP_QUEUE }),
+  ],
   controllers: [
     SubscriptionController,
     RazorpayController,
     StripeController,
     SubscriptionWebhooksController,
   ],
-  providers: [SubscriptionService],
+  providers: [
+    SubscriptionService,
+    SubscriptionSweepService,
+    SubscriptionSweepProcessor,
+  ],
   exports: [SubscriptionService],
 })
 export class SubscriptionModule {}

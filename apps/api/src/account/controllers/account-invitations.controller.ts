@@ -11,6 +11,7 @@ import {
   UseGuards,
   Logger,
 } from '@nestjs/common';
+import { RequiresEntitlement } from '../../subscription/guards/entitlement.guard';
 import type { Request, Response } from 'express';
 import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
@@ -99,6 +100,7 @@ export class AccountInvitationsController {
    * Token is returned ONCE in the response; only its hash is persisted.
    */
   @Post('invitations')
+  @RequiresEntitlement('team_members')
   async createInvitation(
     @CurrentAccount() account: SupabaseAccountContext,
     @Body() body: { role?: unknown; expiresInDays?: unknown; label?: unknown },

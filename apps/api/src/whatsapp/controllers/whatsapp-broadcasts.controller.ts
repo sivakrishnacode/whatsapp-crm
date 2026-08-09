@@ -10,6 +10,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { RequiresEntitlement } from '../../subscription/guards/entitlement.guard';
 import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
 import { RequireRole } from '../../auth/decorators/require-role.decorator';
@@ -42,6 +43,7 @@ export class WhatsappBroadcastsController {
   ) {}
 
   @Post('broadcasts')
+  @RequiresEntitlement('broadcasts')
   @RequireRole('agent')
   async create(
     @CurrentAccount() account: SupabaseAccountContext,

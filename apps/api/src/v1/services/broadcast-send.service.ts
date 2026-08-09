@@ -5,6 +5,7 @@ import { findOrCreateContact } from '../utils/contacts.util';
 import { ApiError } from '../utils/respond.util';
 import { WebhookDeliverService } from './webhook-deliver.service';
 import { BroadcastQueueService } from '../../queue/broadcast-queue.service';
+import { EntitlementService } from '../../subscription/services/entitlement.service';
 
 const MAX_RECIPIENTS = 1000;
 
@@ -56,6 +57,7 @@ export class BroadcastSendService {
     private readonly prisma: PrismaService,
     private readonly webhookDeliver: WebhookDeliverService,
     private readonly broadcastQueue: BroadcastQueueService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   async createBroadcast(
@@ -162,6 +164,30 @@ export class BroadcastSendService {
       );
     }
 
+    // The route's @RequiresEntitlement('broadcasts') has already checked
+    // that one more broadcast is allowed. This checks what it will cost in
+    // MESSAGES, all of them, before any row is written — a per-message
+    // check would let a 4,000-recipient broadcast stop three-quarters of
+    // the way through, and the ones already delivered cannot be un-sent.
+    const budget = await this.entitlements.checkLimit(
+      accountId,
+      'messages',
+      deduped.length,
+    );
+    if (!budget.allowed) {
+      throw new ApiError(
+        budget.reason === 'subscription_lapsed'
+          ? 'subscription_lapsed'
+          : 'plan_limit_reached',
+        budget.reason === 'subscription_lapsed'
+          ? this.entitlements.refusalMessage('messages', budget)
+          : `This broadcast needs ${deduped.length} messages, but ` +
+              `${budget.currentUsage} of ${budget.limitValue ?? 0} are already ` +
+              'used this month',
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+
     // createMany + a follow-up read, rather than one create-with-nested,
     // because the per-recipient params have to land on the row: a
     // recipient job rebuilds its send from the database alone, so
@@ -195,6 +221,12 @@ export class BroadcastSendService {
     });
 
     await this.broadcastQueue.enqueueBroadcast(broadcast.id);
+
+    // One accepted broadcast against the monthly allowance. Counted at
+    // acceptance rather than completion: "25 broadcasts a month" means
+    // sends started, and a customer must not be able to re-run the same
+    // allowance by cancelling half way.
+    await this.entitlements.recordUsage(accountId, 'broadcasts');
 
     return {
       broadcastId: broadcast.id,

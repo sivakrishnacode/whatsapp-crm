@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EntitlementService } from '../../subscription/services/entitlement.service';
 import { decrypt } from '../../common/security/encryption.util';
 import { sendTemplateMessage } from '../meta-api.util';
 import {
@@ -96,7 +97,10 @@ export function isTransientSendError(err: unknown): boolean {
 export class BroadcastRecipientSendService {
   private readonly logger = new Logger(BroadcastRecipientSendService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly entitlements: EntitlementService,
+  ) {}
 
   async sendOne(
     broadcastId: string,
@@ -238,6 +242,14 @@ export class BroadcastRecipientSendService {
           params,
           messageParams,
         });
+
+        // Counted per delivered recipient rather than once at acceptance:
+        // the message budget was *checked* for the whole broadcast up
+        // front, but charging for it up front would bill an account for
+        // recipients Meta rejected. One tiny UPDATE beside a Meta API
+        // call is free by comparison.
+        await this.entitlements.recordUsage(broadcast.account_id, 'messages');
+
         return { status: 'sent', messageId: result.messageId };
       } catch (error) {
         lastError = error;
