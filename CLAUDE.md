@@ -231,6 +231,14 @@ Everything below is account-scoped configuration on `ai_configs` (one row per wo
   human. On `byok` there is deliberately **no message quota** — the provider bills the
   customer directly, so a cap we invented would be theatre. On `platform` the credit
   wallet _is_ the cap, because we are the ones paying.
+- ⚠️ **The automation gate in `AiReplyService` must ask exactly what
+  `AutomationDispatchService.dispatch` asks** — active + trigger type, _plus_ the
+  `channels` scope, _plus_ `triggerMatches` (the keyword filter). It exists only to stop
+  two replies to one message, so only an automation that genuinely fires may silence the
+  bot. It shipped as the first check alone, and one web-scoped `keyword_match` automation
+  turned auto-reply off for the whole workspace on every channel, permanently and with
+  nothing logged. Pinned by `ai-reply-automation-gate.test.ts`. It is the one gate that
+  fails **closed** (one reply beats two).
 - **Match RPCs stay `SECURITY INVOKER`** (migration 032 fixed a cross-tenant read by
   changing them from DEFINER). They are granted to `authenticated`; as DEFINER any
   signed-in user could pass a foreign `p_account_id` through PostgREST.

@@ -8,6 +8,7 @@ import { loadAiConfig } from '../lib/config';
 import { buildConversationContext } from '../lib/context';
 import { generateReply } from '../lib/generate';
 import { latestUserMessage, matchesHandoffPhrase } from '../lib/query';
+import { triggerMatches } from '../../automations/services/automation-trigger-match.util';
 import { AgentRuntimeService } from './agent-runtime.service';
 import { AiCreditsService } from '../credits/ai-credits.service';
 import type { AiConfig } from '../lib/types';
@@ -62,6 +63,87 @@ export class AiReplyService {
     if (!phone) return false;
 
     return config.testNumbers.includes(phone);
+  }
+
+  /**
+   * Does an active automation already answer THIS message, on THIS
+   * channel?
+   *
+   * ⚠️ THIS MUST ASK THE SAME QUESTION `AutomationDispatchService.dispatch`
+   * ASKS, OR THE BOT GOES SILENT FOR NOTHING.
+   *
+   * The point of the gate is to stop the customer getting two replies to
+   * one message. So the only automation that should silence the bot is
+   * one that actually fires — which the dispatcher decides with three
+   * filters, not one:
+   *
+   *   1. active, and one of the two triggers that answer a plain message;
+   *   2. `channels` includes this conversation's channel (empty = any);
+   *   3. `triggerMatches` — i.e. a `keyword_match` whose keywords are
+   *      actually in the text.
+   *
+   * This used to be filter 1 alone: a single `findFirst` on
+   * (accountId, isActive, triggerType). One active automation anywhere in
+   * the workspace therefore turned the AI off EVERYWHERE, permanently —
+   * every channel, every conversation, every message, matching keyword or
+   * not. A "web chat" automation scoped to `channels = {web}` with the
+   * keyword "hi" silenced the WhatsApp and Instagram bots completely; the
+   * account's `ai_reply_count` was 0 on every thread it had ever had, and
+   * nothing logged a reason. The customer's message got no automation
+   * reply (right — wrong channel) and no AI reply (wrong).
+   *
+   * Fails CLOSED on error, unlike the gates around it: if we cannot tell
+   * whether an automation is answering, the safe outcome is one reply
+   * from the automation rather than a possible two.
+   */
+  private async anAutomationOwnsThisMessage(args: {
+    accountId: string;
+    conversationId: string;
+    text: string;
+  }): Promise<boolean> {
+    const { accountId, conversationId, text } = args;
+
+    try {
+      const automations = await this.prisma.automation.findMany({
+        where: {
+          accountId,
+          isActive: true,
+          triggerType: { in: ['new_message_received', 'keyword_match'] },
+        },
+        select: { triggerType: true, triggerConfig: true, channels: true },
+      });
+      if (automations.length === 0) return false;
+
+      const channel = await this.channelSender.channelOf(
+        accountId,
+        conversationId,
+      );
+
+      return automations.some((automation) => {
+        // An empty `channels` array means "no restriction" — the default,
+        // and what every automation predating the column carries.
+        if (
+          automation.channels.length > 0 &&
+          !automation.channels.includes(channel)
+        ) {
+          return false;
+        }
+        return triggerMatches(
+          automation.triggerType,
+          automation.triggerConfig,
+          {
+            message_text: text,
+            conversation_id: conversationId,
+            channel,
+          },
+        );
+      });
+    } catch (err) {
+      this.logger.error(
+        `[ai auto-reply] could not check automations for conversation ${conversationId}, deferring to them: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return true;
+    }
   }
 
   private async claimReplySlot(
@@ -184,18 +266,7 @@ export class AiReplyService {
         return;
       }
 
-      // 2. Gate: an active keyword/new-message automation owns the reply.
-      const activeAutomations = await this.prisma.automation.findFirst({
-        where: {
-          accountId,
-          isActive: true,
-          triggerType: { in: ['new_message_received', 'keyword_match'] },
-        },
-        select: { id: true },
-      });
-      if (activeAutomations) return;
-
-      // 3. Gate: conversation state.
+      // 2. Gate: conversation state.
       const conv = await this.prisma.conversations.findUnique({
         where: { id: conversationId },
         select: {
@@ -209,22 +280,37 @@ export class AiReplyService {
       if (conv.ai_autoreply_disabled) return; // bot turned off
       if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return;
 
-      // 4. Gate: test mode.
+      // 3. Gate: test mode.
       if (!(await this.isAllowedInTestMode(config, contactId))) return;
 
-      // 5. Build the transcript.
+      // 4. Build the transcript.
       const messages = await buildConversationContext(
         this.prisma,
         conversationId,
       );
       if (messages.length === 0) return;
 
+      const inboundText = latestUserMessage(messages);
+
+      // 5. Gate: an active automation already owns THIS message.
+      //    Deliberately after the transcript: the question is only
+      //    answerable with the text and the channel in hand.
+      if (
+        await this.anAutomationOwnsThisMessage({
+          accountId,
+          conversationId,
+          text: inboundText,
+        })
+      ) {
+        return;
+      }
+
       // 6. Trigger phrases short-circuit the model entirely. "Talk to a
       //    human" must not depend on a model agreeing that it qualifies —
       //    and it saves a paid call on the account's own key.
       if (config.escalation.handoffEnabled) {
         const phrase = matchesHandoffPhrase(
-          latestUserMessage(messages),
+          inboundText,
           config.escalation.handoffTriggerPhrases,
         );
         if (phrase) {
