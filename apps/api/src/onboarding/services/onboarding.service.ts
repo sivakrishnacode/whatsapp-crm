@@ -16,6 +16,38 @@ import {
 /** Fallback billing period when a plan carries no trial. */
 const DEFAULT_PERIOD_DAYS = 30;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The date columns for a freshly granted trial: the trial runs from now,
+ * and the first billing period starts when it ends.
+ */
+function trialWindow(now: Date, trialDays: number) {
+  const trialEnd = new Date(now.getTime() + trialDays * DAY_MS);
+  const periodEnd = new Date(trialEnd);
+  periodEnd.setDate(periodEnd.getDate() + DEFAULT_PERIOD_DAYS);
+
+  return {
+    trial_start_at: now,
+    trial_end_at: trialEnd,
+    current_period_start: trialEnd,
+    current_period_end: periodEnd,
+  };
+}
+
+/** The same columns for a plan with no trial: the period starts now. */
+function paidWindow(now: Date) {
+  const periodEnd = new Date(now);
+  periodEnd.setDate(periodEnd.getDate() + DEFAULT_PERIOD_DAYS);
+
+  return {
+    trial_start_at: null,
+    trial_end_at: null,
+    current_period_start: now,
+    current_period_end: periodEnd,
+  };
+}
+
 /** Statuses that count as "this account has paid its way in". */
 const ENTITLED_STATUSES = ['active', 'trial'] as const;
 
@@ -38,6 +70,13 @@ export interface OnboardingState {
     status: string;
     trialEndsAt: string | null;
   } | null;
+  /**
+   * Whether picking a plan would still start a trial. False once this
+   * workspace has had its one trial (migration 074), which is what lets
+   * the wizard say "your trial has ended — choose a plan and pay"
+   * instead of offering a free fortnight it will not deliver.
+   */
+  trialAvailable: boolean;
   plans: PlanView[];
 }
 
@@ -107,6 +146,9 @@ export class OnboardingService {
         referralOther: onboarding?.referral_other ?? null,
       },
       subscription,
+      trialAvailable:
+        onboarding?.trial_granted_at == null &&
+        subscription?.trialEndsAt == null,
       plans,
     };
   }
@@ -177,11 +219,19 @@ export class OnboardingService {
   }
 
   /**
-   * Step 2. Starts the plan's trial for the account owner and closes
-   * out onboarding.
+   * Step 2. Puts the account on a plan and closes out onboarding.
    *
-   * No payment is taken here: Starter and Growth both carry a 15-day
-   * trial, and checkout happens from /pricing before it lapses.
+   * No payment is taken here: the trial carries them, and checkout
+   * happens from /pricing before it lapses.
+   *
+   * ⚠️ Switching plans does NOT restart the trial — see
+   * `startSubscription`. A workspace gets one trial, ever.
+   *
+   * A subscription that is already `active` is refused: that account is
+   * paying, and letting the wizard endpoint move a payer onto another
+   * tier would change what they are entitled to without changing what
+   * they are charged. Plan changes for a paying account belong to
+   * checkout.
    */
   async selectPlan(
     accountId: string,
@@ -189,8 +239,17 @@ export class OnboardingService {
   ): Promise<OnboardingState> {
     const plan = await this.findSelectablePlan(planName);
     const ownerUserId = await this.getOwnerUserId(accountId);
+    const existing = await this.findOwnerSubscription(ownerUserId);
+
+    if (existing?.status === 'active') {
+      throw new BadRequestException(
+        'This workspace already has a paid plan. Change it from Settings → ' +
+          'Plan & billing.',
+      );
+    }
 
     await this.startSubscription({
+      accountId,
       ownerUserId,
       planId: plan.id,
       trialDays: plan.trial_days,
@@ -205,21 +264,41 @@ export class OnboardingService {
   }
 
   /**
-   * Step 2, Enterprise. Records the enquiry and provisions the same
-   * trial as any other tier.
+   * Step 2, Enterprise. Records the enquiry, and provisions a trial ONLY
+   * for an account that has no working subscription yet.
    *
-   * The trial matters: onboarding is a hard gate, so without it the
-   * account would sit locked out of the product until a salesperson
-   * replied. The negotiated price lands in `plan_enquiries` because
-   * there is nowhere on user_subscriptions to put an amount.
+   * ⚠️ AN ENQUIRY IS A SALES SIGNAL, NOT A BILLING CHANGE. This endpoint
+   * is reachable from two places, and they need opposite behaviour:
+   *
+   *   - `/welcome`, for a brand-new account. Onboarding is a hard gate,
+   *     so something has to be provisioned or the workspace sits locked
+   *     out until a salesperson replies. Hence the trial.
+   *   - `/pricing`, for an account that is already running. Here the
+   *     original code ran the same upsert and so *overwrote a live
+   *     subscription*: a paying Growth customer who asked a question
+   *     about Enterprise was moved onto a free Enterprise trial, their
+   *     `payment_method` rewritten to `manual` while their gateway id
+   *     stayed put — the gateway kept charging a customer our own
+   *     records showed as a manual trial — and their MRR silently
+   *     became zero, because Enterprise is priced 0 for "quoted".
+   *
+   * So the trial is now conditional on the account not already being
+   * entitled. The enquiry row is written either way; that is the part
+   * sales actually needs. The negotiated price still lives in
+   * `plan_enquiries` because `user_subscriptions` has nowhere to put an
+   * amount — see the admin panel's README on giving such a customer
+   * their own private plan row.
    */
   async submitEnquiry(
     accountId: string,
     userId: string,
     dto: PlanEnquiryDto,
   ): Promise<OnboardingState> {
-    const plan = await this.findSelectablePlan(ENTERPRISE_PLAN);
     const ownerUserId = await this.getOwnerUserId(accountId);
+    const existing = await this.findOwnerSubscription(ownerUserId);
+    const alreadyEntitled =
+      existing !== null &&
+      (ENTITLED_STATUSES as readonly string[]).includes(existing.status);
 
     await this.prisma.plan_enquiries.create({
       data: {
@@ -233,14 +312,26 @@ export class OnboardingService {
       },
     });
 
+    if (alreadyEntitled) {
+      this.logger.log(
+        `Enterprise enquiry recorded for account ${accountId}; ` +
+          `left on ${existing.planName} (${existing.status})`,
+      );
+      return this.getState(accountId);
+    }
+
+    const plan = await this.findSelectablePlan(ENTERPRISE_PLAN);
     await this.startSubscription({
+      accountId,
       ownerUserId,
       planId: plan.id,
       trialDays: plan.trial_days,
     });
     await this.markCompleted(accountId);
 
-    this.logger.log(`Enterprise enquiry recorded for account ${accountId}`);
+    this.logger.log(
+      `Enterprise enquiry recorded for account ${accountId}; provisioned trial`,
+    );
 
     return this.getState(accountId);
   }
@@ -325,40 +416,102 @@ export class OnboardingService {
    * a manually-assigned plan and a self-selected one produce identical
    * rows: during a trial the billing period starts when the trial ends.
    */
+  /**
+   * Put the owner's subscription on a plan.
+   *
+   * ⚠️ ONE TRIAL PER WORKSPACE, EVER (migration 074).
+   *
+   * This used to write `trial_start_at = now()` on every call, and both
+   * callers are reachable repeatedly — so clicking between Starter,
+   * Growth and Enterprise granted a fresh 15 days each time and the
+   * product was free for as long as somebody kept changing their mind.
+   *
+   * `account_onboarding.trial_granted_at` is the latch. When it is set,
+   * the trial columns are not written at all: the existing window is
+   * carried forward, and the resulting status is whatever that window
+   * says — still `trial` while it runs, `expired` once it has passed.
+   * Only an operator in apps/admin-panel can grant time after that, and
+   * that is deliberate: an extension is a decision someone is making,
+   * recorded in `admin_audit_log`.
+   *
+   * The latch is checked against the subscription row as well as the
+   * column, so an account that somehow carries a trial start without a
+   * latch cannot claim a second one either.
+   */
   private async startSubscription({
+    accountId,
     ownerUserId,
     planId,
     trialDays,
   }: {
+    accountId: string;
     ownerUserId: string;
     planId: string;
     trialDays: number | null;
   }): Promise<void> {
     const now = new Date();
-    const trialStart = trialDays ? now : null;
-    const trialEnd = trialDays
-      ? new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000)
-      : null;
 
-    const periodStart = trialEnd ?? now;
-    const periodEnd = new Date(periodStart);
-    periodEnd.setDate(periodEnd.getDate() + DEFAULT_PERIOD_DAYS);
+    const [existing, onboarding] = await Promise.all([
+      this.prisma.user_subscriptions.findUnique({
+        where: { user_id: ownerUserId },
+        select: {
+          trial_start_at: true,
+          trial_end_at: true,
+          stripe_subscription_id: true,
+          razorpay_subscription_id: true,
+        },
+      }),
+      this.prisma.account_onboarding.findUnique({
+        where: { account_id: accountId },
+        select: { trial_granted_at: true },
+      }),
+    ]);
+
+    const trialAlreadyUsed =
+      onboarding?.trial_granted_at != null || existing?.trial_start_at != null;
+    const grantTrial = trialDays !== null && trialDays > 0 && !trialAlreadyUsed;
+
+    // Rewriting this to 'manual' while a gateway id is still present is
+    // how a record comes to claim nobody is charging a customer Razorpay
+    // is charging every month. The ids are deliberately left in place
+    // (a cancelled subscription's webhooks still reference them), so the
+    // method has to be left alone with them.
+    const hasGateway = Boolean(
+      existing?.stripe_subscription_id ?? existing?.razorpay_subscription_id,
+    );
 
     // Annotated rather than inferred: without the enum type, `status`
     // widens to `string` and Prisma rejects the write. `tsc --noEmit`
     // happens to accept it, so only `nest build` catches the drift.
-    const status: subscription_status_enum = trialEnd ? 'trial' : 'active';
+    const status: subscription_status_enum = grantTrial
+      ? 'trial'
+      : trialAlreadyUsed
+        ? // The carried-forward window decides. A plan switch mid-trial
+          // stays on trial; one after it has lapsed lands expired, which
+          // is the honest state for "your trial is spent and you have
+          // not paid" — it must not silently read as active.
+          this.trialStillRunning(existing?.trial_end_at, now)
+          ? 'trial'
+          : 'expired'
+        : // No trial on this plan at all: straight onto a paid period.
+          'active';
+
+    // The date columns are set as a group or not at all, so "switching
+    // plans leaves the clock alone" is one empty object rather than four
+    // conditionals that could disagree with each other.
+    const window = grantTrial
+      ? trialWindow(now, trialDays)
+      : trialAlreadyUsed
+        ? {}
+        : paidWindow(now);
 
     const fields = {
       plan_id: planId,
       status,
       billing_cycle: 'monthly' as const,
-      trial_start_at: trialStart,
-      trial_end_at: trialEnd,
-      current_period_start: periodStart,
-      current_period_end: periodEnd,
       cancel_at_period_end: false,
-      payment_method: 'manual' as const,
+      ...(hasGateway ? {} : { payment_method: 'manual' as const }),
+      ...window,
     };
 
     await this.prisma.user_subscriptions.upsert({
@@ -369,6 +522,25 @@ export class OnboardingService {
       // Stripe subscription the webhooks still reference.
       update: fields,
     });
+
+    if (grantTrial) {
+      // Latched in the same operation that granted it. The upsert above
+      // is the only writer of the window, so a latch without a window
+      // (or the reverse) is not a state this path can produce.
+      await this.prisma.account_onboarding.upsert({
+        where: { account_id: accountId },
+        create: { account_id: accountId, trial_granted_at: now },
+        update: { trial_granted_at: now },
+      });
+    }
+  }
+
+  /** Is a carried-forward trial window still open? */
+  private trialStillRunning(
+    trialEndAt: Date | null | undefined,
+    now: Date,
+  ): boolean {
+    return trialEndAt != null && trialEndAt.getTime() > now.getTime();
   }
 
   private async markCompleted(accountId: string): Promise<void> {

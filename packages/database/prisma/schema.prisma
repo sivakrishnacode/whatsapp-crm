@@ -663,6 +663,11 @@ model account_onboarding {
   referral_other  String?
   /// NULL until the plan step succeeds — this is what the dashboard gate reads.
   completed_at    DateTime? @db.Timestamptz(6)
+  /// Latch, not a window: the trial's dates live on user_subscriptions
+  /// (migration 074). Non-null means self-service may never start another
+  /// trial for this workspace — one per account, however many plans get
+  /// clicked. Only an admin-panel operator can extend or restart one.
+  trial_granted_at DateTime? @db.Timestamptz(6)
   created_at      DateTime  @default(now()) @db.Timestamptz(6)
   updated_at      DateTime  @default(now()) @db.Timestamptz(6)
   accounts        Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)

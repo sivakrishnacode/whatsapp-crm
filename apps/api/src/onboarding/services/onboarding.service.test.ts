@@ -29,7 +29,7 @@ const STARTER = {
 function makePrismaMock() {
   return {
     account: { findUnique: vi.fn(), update: vi.fn() },
-    account_onboarding: { upsert: vi.fn() },
+    account_onboarding: { findUnique: vi.fn(), upsert: vi.fn() },
     subscription_plans: { findUnique: vi.fn() },
     user_subscriptions: { findUnique: vi.fn(), upsert: vi.fn() },
     plan_enquiries: { create: vi.fn() },
@@ -53,6 +53,22 @@ interface UpsertCall {
  */
 function upsertCall(mock: { mock: { calls: unknown[][] } }): UpsertCall {
   return mock.mock.calls[0][0] as UpsertCall;
+}
+
+/**
+ * The upsert on this mock whose `update` half carries `key`.
+ *
+ * `account_onboarding` is upserted twice on the trial-granting path — once
+ * to latch `trial_granted_at`, once to set `completed_at` — so indexing
+ * call [0] would silently assert against whichever happens to run first.
+ */
+function upsertTouching(
+  mock: { mock: { calls: unknown[][] } },
+  key: string,
+): UpsertCall | undefined {
+  return mock.mock.calls
+    .map((call) => call[0] as UpsertCall)
+    .find((call) => key in call.update || key in call.create);
 }
 
 /** First argument of a `create` mock, typed. Same reasoning as above. */
@@ -110,6 +126,13 @@ function primeState(
     account_onboarding: onboarding,
   });
   prisma.user_subscriptions.findUnique.mockResolvedValue(subscription);
+  // The trial latch (migration 074). Read from the same row getState
+  // already loads, so it mirrors whatever `onboarding` says.
+  prisma.account_onboarding.findUnique.mockResolvedValue(
+    onboarding
+      ? { trial_granted_at: onboarding.trial_granted_at ?? null }
+      : null,
+  );
   subscriptions.listSelectablePlans.mockResolvedValue([planView()]);
 }
 
@@ -317,7 +340,8 @@ describe('OnboardingService', () => {
       await service.selectPlan('acc-1', 'STARTER');
 
       expect(
-        upsertCall(prisma.account_onboarding.upsert).update.completed_at,
+        upsertTouching(prisma.account_onboarding.upsert, 'completed_at')?.update
+          .completed_at,
       ).toBeInstanceOf(Date);
     });
 
@@ -375,6 +399,113 @@ describe('OnboardingService', () => {
       expect(update).not.toHaveProperty('razorpay_subscription_id');
       expect(update).not.toHaveProperty('stripe_subscription_id');
     });
+
+    it('latches the trial so it can only ever be granted once', async () => {
+      prisma.subscription_plans.findUnique.mockResolvedValue(STARTER);
+      primeState(prisma, subscriptions);
+
+      await service.selectPlan('acc-1', 'STARTER');
+
+      expect(
+        upsertTouching(prisma.account_onboarding.upsert, 'trial_granted_at')
+          ?.update.trial_granted_at,
+      ).toBeInstanceOf(Date);
+    });
+
+    /**
+     * The leak this closes: every call used to write trial_start_at = now,
+     * so clicking between Starter, Growth and Enterprise handed out a fresh
+     * fortnight each time.
+     */
+    it('does not restart the trial when switching plans mid-trial', async () => {
+      prisma.subscription_plans.findUnique.mockResolvedValue(STARTER);
+      primeState(prisma, subscriptions, {
+        onboarding: {
+          completed_at: new Date('2026-08-01T00:00:00Z'),
+          trial_granted_at: new Date('2026-08-01T00:00:00Z'),
+        },
+        subscription: {
+          status: 'trial',
+          trial_start_at: new Date('2026-08-01T00:00:00Z'),
+          trial_end_at: new Date('2100-01-01T00:00:00Z'),
+          subscription_plans: { name: 'GROWTH', display_name: 'Growth' },
+        },
+      });
+
+      await service.selectPlan('acc-1', 'STARTER');
+
+      const { update } = upsertCall(prisma.user_subscriptions.upsert);
+      expect(update.plan_id).toBe('plan-starter');
+      expect(update.status).toBe('trial');
+      // The clock is not touched at all — not extended, not reset.
+      expect(update).not.toHaveProperty('trial_start_at');
+      expect(update).not.toHaveProperty('trial_end_at');
+      expect(update).not.toHaveProperty('current_period_end');
+      expect(
+        upsertTouching(prisma.account_onboarding.upsert, 'trial_granted_at'),
+      ).toBeUndefined();
+    });
+
+    it('lands expired when the one trial has already lapsed', async () => {
+      prisma.subscription_plans.findUnique.mockResolvedValue(STARTER);
+      primeState(prisma, subscriptions, {
+        onboarding: {
+          completed_at: new Date('2026-01-01T00:00:00Z'),
+          trial_granted_at: new Date('2026-01-01T00:00:00Z'),
+        },
+        subscription: {
+          status: 'expired',
+          trial_start_at: new Date('2026-01-01T00:00:00Z'),
+          trial_end_at: new Date('2026-01-16T00:00:00Z'),
+          subscription_plans: { name: 'STARTER', display_name: 'Starter' },
+        },
+      });
+
+      await service.selectPlan('acc-1', 'STARTER');
+
+      // Not 'active': they have consumed their trial and paid nothing.
+      expect(upsertCall(prisma.user_subscriptions.upsert).update.status).toBe(
+        'expired',
+      );
+    });
+
+    it('refuses to move an account that is already paying', async () => {
+      prisma.subscription_plans.findUnique.mockResolvedValue(STARTER);
+      primeState(prisma, subscriptions, {
+        subscription: {
+          status: 'active',
+          trial_end_at: null,
+          subscription_plans: { name: 'GROWTH', display_name: 'Growth' },
+        },
+      });
+
+      await expect(service.selectPlan('acc-1', 'STARTER')).rejects.toThrow(
+        /already has a paid plan/,
+      );
+      expect(prisma.user_subscriptions.upsert).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Writing 'manual' over a gateway-backed row is how a record comes to
+     * claim nobody is charging a customer Razorpay charges every month.
+     */
+    it('leaves payment_method alone when a gateway subscription is attached', async () => {
+      prisma.subscription_plans.findUnique.mockResolvedValue(STARTER);
+      primeState(prisma, subscriptions, {
+        subscription: {
+          status: 'cancelled',
+          trial_end_at: null,
+          razorpay_subscription_id: 'sub_ABC',
+          subscription_plans: { name: 'GROWTH', display_name: 'Growth' },
+        },
+      });
+
+      await service.selectPlan('acc-1', 'STARTER');
+
+      expect(
+        upsertCall(prisma.user_subscriptions.upsert).update,
+      ).not.toHaveProperty('payment_method');
+    });
   });
 
   describe('submitEnquiry', () => {
@@ -413,8 +544,55 @@ describe('OnboardingService', () => {
       expect(create.plan_id).toBe('plan-ent');
       expect(create.status).toBe('trial');
       expect(
-        upsertCall(prisma.account_onboarding.upsert).update.completed_at,
+        upsertTouching(prisma.account_onboarding.upsert, 'completed_at')?.update
+          .completed_at,
       ).toBeInstanceOf(Date);
+    });
+
+    /**
+     * The bug: /pricing exposes this endpoint to accounts that already have
+     * a subscription, and the enquiry used to run the same upsert as the
+     * wizard — so a paying Growth customer who asked a question about
+     * Enterprise was moved onto a free Enterprise trial, and their MRR
+     * silently became zero.
+     */
+    it('leaves a live subscription completely alone', async () => {
+      primeState(prisma, subscriptions, {
+        onboarding: {
+          completed_at: new Date('2026-08-01T00:00:00Z'),
+          trial_granted_at: new Date('2026-08-01T00:00:00Z'),
+        },
+        subscription: {
+          status: 'active',
+          trial_end_at: null,
+          subscription_plans: { name: 'GROWTH', display_name: 'Growth' },
+        },
+      });
+
+      const state = await service.submitEnquiry('acc-1', 'user-9', enquiry);
+
+      expect(prisma.plan_enquiries.create).toHaveBeenCalledTimes(1);
+      expect(prisma.user_subscriptions.upsert).not.toHaveBeenCalled();
+      expect(state.subscription?.planName).toBe('GROWTH');
+    });
+
+    it('leaves a running trial alone too', async () => {
+      primeState(prisma, subscriptions, {
+        onboarding: {
+          completed_at: new Date('2026-08-01T00:00:00Z'),
+          trial_granted_at: new Date('2026-08-01T00:00:00Z'),
+        },
+        subscription: {
+          status: 'trial',
+          trial_end_at: new Date('2100-01-01T00:00:00Z'),
+          subscription_plans: { name: 'STARTER', display_name: 'Starter' },
+        },
+      });
+
+      await service.submitEnquiry('acc-1', 'user-9', enquiry);
+
+      expect(prisma.plan_enquiries.create).toHaveBeenCalledTimes(1);
+      expect(prisma.user_subscriptions.upsert).not.toHaveBeenCalled();
     });
 
     it('stores empty optional fields as null rather than blank strings', async () => {
