@@ -26,7 +26,6 @@ import {
   Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 
 interface ContactSidebarProps {
@@ -157,7 +156,14 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
   return (
     <div className="flex h-full w-70 flex-col border-l border-border bg-card">
-      <ScrollArea className="flex-1">
+      {/* `min-h-0` is load-bearing, same as the conversation list
+          (issue #229): a flex child defaults to min-height:auto, so
+          without it this div grows to fit every note instead of
+          shrinking to the panel height — the notes then overflow and
+          get clipped by the inbox row's overflow-hidden with no
+          scrollbar. Native overflow-y-auto rather than ScrollArea for
+          the same reason the list uses one. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="p-4">
           {/* Contact Info */}
           <div className="flex flex-col items-center text-center">
@@ -384,7 +390,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
             </div>
           </div>
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
