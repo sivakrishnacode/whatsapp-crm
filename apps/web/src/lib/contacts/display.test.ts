@@ -135,3 +135,95 @@ describe('conversationChannel', () => {
     expect(isWebConversation({})).toBe(false);
   });
 });
+
+/**
+ * The IGSID-as-a-name placeholder.
+ *
+ * An Instagram contact is CREATED with its scoped id in `name`, and that
+ * has to keep happening: `upgradePlaceholderName` on the API side uses
+ * `name === ig_scoped_id` as its "still unresolved" sentinel and retries
+ * the profile lookup on the next inbound message. So the fix cannot be
+ * "stop writing it" — it has to be "never show it".
+ *
+ * For the handful Meta will never resolve (no messaging relationship, so
+ * the profile API stays shut) that number would otherwise be their name
+ * forever.
+ */
+describe('contactDisplayName with an unresolved Instagram contact', () => {
+  it('prefers the @handle over the IGSID sitting in name', () => {
+    expect(
+      contactDisplayName({
+        name: '1052865260658534',
+        ig_scoped_id: '1052865260658534',
+        ig_username: 'someone',
+      }),
+    ).toBe('@someone');
+  });
+
+  it('never renders a bare scoped id as somebody name', () => {
+    const label = contactDisplayName({
+      name: '1052865260658534',
+      ig_scoped_id: '1052865260658534',
+    });
+    expect(label).not.toBe('1052865260658534');
+    expect(label).toBe('Instagram user 8534');
+  });
+
+  it('keeps the last four digits so two unnamed people stay distinct', () => {
+    // "Instagram user" alone would render every unresolved contact
+    // identically, which is worse than the number it replaces — an agent
+    // still has to tell one thread from another.
+    const a = contactDisplayName({ name: '111', ig_scoped_id: '1000000000001111' });
+    const b = contactDisplayName({ name: '222', ig_scoped_id: '1000000000002222' });
+    expect(a).not.toBe(b);
+  });
+
+  it('leaves a REAL name alone, including one that is all digits', () => {
+    // A contact genuinely called "9876543210" whose IGSID is something
+    // else is not a placeholder. Only equality with the scoped id is.
+    expect(
+      contactDisplayName({
+        name: '9876543210',
+        ig_scoped_id: '1052865260658534',
+      }),
+    ).toBe('9876543210');
+  });
+
+  it('does not treat a plain WhatsApp contact as a placeholder', () => {
+    expect(contactDisplayName({ name: 'Asha', phone: '+919999999999' })).toBe(
+      'Asha',
+    );
+  });
+});
+
+describe('contactHandle with an unresolved Instagram contact', () => {
+  it('does not repeat the handle already serving as the display name', () => {
+    // contactDisplayName returns "@someone" for this contact; showing
+    // "@someone" underneath it too reads as a rendering bug.
+    const contact = {
+      name: '1052865260658534',
+      ig_scoped_id: '1052865260658534',
+      ig_username: 'someone',
+    };
+    expect(contactDisplayName(contact)).toBe('@someone');
+    expect(contactHandle(contact)).toBeNull();
+  });
+
+  it('still shows the handle under a real name', () => {
+    expect(
+      contactHandle({
+        name: 'Pradeee',
+        ig_scoped_id: '1007930302003450',
+        ig_username: 'pradeepkraj_kmt_',
+      }),
+    ).toBe('@pradeepkraj_kmt_');
+  });
+});
+
+describe('contactInitial with an unresolved Instagram contact', () => {
+  it('never shows a digit from the scoped id', () => {
+    expect(
+      contactInitial({ name: '1052865260658534', ig_scoped_id: '1052865260658534' }),
+    ).toBe('I');
+  });
+});

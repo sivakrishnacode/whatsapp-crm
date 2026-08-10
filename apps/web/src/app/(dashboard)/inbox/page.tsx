@@ -327,11 +327,51 @@ export default function InboxPage() {
   // Subscribe to realtime. The `isConnected` flag below feeds the
   // reconnect resync: realtime is best-effort and events sent while the
   // WS was disconnected (laptop sleep, network blip, background-tab
+  /**
+   * A contact row changed under us — patch every copy we hold.
+   *
+   * The case this exists for: an Instagram contact is created named by
+   * its IGSID, and renamed minutes later once Meta will answer for them
+   * (InstagramIdentityService.upgradePlaceholderName, which runs on
+   * their next inbound). Before this, that rename was invisible to an
+   * open tab and the inbox went on showing a 16-digit number for
+   * somebody we had just learned the name of.
+   *
+   * Merged rather than replaced: the realtime payload is the raw
+   * `contacts` row, while the copies here came through
+   * CONVERSATION_SELECT and may carry joined fields the payload has no
+   * idea about. Overwriting wholesale would drop them.
+   */
+  const handleContactEvent = useCallback(
+    (event: { new: Contact }) => {
+      const updated = event.new;
+      if (!updated?.id) return;
+
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.contact?.id === updated.id
+            ? { ...c, contact: { ...c.contact, ...updated } }
+            : c,
+        ),
+      );
+      setActiveContact((prev) =>
+        prev?.id === updated.id ? { ...prev, ...updated } : prev,
+      );
+      setActiveConversation((prev) =>
+        prev?.contact?.id === updated.id
+          ? { ...prev, contact: { ...prev.contact, ...updated } }
+          : prev,
+      );
+    },
+    [],
+  );
+
   // throttle) are simply lost. We need a way to catch up.
   const { isConnected } = useRealtime({
     channelName: "inbox-realtime",
     onMessageEvent: handleMessageEvent,
     onConversationEvent: handleConversationEvent,
+    onContactEvent: handleContactEvent,
     enabled: true,
   });
 

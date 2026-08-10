@@ -28,6 +28,23 @@ type ContactLike = {
 } & Partial<Pick<Contact, 'ig_username' | 'ig_scoped_id'>>;
 
 /**
+ * Is this "name" actually the Instagram-scoped id standing in for one?
+ *
+ * A new Instagram contact is created with its IGSID in `name`, and that
+ * is not an accident: `InstagramIdentityService.upgradePlaceholderName`
+ * uses `name === ig_scoped_id` as the sentinel for "still unresolved",
+ * and retries the profile lookup on the next inbound message. So the
+ * value has to keep being written — it just must never be SHOWN. A
+ * 16-digit number is not a name, and for the handful of people Meta will
+ * never resolve (no messaging relationship, so the profile API stays
+ * shut) it would otherwise be permanent.
+ */
+function isIgsidPlaceholder(contact: ContactLike): boolean {
+  const name = contact.name?.trim();
+  return Boolean(name && contact.ig_scoped_id && name === contact.ig_scoped_id);
+}
+
+/**
  * Best human-readable label, in descending order of usefulness:
  * their name, then their @handle, then their phone, then a placeholder.
  *
@@ -38,10 +55,18 @@ export function contactDisplayName(
 ): string {
   if (!contact) return 'Unknown';
   const name = contact.name?.trim();
-  if (name) return name;
+  if (name && !isIgsidPlaceholder(contact)) return name;
   if (contact.ig_username) return `@${contact.ig_username}`;
   const phone = contact.phone?.trim();
   if (phone) return phone;
+  if (contact.ig_scoped_id) {
+    // Keeping the last four digits is what makes two unresolved people
+    // distinguishable in a list. "Instagram user" alone would render
+    // every one of them identically, which is worse than the number it
+    // replaces — an agent has to be able to tell one thread from
+    // another even when nobody can be named.
+    return `Instagram user ${contact.ig_scoped_id.slice(-4)}`;
+  }
   return 'Unknown';
 }
 
@@ -59,7 +84,11 @@ export function contactHandle(
   if (!contact) return null;
   const phone = contact.phone?.trim();
   if (phone) return phone;
-  if (contact.ig_username && contact.name?.trim()) {
+  // `name` must be a REAL name for the handle to be worth a second line.
+  // An IGSID placeholder is not one — contactDisplayName is already
+  // showing the handle in its place, and repeating it underneath looks
+  // like a bug.
+  if (contact.ig_username && contact.name?.trim() && !isIgsidPlaceholder(contact)) {
     return `@${contact.ig_username}`;
   }
   return null;
