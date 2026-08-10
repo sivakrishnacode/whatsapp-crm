@@ -29,9 +29,12 @@ import { V1Module } from '../v1/v1.module';
 import { AutomationsModule } from '../automations/automations.module';
 import { FlowsModule } from '../flows/flows.module';
 import { AiModule } from '../ai/ai.module';
+import { ConversationsModule } from '../common/conversations/conversations.module';
 
 @Module({
   imports: [
+    // Pauses the AI bot when a human replies (HumanTakeoverService).
+    ConversationsModule,
     V1Module,
     // Broadcast queues (orchestrate + send) are registered centrally —
     // the public API enqueues into the same ones. See QueueModule.

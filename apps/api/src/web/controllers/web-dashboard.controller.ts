@@ -18,6 +18,7 @@ import { WebSendService } from '../services/web-send.service';
 import { WebStreamService } from '../services/web-stream.service';
 import { SendWebAgentMessageDto } from '../dto/send-web-agent-message.dto';
 import { WebSessionsService } from '../services/web-sessions.service';
+import { HumanTakeoverService } from '../../common/conversations/human-takeover.service';
 
 /**
  * Agent-side endpoints for web conversations, consumed by the inbox.
@@ -36,6 +37,7 @@ export class WebDashboardController {
     private readonly send: WebSendService,
     private readonly stream: WebStreamService,
     private readonly sessions: WebSessionsService,
+    private readonly takeover: HumanTakeoverService,
   ) {}
 
   /**
@@ -64,6 +66,13 @@ export class WebDashboardController {
     @Body() body: SendWebAgentMessageDto,
   ) {
     const senderId = account.userId;
+
+    // Replying IS the takeover: this endpoint sits behind
+    // SupabaseAuthGuard, so reaching it means a person typed something.
+    // Pausing here rather than in the send service covers every message
+    // type through one line, and runs before the send so a failure to
+    // deliver still counts as the agent having stepped in.
+    await this.takeover.noteHumanMessage(body.conversation_id, 'dashboard');
 
     if (body.message_type === 'buttons') {
       if (!body.buttons?.length) {

@@ -35,6 +35,8 @@ import {
   Clock,
   ArrowLeft,
   RefreshCw,
+  Bot,
+  BotOff,
   PanelRightOpen,
   PanelRightClose,
 } from "lucide-react";
@@ -85,6 +87,8 @@ interface MessageThreadProps {
     conversationId: string,
     assignedAgentId: string | null,
   ) => void;
+  /** Reflect an AI-pause toggle back into the page's conversation state. */
+  onAiAutoReplyChange: (conversationId: string, disabled: boolean) => void;
   /**
    * On mobile, the thread is shown full-screen with the conversation list
    * hidden. This callback lets the page deselect the active conversation
@@ -170,6 +174,7 @@ export function MessageThread({
   onUpdateMessage,
   onStatusChange,
   onAssignChange,
+  onAiAutoReplyChange,
   onBack,
   resyncToken = 0,
   onRefresh,
@@ -1019,6 +1024,37 @@ export function MessageThread({
     [conversation, onAssignChange],
   );
 
+  /**
+   * Turn the AI bot back on (or off) for this thread.
+   *
+   * The pause is applied automatically by the API the moment a human
+   * replies, so without a visible control the bot would appear to have
+   * broken itself with no way back. This is that way back.
+   */
+  const handleAiAutoReplyToggle = useCallback(async () => {
+    if (!conversation) return;
+    const next = !(conversation.ai_autoreply_disabled ?? false);
+
+    // Optimistic, then rolled back on failure — the same shape the row
+    // menu uses. An RLS-blocked UPDATE affects zero rows without
+    // raising, so the button would otherwise lie.
+    onAiAutoReplyChange(conversation.id, next);
+    const { data, error } = await createClient()
+      .from("conversations")
+      .update({ ai_autoreply_disabled: next })
+      .eq("id", conversation.id)
+      .select("id");
+
+    if (error || !data || data.length === 0) {
+      onAiAutoReplyChange(conversation.id, !next);
+      toast.error(
+        error ? "Could not change the AI setting" : "You do not have permission",
+      );
+      return;
+    }
+    toast.success(next ? "AI replies paused" : "AI replies resumed");
+  }, [conversation, onAiAutoReplyChange]);
+
   // Empty state — same WhatsApp-style doodle background as the active
   // thread below, so swapping between empty/selected doesn't change the
   // pattern under the user's eye.
@@ -1147,6 +1183,37 @@ export function MessageThread({
               />
             </button>
           )}
+
+          {/* AI pause indicator + switch.
+              Always rendered, not only when paused: "why is the bot
+              quiet" and "why did the bot just answer" are the same
+              question, and a control that appears only in one state
+              answers neither. */}
+          <button
+            type="button"
+            onClick={handleAiAutoReplyToggle}
+            aria-pressed={!conversation.ai_autoreply_disabled}
+            title={
+              conversation.ai_autoreply_disabled
+                ? "AI replies are paused on this conversation — click to resume"
+                : "AI replies are on for this conversation — click to pause"
+            }
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs transition-colors hover:bg-muted",
+              conversation.ai_autoreply_disabled
+                ? "text-muted-foreground"
+                : "text-primary",
+            )}
+          >
+            {conversation.ai_autoreply_disabled ? (
+              <BotOff className="h-3.5 w-3.5" />
+            ) : (
+              <Bot className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">
+              {conversation.ai_autoreply_disabled ? "AI paused" : "AI on"}
+            </span>
+          </button>
 
           {/* Status dropdown */}
           <DropdownMenu>

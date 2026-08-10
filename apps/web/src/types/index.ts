@@ -281,6 +281,16 @@ export interface Conversation {
    */
   last_inbound_at?: string | null;
   unread_count: number;
+  /**
+   * AI auto-reply is paused on THIS thread.
+   *
+   * Set automatically the moment a human replies — from the dashboard or
+   * from the Instagram app, see HumanTakeoverService on the API side —
+   * and cleared only by someone switching the bot back on in the thread
+   * header. Sticky on purpose: a bot that goes quiet and then rejoins a
+   * conversation half an hour later is the same surprise, just delayed.
+   */
+  ai_autoreply_disabled?: boolean;
   created_at: string;
   updated_at: string;
   contact?: Contact;

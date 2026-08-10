@@ -561,6 +561,24 @@ export default function InboxPage() {
     [activeConversation]
   );
 
+  const handleAiAutoReplyChange = useCallback(
+    (conversationId: string, disabled: boolean) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === conversationId
+            ? { ...c, ai_autoreply_disabled: disabled }
+            : c,
+        ),
+      );
+      setActiveConversation((prev) =>
+        prev?.id === conversationId
+          ? { ...prev, ai_autoreply_disabled: disabled }
+          : prev,
+      );
+    },
+    [],
+  );
+
   const handleAssignChange = useCallback(
     (conversationId: string, assignedAgentId: string | null) => {
       setConversations((prev) =>
@@ -689,6 +707,7 @@ export default function InboxPage() {
             onUpdateMessage={handleUpdateMessage}
             onStatusChange={handleStatusChange}
             onAssignChange={handleAssignChange}
+            onAiAutoReplyChange={handleAiAutoReplyChange}
             onBack={handleCloseConversation}
             resyncToken={resyncToken}
             onRefresh={handleManualRefresh}

@@ -25,6 +25,7 @@ import {
   isRecipientNotAllowedError,
 } from '../../v1/utils/phone.util';
 import { ApiError } from '../../v1/utils/respond.util';
+import { HumanTakeoverService } from '../../common/conversations/human-takeover.service';
 
 interface BroadcastResult {
   phone: string;
@@ -56,6 +57,7 @@ export class WhatsappDashboardController {
     private readonly prisma: PrismaService,
     private readonly messageSend: MessageSendService,
     private readonly limits: MessagingLimitsService,
+    private readonly takeover: HumanTakeoverService,
   ) {}
 
   /**
@@ -208,6 +210,14 @@ export class WhatsappDashboardController {
         .status(HttpStatus.NOT_FOUND)
         .json({ error: 'Conversation not found' });
     }
+
+    // Replying IS the takeover: this endpoint sits behind
+    // SupabaseAuthGuard, so reaching it means a person typed something.
+    // Placed after the conversation is resolved (this handler can be
+    // called with a contact_id and mint the thread itself) and before
+    // the send, so a delivery failure still counts as the agent having
+    // stepped in.
+    await this.takeover.noteHumanMessage(conversationId, 'dashboard');
 
     try {
       const result = await this.messageSend.sendMessageToConversation(

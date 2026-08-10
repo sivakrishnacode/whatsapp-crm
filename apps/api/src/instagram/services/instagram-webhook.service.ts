@@ -17,6 +17,7 @@ import { InstagramIdentityService } from './instagram-identity.service';
 import { InstagramMediaMirrorService } from './instagram-media-mirror.service';
 import { InstagramCommentsService } from './instagram-comments.service';
 import { CommentFunnelService } from './comment-funnel.service';
+import { HumanTakeoverService } from '../../common/conversations/human-takeover.service';
 import type {
   IgWebhookBody,
   IgWebhookEntry,
@@ -74,6 +75,7 @@ export class InstagramWebhookService {
     private readonly automationDispatch: AutomationDispatchService,
     @Inject(forwardRef(() => AiReplyService))
     private readonly aiReply: AiReplyService,
+    private readonly takeover: HumanTakeoverService,
   ) {}
 
   // ============================================================
@@ -386,7 +388,19 @@ export class InstagramWebhookService {
     // so agents see replies sent from the Instagram app, but it must
     // not trigger flows, automations or the AI bot — that would have
     // the CRM answering itself.
-    if (isEcho) return;
+    if (isEcho) {
+      // ...and reaching here means we did NOT send it. Anything this
+      // system sends is stored with the mid Meta returned, so its echo
+      // stops at the dedupe at the top of this method. What is left is a
+      // message somebody typed in the Instagram app, which is a human
+      // taking the thread over just as much as using the dashboard is.
+      //
+      // ⚠ The dedupe is the ONLY thing keeping the bot's own echo out of
+      //   this branch. Without it the AI would switch itself off
+      //   immediately after its first reply.
+      await this.takeover.noteHumanMessage(conversation.id, 'echo');
+      return;
+    }
 
     // A contact first seen through an echo of our own outbound DM had no
     // resolvable profile when it was created, so it is sitting in the

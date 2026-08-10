@@ -28,6 +28,7 @@ import { V1Module } from '../v1/v1.module';
 import { AutomationsModule } from '../automations/automations.module';
 import { FlowsModule } from '../flows/flows.module';
 import { AiModule } from '../ai/ai.module';
+import { ConversationsModule } from '../common/conversations/conversations.module';
 
 /**
  * Instagram DM + comment moderation.
@@ -44,6 +45,8 @@ import { AiModule } from '../ai/ai.module';
  */
 @Module({
   imports: [
+    // Pauses the AI bot when a human replies (HumanTakeoverService).
+    ConversationsModule,
     // forwardRef, unlike WhatsappModule's plain V1Module import: V1Module
     // imports THIS module back, so POST /v1/messages can route Instagram
     // conversations to InstagramSendService. That makes it a real cycle

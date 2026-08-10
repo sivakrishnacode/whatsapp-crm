@@ -19,6 +19,7 @@ import {
 } from '../services/instagram-send.service';
 import { windowRemainingMs } from '../ig-window.util';
 import type { IgMediaType, IgReaction } from '../ig-api.util';
+import { HumanTakeoverService } from '../../common/conversations/human-takeover.service';
 
 interface SendBody {
   conversation_id?: string;
@@ -41,7 +42,10 @@ interface SendBody {
 @Controller('instagram')
 @UseGuards(SupabaseAuthGuard)
 export class InstagramDashboardController {
-  constructor(private readonly send: InstagramSendService) {}
+  constructor(
+    private readonly send: InstagramSendService,
+    private readonly takeover: HumanTakeoverService,
+  ) {}
 
   /**
    * What the composer needs to render itself: can we reply, and for
@@ -84,6 +88,13 @@ export class InstagramDashboardController {
         .status(HttpStatus.BAD_REQUEST)
         .json({ error: 'conversation_id is required' });
     }
+
+    // Replying IS the takeover: this endpoint sits behind
+    // SupabaseAuthGuard, so reaching it means a person typed something.
+    // Pausing here rather than in the send service covers every message
+    // type through one line, and runs before the send so a failure to
+    // deliver still counts as the agent having stepped in.
+    await this.takeover.noteHumanMessage(conversationId, 'dashboard');
 
     const type = body.message_type ?? 'text';
 

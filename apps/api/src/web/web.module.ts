@@ -24,6 +24,7 @@ import { AiModule } from '../ai/ai.module';
 // forwardRef because FormsModule reaches back for the web conversation
 // context when a widget submission needs to reply in-thread.
 import { FormsModule } from '../forms/forms.module';
+import { ConversationsModule } from '../common/conversations/conversations.module';
 
 /**
  * The website chat widget — the first channel whose transport we own.
@@ -52,6 +53,8 @@ import { FormsModule } from '../forms/forms.module';
  */
 @Module({
   imports: [
+    // Pauses the AI bot when a human replies (HumanTakeoverService).
+    ConversationsModule,
     RateLimitModule,
     // Webhook fan-out for `message.received`, matching the other channels.
     forwardRef(() => V1Module),

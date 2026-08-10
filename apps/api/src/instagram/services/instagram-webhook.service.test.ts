@@ -10,6 +10,7 @@ import type { FlowDispatchService } from '../../flows/services/flow-dispatch.ser
 import type { AutomationDispatchService } from '../../automations/services/automation-dispatch.service';
 import type { AiReplyService } from '../../ai/services/ai-reply.service';
 import { encrypt } from '../../common/security/encryption.util';
+import type { HumanTakeoverService } from '../../common/conversations/human-takeover.service';
 
 const IG_USER_ID = '17841445515874274';
 const IG_APP_SCOPED_ID = '28011694518467843';
@@ -89,6 +90,7 @@ function makeService(prisma: ReturnType<typeof makePrismaMock>) {
   const aiReply = {
     dispatchInboundToAiReply: vi.fn().mockResolvedValue(undefined),
   };
+  const takeover = { noteHumanMessage: vi.fn().mockResolvedValue(undefined) };
 
   const service = new InstagramWebhookService(
     prisma as unknown as PrismaService,
@@ -100,11 +102,13 @@ function makeService(prisma: ReturnType<typeof makePrismaMock>) {
     flowDispatch as unknown as FlowDispatchService,
     automationDispatch as unknown as AutomationDispatchService,
     aiReply as unknown as AiReplyService,
+    takeover as unknown as HumanTakeoverService,
   );
 
   return {
     service,
     identity,
+    takeover,
     mediaMirror,
     comments,
     webhookDeliver,
@@ -351,6 +355,35 @@ describe('InstagramWebhookService — echoes', () => {
     await runWebhook(service, envelope(echo));
 
     expect(prisma.messages.create).not.toHaveBeenCalled();
+  });
+
+  it('pauses the AI bot — an echo we did not send is a human on the app', async () => {
+    // Someone replied from the Instagram app. That is a takeover just as
+    // much as using the dashboard is, and the bot must not then open
+    // with "Hi there! I'm your assistant" two messages later.
+    const { service, takeover } = makeService(prisma);
+    await runWebhook(service, envelope(echo));
+
+    expect(takeover.noteHumanMessage).toHaveBeenCalledWith(
+      expect.any(String),
+      'echo',
+    );
+  });
+
+  it('⚠ does NOT pause the bot on the echo of a message WE sent', async () => {
+    // THE TRAP. Every AI reply comes back from Meta as an echo. If that
+    // echo counted as a human takeover, the bot would switch itself off
+    // the instant it first replied, on every thread, forever.
+    //
+    // The mid dedupe is the only thing preventing it: our own sends are
+    // stored with the mid Meta returned, so their echo returns early.
+    // This test is why that dedupe may not be "simplified".
+    prisma.messages.findFirst.mockResolvedValue({ id: 'the-row-we-wrote' });
+    const { service, takeover } = makeService(prisma);
+
+    await runWebhook(service, envelope(echo));
+
+    expect(takeover.noteHumanMessage).not.toHaveBeenCalled();
   });
 
   it('does not reopen the reply window', async () => {
