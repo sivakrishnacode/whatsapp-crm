@@ -153,9 +153,17 @@ step "Pull + rebuild on the server"
 # `up -d --build`, never `restart`: NEXT_PUBLIC_* values and the /api/*
 # rewrite target are baked into the web bundle by `next build`, so a restart
 # silently keeps the old ones. See deploy/README.md.
+# fetch + merge the REMOTE-TRACKING REF, not `git pull`. `pull` fast-forwards
+# to whatever FETCH_HEAD holds, and FETCH_HEAD is a single file rewritten by
+# every fetch — so a second fetch landing concurrently (a cron, another
+# deploy, an editor's auto-fetch) can interleave two for-merge entries into
+# it and git bails with "Cannot fast-forward to multiple branches", which is
+# exactly what happened once here. `origin/<branch>` is one unambiguous ref
+# and cannot develop that problem.
 remote "set -e
   cd $DEPLOY_PATH
-  git pull --ff-only origin $DEPLOY_BRANCH
+  git fetch origin '$DEPLOY_BRANCH'
+  git merge --ff-only 'origin/$DEPLOY_BRANCH'
   docker compose up -d --build $SERVICES
   docker compose ps --format '{{.Name}}\t{{.Status}}'" | sed 's/^/      /'
 ok "containers rebuilt"
