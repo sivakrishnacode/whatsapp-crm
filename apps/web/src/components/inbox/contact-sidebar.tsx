@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import type { Contact, ContactSegment, Deal, ContactNote, Tag } from "@/types";
+import { listSegmentsLight, segmentsForContacts } from "@/lib/segments/api";
+import { SegmentPicker } from "@/components/contacts/segment-picker";
 import {
   contactDisplayName,
   contactHandle,
@@ -18,6 +20,7 @@ import {
   Check,
   User,
   Tag as TagIcon,
+  Layers,
   DollarSign,
   StickyNote,
   Plus,
@@ -36,6 +39,8 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [segments, setSegments] = useState<ContactSegment[]>([]);
+  const [segmentIds, setSegmentIds] = useState<string[]>([]);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
 
@@ -72,6 +77,20 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           contact_tag_id: ct.id as string,
         }));
       setTags(mapped);
+    }
+
+    // Segments are a separate pair of calls rather than another entry in
+    // the Promise.all above: both go through RPCs, and a failure in
+    // either must not take the deals/notes/tags panel down with it.
+    try {
+      const [all, byContact] = await Promise.all([
+        listSegmentsLight(supabase),
+        segmentsForContacts(supabase, [contact.id]),
+      ]);
+      setSegments(all);
+      setSegmentIds(byContact[contact.id] ?? []);
+    } catch {
+      // Non-fatal.
     }
   }, [contact]);
 
@@ -218,6 +237,59 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                     {tag.name}
                   </span>
                 ))
+              )}
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="my-4 border-t border-border" />
+
+          {/* Segments */}
+          <div>
+            <div className="flex items-center justify-between gap-2 px-1">
+              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <Layers className="h-3 w-3" />
+                Segments
+              </div>
+              {contact && (
+                <SegmentPicker
+                  contactIds={[contact.id]}
+                  memberOf={segmentIds}
+                  source="manual"
+                  onChanged={fetchContactData}
+                  trigger={
+                    <button
+                      type="button"
+                      className="text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                    >
+                      Edit
+                    </button>
+                  }
+                />
+              )}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {segmentIds.length === 0 ? (
+                <p className="px-1 text-xs text-muted-foreground">
+                  No segments
+                </p>
+              ) : (
+                segmentIds.map((id) => {
+                  const segment = segments.find((s) => s.id === id);
+                  if (!segment) return null;
+                  return (
+                    <span
+                      key={id}
+                      className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                      style={{
+                        backgroundColor: `${segment.color}20`,
+                        color: segment.color,
+                      }}
+                    >
+                      {segment.name}
+                    </span>
+                  );
+                })
               )}
             </div>
           </div>

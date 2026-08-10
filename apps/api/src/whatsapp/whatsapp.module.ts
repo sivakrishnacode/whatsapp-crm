@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { SegmentsModule } from '../common/segments/segments.module';
 import { AutomationMetaSendService } from './automation-meta-send.service';
 import { FlowMetaSendService } from './flow-meta-send.service';
 import { ConnectAccountService } from './services/connect-account.service';
@@ -39,6 +40,8 @@ import { AiModule } from '../ai/ai.module';
     forwardRef(() => AutomationsModule),
     forwardRef(() => FlowsModule),
     forwardRef(() => AiModule),
+    // Broadcast audiences can be a saved segment.
+    SegmentsModule,
   ],
   controllers: [
     WhatsappWebhookController,

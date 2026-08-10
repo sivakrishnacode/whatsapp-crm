@@ -11,6 +11,7 @@ import {
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { BroadcastQueueService } from '../../queue/broadcast-queue.service';
 import type { EntitlementService } from '../../subscription/services/entitlement.service';
+import type { SegmentMembershipService } from '../../common/segments/segment-membership.service';
 
 vi.mock('../../common/security/encryption.util', () => ({
   decrypt: vi.fn(() => 'decrypted-token'),
@@ -80,6 +81,16 @@ function makeEntitlementsMock() {
       reason: 'ok',
     }),
     recordUsage: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function makeSegmentsMock() {
+  return {
+    findForAccount: vi.fn().mockResolvedValue(null),
+    add: vi.fn().mockResolvedValue(0),
+    remove: vi.fn().mockResolvedValue(0),
+    resolve: vi.fn().mockResolvedValue([]),
+    resolveMany: vi.fn().mockResolvedValue([]),
   };
 }
 
@@ -153,16 +164,19 @@ describe('resolveBroadcastVariableMap', () => {
 describe('DashboardBroadcastService.createAndQueue', () => {
   let prisma: ReturnType<typeof makePrismaMock>;
   let queue: { enqueueBroadcast: ReturnType<typeof vi.fn> };
+  let segments: ReturnType<typeof makeSegmentsMock>;
   let service: DashboardBroadcastService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     prisma = makePrismaMock();
     queue = { enqueueBroadcast: vi.fn().mockResolvedValue(undefined) };
+    segments = makeSegmentsMock();
     service = new DashboardBroadcastService(
       prisma as unknown as PrismaService,
       queue as unknown as BroadcastQueueService,
       makeEntitlementsMock() as unknown as EntitlementService,
+      segments as unknown as SegmentMembershipService,
     );
   });
 
@@ -292,6 +306,96 @@ describe('DashboardBroadcastService.createAndQueue', () => {
         data: expect.objectContaining({
           account_id: 'acc-1',
           phone: '+918888888888',
+        }),
+      }),
+    );
+  });
+
+  // ----------------------------------------------------------
+  // Segment audiences (migration 076)
+  //
+  // The one thing worth pinning: resolution goes through
+  // SegmentMembershipService and never through contact_segment_members.
+  // A dynamic segment has no rows in that table, so a broadcast that
+  // read it directly would send to nobody and report success.
+  // ----------------------------------------------------------
+
+  it('resolves a segment audience through the membership service', async () => {
+    segments.resolveMany.mockResolvedValue(['c-1']);
+
+    const result = await service.createAndQueue('acc-1', 'u-1', {
+      ...basePayload,
+      audience: { type: 'segments', segmentIds: ['seg-1', 'seg-2'] },
+    });
+
+    expect(segments.resolveMany).toHaveBeenCalledWith('acc-1', [
+      'seg-1',
+      'seg-2',
+    ]);
+    expect(result.totalRecipients).toBe(1);
+  });
+
+  it('re-scopes the resolved ids to the account on the contacts query', async () => {
+    // Belt and braces: resolveMany already refuses a foreign segment,
+    // but the id list it returns is still fed into a query that says
+    // account_id — so a bug in one layer cannot become a leak on its own.
+    segments.resolveMany.mockResolvedValue(['c-1']);
+    await service.createAndQueue('acc-1', 'u-1', {
+      ...basePayload,
+      audience: { type: 'segments', segmentIds: ['seg-1'] },
+    });
+    expect(prisma.contacts.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ account_id: 'acc-1' }),
+      }),
+    );
+  });
+
+  it('rejects a segment audience that resolves to nobody', async () => {
+    segments.resolveMany.mockResolvedValue([]);
+    await expect(
+      service.createAndQueue('acc-1', 'u-1', {
+        ...basePayload,
+        audience: { type: 'segments', segmentIds: ['seg-empty'] },
+      }),
+    ).rejects.toMatchObject({
+      response: { error: expect.stringContaining('No contacts found') },
+    });
+    expect(prisma.broadcasts.create).not.toHaveBeenCalled();
+  });
+
+  it('subtracts an excluded segment from ANY audience type, not just segments', async () => {
+    // "Everyone except last month's buyers" is the shape most
+    // suppression lists take, so exclusion is deliberately independent
+    // of how the base audience was chosen.
+    prisma.contacts.findMany.mockResolvedValue([
+      CONTACT,
+      { ...CONTACT, id: 'c-2', phone: '+919999999999' },
+    ]);
+    segments.resolveMany.mockResolvedValue(['c-2']);
+
+    const result = await service.createAndQueue('acc-1', 'u-1', {
+      ...basePayload,
+      audience: { type: 'all', excludeSegmentIds: ['seg-buyers'] },
+    });
+
+    expect(result.totalRecipients).toBe(1);
+    expect(segments.resolveMany).toHaveBeenCalledWith('acc-1', ['seg-buyers']);
+  });
+
+  it('records the segment ids on the broadcast for later inspection', async () => {
+    segments.resolveMany.mockResolvedValue(['c-1']);
+    await service.createAndQueue('acc-1', 'u-1', {
+      ...basePayload,
+      audience: { type: 'segments', segmentIds: ['seg-1'] },
+    });
+    expect(prisma.broadcasts.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          audience_filter: expect.objectContaining({
+            type: 'segments',
+            segmentIds: ['seg-1'],
+          }),
         }),
       }),
     );

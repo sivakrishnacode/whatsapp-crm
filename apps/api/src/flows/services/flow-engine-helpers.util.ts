@@ -71,7 +71,8 @@ export function isAutoAdvancing(node_type: string): boolean {
     node_type === 'send_message' ||
     node_type === 'send_media' ||
     node_type === 'condition' ||
-    node_type === 'set_tag'
+    node_type === 'set_tag' ||
+    node_type === 'set_segment'
   );
 }
 

@@ -41,6 +41,7 @@ model Account {
   automations                   Automation[]
   broadcasts                    broadcasts[]
   contact_notes                 contact_notes[]
+  contact_segments              contact_segments[]
   contacts                      contacts[]
   conversations                 conversations[]
   custom_fields                 custom_fields[]
@@ -1096,6 +1097,72 @@ model contact_tags {
   @@schema("public")
 }
 
+/// A named, reusable audience (migration 076).
+///
+/// `kind = 'static'` is an explicit membership list in
+/// contact_segment_members and is the only kind anything may add a
+/// contact to. `kind = 'dynamic'` is a saved filter whose membership is
+/// computed from `filter` on read and never stored.
+///
+/// Resolve either kind through `resolve_segment_contact_ids(id)` rather
+/// than reading members directly — a dynamic segment has no member rows
+/// and a query that assumes it does silently returns an empty audience.
+///
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model contact_segments {
+  id          String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id  String                    @db.Uuid
+  /// Who created it. FK to auth.users in the database; deliberately not
+  /// a Prisma relation, so the Supabase-managed auth model stays
+  /// untouched. Nullable — deleting the author must not delete the
+  /// workspace's segments.
+  user_id     String?                   @db.Uuid
+  name        String
+  description String?
+  color       String                    @default("#6366f1")
+  /// 'static' | 'dynamic' — see contact_segments_kind_chk.
+  kind        String                    @default("static")
+  /// Only meaningful when kind = 'dynamic':
+  /// `{ match: 'all' | 'any', rules: [{ field, op, value }] }`.
+  filter      Json                      @default("{}")
+  created_at  DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime                  @default(now()) @db.Timestamptz(6)
+  accounts    Account                   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  members     contact_segment_members[]
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_contact_segments_account")
+  @@schema("public")
+}
+
+/// Membership of a STATIC segment (migration 076).
+///
+/// No account_id column on purpose: the segment has one and the contact
+/// has one, and a third copy only creates the possibility of them
+/// disagreeing. Everything scopes through the parent, the same shape
+/// contact_tags uses.
+///
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model contact_segment_members {
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  segment_id String           @db.Uuid
+  contact_id String           @db.Uuid
+  /// Which surface filed them here: manual | import | automation | flow
+  /// | api | broadcast. Never inferred after the fact.
+  source     String           @default("manual")
+  /// NULL means a machine did it — an automation, a flow, or an API key
+  /// has no user to name. FK to auth.users in the database; not a
+  /// Prisma relation, same reason as contact_segments.user_id.
+  added_by   String?          @db.Uuid
+  added_at   DateTime         @default(now()) @db.Timestamptz(6)
+  contacts   contacts         @relation(fields: [contact_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  segment    contact_segments @relation(fields: [segment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([segment_id, contact_id], map: "idx_contact_segment_members_unique")
+  @@index([segment_id, added_at(sort: Desc)], map: "idx_contact_segment_members_segment")
+  @@index([contact_id], map: "idx_contact_segment_members_contact")
+  @@schema("public")
+}
+
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model contacts {
   id                          String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -1134,6 +1201,7 @@ model contacts {
   broadcast_recipients        broadcast_recipients[]
   contact_custom_values       contact_custom_values[]
   contact_notes               contact_notes[]
+  contact_segment_members     contact_segment_members[]
   contact_tags                contact_tags[]
   accounts                    Account                         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                       users                           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)

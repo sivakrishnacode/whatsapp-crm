@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { InstagramModule } from '../instagram/instagram.module';
 import { QueueModule } from '../queue/queue.module';
+import { SegmentsModule } from '../common/segments/segments.module';
 import { WebhookDeliveryProcessor } from './queues/webhook-delivery.processor';
 import { MeController } from './controllers/me.controller';
 import { ContactsController } from './controllers/contacts.controller';
@@ -8,6 +9,7 @@ import { ConversationsController } from './controllers/conversations.controller'
 import { MessagesController } from './controllers/messages.controller';
 import { BroadcastsController } from './controllers/broadcasts.controller';
 import { WebhooksController } from './controllers/webhooks.controller';
+import { SegmentsController } from './controllers/segments.controller';
 import { WebhookDeliverService } from './services/webhook-deliver.service';
 import { MessageSendService } from './services/message-send.service';
 import { BroadcastSendService } from './services/broadcast-send.service';
@@ -21,6 +23,8 @@ import { BroadcastSendService } from './services/broadcast-send.service';
     // Broadcasts are enqueued, not delivered here; webhook events are
     // delivered by this module's own processor.
     QueueModule,
+    // /v1/segments membership writes.
+    SegmentsModule,
   ],
   controllers: [
     MeController,
@@ -29,6 +33,7 @@ import { BroadcastSendService } from './services/broadcast-send.service';
     MessagesController,
     BroadcastsController,
     WebhooksController,
+    SegmentsController,
   ],
   providers: [
     WebhookDeliverService,

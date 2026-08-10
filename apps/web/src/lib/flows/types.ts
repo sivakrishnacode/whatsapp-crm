@@ -173,6 +173,19 @@ export interface SetTagNodeConfig {
   next_node_key: string;
 }
 
+/**
+ * Put the contact into (or take them out of) a saved audience —
+ * migration 076's `contact_segments`. Separate from set_tag because a
+ * tag describes the person and a segment is a list a broadcast can be
+ * aimed at. Static segments only.
+ */
+export interface SetSegmentNodeConfig {
+  mode: "add" | "remove";
+  /** contact_segments UUID. The builder lists static segments only. */
+  segment_id: string;
+  next_node_key: string;
+}
+
 // Terminal nodes carry no config — they just stop the run.
 export type EndNodeConfig = Record<string, never>;
 
@@ -193,6 +206,7 @@ export type FlowNodeConfig =
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }
+  | { node_type: "set_segment"; config: SetSegmentNodeConfig }
   | { node_type: "handoff"; config: HandoffNodeConfig }
   | { node_type: "end"; config: EndNodeConfig };
 

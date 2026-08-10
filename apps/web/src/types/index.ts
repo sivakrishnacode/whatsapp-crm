@@ -154,6 +154,77 @@ export interface ContactTag {
   tag_id: string;
 }
 
+/**
+ * A named, reusable audience (migration 076).
+ *
+ * `static` carries an explicit membership list and is the only kind
+ * anything can add a contact to. `dynamic` is a saved filter whose
+ * membership is computed from `filter` on read, so it can never go
+ * stale — and can never be edited by hand.
+ */
+export type SegmentKind = 'static' | 'dynamic';
+
+export interface ContactSegment {
+  id: string;
+  account_id: string;
+  user_id: string | null;
+  name: string;
+  description: string | null;
+  color: string;
+  kind: SegmentKind;
+  filter: SegmentFilter;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A segment plus the number of people currently in it. */
+export interface ContactSegmentWithCount extends ContactSegment {
+  member_count: number;
+}
+
+export type SegmentRuleField =
+  | 'tag'
+  | 'source'
+  | 'has_phone'
+  | 'name'
+  | 'email'
+  | 'company'
+  | 'created_at'
+  /** Encoded as `custom:<custom_field_id>`. */
+  | string;
+
+export type SegmentRuleOperator =
+  | 'has'
+  | 'not_has'
+  | 'is'
+  | 'is_not'
+  | 'contains'
+  | 'is_set'
+  | 'is_not_set'
+  | 'before'
+  | 'after';
+
+export interface SegmentRule {
+  field: SegmentRuleField;
+  op: SegmentRuleOperator;
+  value?: string;
+}
+
+export interface SegmentFilter {
+  /** 'all' = every rule must match (AND); 'any' = at least one (OR). */
+  match?: 'all' | 'any';
+  rules?: SegmentRule[];
+}
+
+/** Which surface filed a contact into a segment. */
+export type SegmentMemberSource =
+  | 'manual'
+  | 'import'
+  | 'automation'
+  | 'flow'
+  | 'api'
+  | 'broadcast';
+
 export interface CustomField {
   id: string;
   user_id: string;
@@ -633,6 +704,11 @@ export type AutomationStepType =
   | 'send_template'
   | 'add_tag'
   | 'remove_tag'
+  // Put the contact into (or take them out of) a named audience. A tag
+  // describes the person; a segment is a list a broadcast can be aimed
+  // at. Static segments only — a dynamic one computes its own members.
+  | 'add_to_segment'
+  | 'remove_from_segment'
   | 'assign_conversation'
   | 'update_contact_field'
   | 'create_deal'
@@ -698,6 +774,10 @@ export interface TagStepConfig {
   tag_id: string;
 }
 
+export interface SegmentStepConfig {
+  segment_id: string;
+}
+
 export interface AssignConversationStepConfig {
   mode: 'specific' | 'round_robin';
   agent_id?: string;
@@ -752,6 +832,7 @@ export type AutomationStepConfig =
   | SendMessageStepConfig
   | SendTemplateStepConfig
   | TagStepConfig
+  | SegmentStepConfig
   | AssignConversationStepConfig
   | UpdateContactFieldStepConfig
   | CreateDealStepConfig

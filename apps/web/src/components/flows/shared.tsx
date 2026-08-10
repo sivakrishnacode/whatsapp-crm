@@ -20,6 +20,7 @@ import {
   Flag,
   GitFork,
   Inbox,
+  Layers,
   ListChecks,
   ListPlus,
   MessageCircle,
@@ -49,6 +50,7 @@ export type NodeType =
   | 'collect_input'
   | 'condition'
   | 'set_tag'
+  | 'set_segment'
   | 'handoff'
   | 'end';
 
@@ -152,6 +154,13 @@ export const NODE_META: Record<
     blurb: 'Adds or removes a contact tag',
     category: 'logic',
   },
+  set_segment: {
+    label: 'Segment contact',
+    icon: Layers,
+    color: 'text-cyan-400',
+    blurb: 'Adds or removes them from a saved audience',
+    category: 'logic',
+  },
   handoff: {
     label: 'Handoff to agent',
     icon: UserPlus,
@@ -205,6 +214,7 @@ const NODE_HUE: Record<NodeType, { l: number; c: number; h: number }> = {
   collect_input: { l: 0.65, c: 0.1, h: 185 }, // teal — capture
   condition: { l: 0.72, c: 0.15, h: 65 }, // amber — a fork in the road
   set_tag: { l: 0.65, c: 0.15, h: 350 }, // pink
+  set_segment: { l: 0.68, c: 0.13, h: 225 }, // cyan — a list, not a label
   handoff: { l: 0.65, c: 0.17, h: 16 }, // rose — hands off
   end: { l: 0.55, c: 0.01, h: 260 }, // neutral grey — terminal
 };
@@ -414,6 +424,16 @@ export function summarizeNode(node: BuilderNode): string | null {
       return tagId
         ? `${mode} tag ${tagId.slice(0, 8)}…`
         : `${mode} tag (none picked)`;
+    }
+    case 'set_segment': {
+      const mode = cfg.mode === 'remove' ? 'Remove from' : 'Add to';
+      const segmentId =
+        typeof cfg.segment_id === 'string' ? cfg.segment_id : '';
+      // Same reasoning as set_tag above: no name without an async
+      // lookup, so a short id prefix is what distinguishes two nodes.
+      return segmentId
+        ? `${mode} segment ${segmentId.slice(0, 8)}…`
+        : `${mode} segment (none picked)`;
     }
     case 'handoff': {
       const note = typeof cfg.note === 'string' ? cfg.note : '';

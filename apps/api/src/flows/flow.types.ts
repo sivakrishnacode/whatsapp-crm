@@ -157,6 +157,25 @@ export interface SetTagNodeConfig {
   next_node_key: string;
 }
 
+/**
+ * Put the contact into (or take them out of) a named audience —
+ * migration 076's `contact_segments`.
+ *
+ * Deliberately a separate node from `set_tag` rather than a mode on it:
+ * a tag describes the person, a segment is a list a broadcast can be
+ * aimed at, and a flow author picking between them is making a real
+ * choice about what happens next.
+ *
+ * Only STATIC segments are addressable; a dynamic one computes its own
+ * membership from a filter.
+ */
+export interface SetSegmentNodeConfig {
+  mode: 'add' | 'remove';
+  /** contact_segments UUID. The builder lists static segments only. */
+  segment_id: string;
+  next_node_key: string;
+}
+
 // Terminal nodes carry no config — they just stop the run.
 export type EndNodeConfig = Record<string, never>;
 
@@ -170,6 +189,7 @@ export type FlowNodeConfig =
   | { node_type: 'collect_input'; config: CollectInputNodeConfig }
   | { node_type: 'condition'; config: ConditionNodeConfig }
   | { node_type: 'set_tag'; config: SetTagNodeConfig }
+  | { node_type: 'set_segment'; config: SetSegmentNodeConfig }
   | { node_type: 'handoff'; config: HandoffNodeConfig }
   | { node_type: 'end'; config: EndNodeConfig };
 

@@ -100,7 +100,7 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
 - ⚠️ **Supabase Storage buckets are written from the BROWSER, not the API** (`avatars`, `flow-media` 016/020, `chat-media` 023, `workspace-logos` 071). The bucket's RLS policy is therefore the _only_ gate on those writes — it must carry the authorization itself, including any role check. Account-scoped buckets all use the path convention `account-<account_id>/…` matched on the first folder segment, built in one place by `buildMediaPath()` (`apps/web/src/lib/storage/upload-media.ts`); a hand-rolled path is silently rejected. When such a URL is later persisted to a column, pin it to our own bucket _and_ the caller's own folder server-side (`common/storage/workspace-logo.util.ts`) — a free-text URL that renders in every teammate's browser is a beacon.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
+- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
 
 ## Auth & signup
 
@@ -313,6 +313,55 @@ pending Meta App Review for `ads_management`.
   (a Click-to-WhatsApp click produces a _WhatsApp_ conversation).
 - Publishing a Click-to-WhatsApp ad writes a `ctwa_campaigns` row, so existing
   `ctwa_clicks` attribution and `/channels/whatsapp/ctwa` keep working unchanged.
+
+## Segments — named audiences (migration 076)
+
+A segment is a set with a purpose ("March webinar attendees"); a **tag** is a
+fact about one person ("vip"). Both exist because collapsing them is how a tag
+list becomes sixty entries nobody dares delete.
+
+- **Two kinds, and the choice is permanent.** `kind = 'static'` is an explicit
+  membership list in `contact_segment_members` and is the only kind anything may
+  add somebody to. `kind = 'dynamic'` is a saved filter whose membership is
+  computed from `filter` on read and never stored. `kind` is deliberately
+  immutable — flipping static→dynamic orphans member rows behind a filter that
+  does not describe them, and dynamic→static invents a list nobody chose.
+- ⚠ **`resolve_segment_contact_ids(id)` is the ONLY correct way to turn a
+  segment into people.** Reading `contact_segment_members` directly looks like it
+  works and silently returns nothing for a dynamic segment — an empty audience
+  reads as an empty audience, not as a bug. `SegmentMembershipService.resolve()`
+  is the TypeScript face of it.
+- ⚠ **Both ends of a membership write are pinned, and neither check is
+  redundant.** `SegmentMembershipService.findForAccount()` pins the SEGMENT to the
+  caller's account; `add_contacts_to_segment` pins the CONTACT to the segment's.
+  The segment id arrives from a config blob and the contact id from a webhook
+  payload, and Prisma bypasses RLS — either check alone leaves a cross-tenant
+  write open. The RLS INSERT policy restates both for the browser, which writes
+  membership through PostgREST directly.
+- ⚠ **An incomplete rule is DROPPED, and a filter with no usable rules matches
+  NOBODY.** `segment_complete_rules()` decides this. Treating an unfinished rule
+  as permissive is correct under `match: 'all'` and catastrophic under
+  `match: 'any'`, where it resolves to the entire contact list — and the first
+  thing that happens to a segment is that somebody broadcasts to it. The rule
+  vocabulary is a contract between `contact_matches_segment_rule()` (SQL, the
+  authority) and `apps/web/src/lib/segments/rules.ts`; a field added to one and
+  not the other saves fine, renders fine, and matches nobody.
+- **Six surfaces can file a contact into a segment**, all through the same
+  service or the same RPC: the contacts page bulk bar, the contact drawer, the
+  inbox sidebar, CSV import, the `add_to_segment`/`remove_from_segment`
+  automation steps, the `set_segment` flow node, and `POST /v1/segments/:id/contacts`.
+  `contact_segment_members.source` records which one, and `added_by` is NULL when
+  a machine did it — an automation adding 10,000 people is a different fact from
+  an operator ticking a box.
+- **Broadcasts take `audience.type = 'segments'`** (several segments UNION) and
+  `excludeSegmentIds`, which applies to *every* audience type because "everyone
+  except last month's buyers" is the shape most suppression lists take.
+- `filter_contacts()` is 025's `filter_contacts_by_tags` superset — tags AND
+  segments, and its search also covers `company` and `ig_username`. 025 is left
+  in place, unused by the page.
+- The public API reuses `contacts:read`/`contacts:write` rather than minting a
+  segment scope: a new scope is absent from every key already issued, so every
+  live integration would 403 the day it shipped.
 
 ## Queues (`apps/api/src/queue`, BullMQ + Redis)
 

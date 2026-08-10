@@ -153,6 +153,14 @@ export function FlowSimulator({ open, onClose }: { open: boolean; onClose: () =>
         break;
       }
 
+      case "set_segment": {
+        const mode = str(c.mode) === "remove" ? "removed from" : "added to";
+        const segment = str(c.segment_id);
+        push({ id: uid(), from: "bot", kind: "info", text: `↳ Contact ${mode} segment: ${segment ? segment.slice(0, 8) + "…" : "(none)"}` });
+        advance(str(c.next_node_key), 300);
+        break;
+      }
+
       case "handoff":
         push({ id: uid(), from: "system", kind: "terminal", reason: "handoff", text: str(c.note) ? `Handed off to agent\n"${str(c.note)}"` : "Handed off to agent" });
         setStatus({ kind: "done" });

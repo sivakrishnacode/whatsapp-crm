@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag } from '@/types';
+import type { Contact, ContactSegment, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -47,6 +47,7 @@ import {
   ChevronRight,
   SlidersHorizontal,
   Filter,
+  Layers,
   X,
 } from 'lucide-react';
 import { ContactSourceBadge } from '@/components/contacts/contact-source-badge';
@@ -54,6 +55,9 @@ import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
+import { SegmentsManager } from '@/components/contacts/segments-manager';
+import { SegmentPicker } from '@/components/contacts/segment-picker';
+import { listSegmentsLight, segmentsForContacts } from '@/lib/segments/api';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -62,6 +66,8 @@ const PAGE_SIZE = 25;
 
 interface ContactWithTags extends Contact {
   tags?: Tag[];
+  /** Static-segment ids this contact is an explicit member of. */
+  segmentIds?: string[];
 }
 
 export default function ContactsPage() {
@@ -76,6 +82,11 @@ export default function ContactsPage() {
   const [totalCount, setTotalCount] = useState(0);
   // Tag filter — contacts shown must have ANY of these tags (OR).
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  // Segment filter — ANY of these segments (OR), then intersected with
+  // the tag filter (AND). Stacking two different chips reading as "and"
+  // is what the UI looks like it should do.
+  const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]);
+  const [segments, setSegments] = useState<ContactSegment[]>([]);
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -85,6 +96,7 @@ export default function ContactsPage() {
   const [detailContactId, setDetailContactId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [customFieldsOpen, setCustomFieldsOpen] = useState(false);
+  const [segmentsOpen, setSegmentsOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -117,6 +129,23 @@ export default function ContactsPage() {
     }
   }, [supabase]);
 
+  const fetchSegments = useCallback(async () => {
+    try {
+      const rows = await listSegmentsLight(supabase);
+      setSegments(rows);
+      // Drop filter selections whose segment no longer exists, for the
+      // same reason fetchTags prunes tags: an id nobody can see must not
+      // keep narrowing the list invisibly.
+      setSelectedSegmentIds((prev) => {
+        const live = new Set(rows.map((s) => s.id));
+        const pruned = prev.filter((id) => live.has(id));
+        return pruned.length === prev.length ? prev : pruned;
+      });
+    } catch {
+      // Non-fatal: the contacts list itself does not depend on this.
+    }
+  }, [supabase]);
+
   const fetchContacts = useCallback(async () => {
     const seq = ++fetchSeq.current;
     setLoading(true);
@@ -132,13 +161,18 @@ export default function ContactsPage() {
     let contactRows: Contact[];
     let count: number;
 
-    if (selectedTagIds.length > 0) {
-      // Tag filter active — resolve it server-side (join + distinct +
-      // windowed total count + pagination) so a tag covering many
-      // contacts can't silently truncate the result or overflow an IN
-      // clause. See migration 025_filter_contacts_by_tags.
-      const { data, error } = await supabase.rpc('filter_contacts_by_tags', {
-        p_tag_ids: selectedTagIds,
+    if (selectedTagIds.length > 0 || selectedSegmentIds.length > 0) {
+      // Tag and/or segment filter active — resolve it server-side (join
+      // + distinct + windowed total count + pagination) so a filter
+      // covering many contacts can't silently truncate the result or
+      // overflow an IN clause. `filter_contacts` (migration 076) is the
+      // superset of 025's tag-only function: it also resolves segments,
+      // including dynamic ones whose membership is computed rather than
+      // stored, and its search covers company and @handle too.
+      const { data, error } = await supabase.rpc('filter_contacts', {
+        p_tag_ids: selectedTagIds.length > 0 ? selectedTagIds : null,
+        p_segment_ids:
+          selectedSegmentIds.length > 0 ? selectedSegmentIds : null,
         p_search: term || null,
         p_limit: PAGE_SIZE,
         p_offset: from,
@@ -183,12 +217,19 @@ export default function ContactsPage() {
       return;
     }
 
-    // Fetch tags for these contacts
+    // Tags and segment membership for these contacts, in parallel —
+    // both are "which labels does this page's people carry", and
+    // segments_for_contacts is one round trip rather than one per row.
     const contactIds = contactRows.map((c) => c.id);
-    const { data: contactTags } = await supabase
-      .from('contact_tags')
-      .select('contact_id, tag_id')
-      .in('contact_id', contactIds);
+    const [{ data: contactTags }, segmentsByContact] = await Promise.all([
+      supabase
+        .from('contact_tags')
+        .select('contact_id, tag_id')
+        .in('contact_id', contactIds),
+      segmentsForContacts(supabase, contactIds).catch(
+        (): Record<string, string[]> => ({}),
+      ),
+    ]);
     if (seq !== fetchSeq.current) return; // superseded by a newer fetch
 
     const tagsByContact: Record<string, string[]> = {};
@@ -202,11 +243,12 @@ export default function ContactsPage() {
       tags: (tagsByContact[c.id] ?? [])
         .map((tid) => tagsMap[tid])
         .filter(Boolean),
+      segmentIds: segmentsByContact[c.id] ?? [],
     }));
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, selectedTagIds, tagsMap]);
+  }, [supabase, page, search, selectedTagIds, selectedSegmentIds, tagsMap]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -216,6 +258,11 @@ export default function ContactsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTags();
   }, [fetchTags]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchSegments();
+  }, [fetchSegments]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -322,7 +369,11 @@ export default function ContactsPage() {
   const allTags = Object.values(tagsMap).sort((a, b) =>
     a.name.localeCompare(b.name)
   );
-  const hasActiveFilters = search.trim().length > 0 || selectedTagIds.length > 0;
+  const segmentsById = Object.fromEntries(segments.map((s) => [s.id, s]));
+  const hasActiveFilters =
+    search.trim().length > 0 ||
+    selectedTagIds.length > 0 ||
+    selectedSegmentIds.length > 0;
 
   function toggleTagFilter(tagId: string) {
     setSelectedTagIds((prev) =>
@@ -338,6 +389,36 @@ export default function ContactsPage() {
     setPage(0);
   }
 
+  function toggleSegmentFilter(segmentId: string) {
+    setSelectedSegmentIds((prev) =>
+      prev.includes(segmentId)
+        ? prev.filter((id) => id !== segmentId)
+        : [...prev, segmentId]
+    );
+    setPage(0);
+  }
+
+  function clearSegmentFilters() {
+    setSelectedSegmentIds([]);
+    setPage(0);
+  }
+
+  /**
+   * Segment ids EVERY selected contact already belongs to.
+   *
+   * The picker renders a tick from this, and the intersection is the
+   * only honest reading for a mixed selection: ticking a segment that
+   * only half of them are in, then clicking it, would remove the half
+   * who were members rather than adding the half who weren't.
+   */
+  const selectedSharedSegmentIds = (() => {
+    const chosen = contacts.filter((c) => selected.has(c.id));
+    if (chosen.length === 0) return [];
+    return (chosen[0].segmentIds ?? []).filter((id) =>
+      chosen.every((c) => (c.segmentIds ?? []).includes(id)),
+    );
+  })();
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -349,6 +430,16 @@ export default function ContactsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <GatedButton
+            variant="outline"
+            canAct={canEdit}
+            gateReason="manage segments"
+            onClick={() => setSegmentsOpen(true)}
+            className="border-border text-muted-foreground hover:bg-muted"
+          >
+            <Layers className="size-4" />
+            Segments
+          </GatedButton>
           {canEditSettings && (
             <Button
               variant="outline"
@@ -459,7 +550,110 @@ export default function ContactsPage() {
               )}
             </PopoverContent>
           </Popover>
+
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  variant="outline"
+                  className="border-border text-muted-foreground hover:bg-muted shrink-0"
+                />
+              }
+            >
+              <Layers className="size-4" />
+              Filter by segments
+              {selectedSegmentIds.length > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
+                  {selectedSegmentIds.length}
+                </span>
+              )}
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 p-0">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+                <span className="text-sm font-medium text-popover-foreground">
+                  Filter by segments
+                </span>
+                {selectedSegmentIds.length > 0 && (
+                  <button
+                    onClick={clearSegmentFilters}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              {segments.length === 0 ? (
+                <p className="px-3 py-4 text-sm text-muted-foreground text-center">
+                  No segments yet.
+                </p>
+              ) : (
+                <div className="max-h-64 overflow-y-auto py-1">
+                  {segments.map((segment) => (
+                    <label
+                      key={segment.id}
+                      className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-muted/50"
+                    >
+                      <Checkbox
+                        checked={selectedSegmentIds.includes(segment.id)}
+                        onCheckedChange={() => toggleSegmentFilter(segment.id)}
+                        aria-label={`Filter by ${segment.name}`}
+                      />
+                      <span
+                        className="size-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: segment.color }}
+                      />
+                      <span className="text-sm text-popover-foreground truncate">
+                        {segment.name}
+                      </span>
+                      {segment.kind === 'dynamic' && (
+                        <Filter
+                          className="size-3 shrink-0 text-muted-foreground"
+                          aria-label="Filter segment"
+                        />
+                      )}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
         </div>
+
+        {/* Active segment-filter chips */}
+        {selectedSegmentIds.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {selectedSegmentIds.map((id) => {
+              const segment = segmentsById[id];
+              if (!segment) return null;
+              return (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                  style={{
+                    backgroundColor: segment.color + '20',
+                    color: segment.color,
+                  }}
+                >
+                  <Layers className="size-3" />
+                  {segment.name}
+                  <button
+                    onClick={() => toggleSegmentFilter(id)}
+                    aria-label={`Remove ${segment.name} filter`}
+                    className="hover:opacity-70"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </span>
+              );
+            })}
+            <button
+              onClick={clearSegmentFilters}
+              className="text-xs text-muted-foreground hover:text-foreground px-1"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
 
         {/* Active tag-filter chips */}
         {selectedTagIds.length > 0 && (
@@ -513,6 +707,20 @@ export default function ContactsPage() {
             >
               Clear
             </Button>
+            {canEdit && (
+              <SegmentPicker
+                contactIds={[...selected]}
+                memberOf={selectedSharedSegmentIds}
+                source="manual"
+                onChanged={() => {
+                  // Refetch rather than patch local state: membership
+                  // just changed, and any active segment filter means
+                  // the visible rows may no longer be the right ones.
+                  fetchContacts();
+                  fetchSegments();
+                }}
+              />
+            )}
             <GatedButton
               variant="destructive"
               size="sm"
@@ -768,6 +976,18 @@ export default function ContactsPage() {
           onOpenChange={setCustomFieldsOpen}
         />
       )}
+
+      {/* Segments Manager */}
+      <SegmentsManager
+        open={segmentsOpen}
+        onOpenChange={setSegmentsOpen}
+        onChanged={() => {
+          fetchSegments();
+          // A deleted segment may be an active filter, and an edited
+          // dynamic one may now match different people.
+          fetchContacts();
+        }}
+      />
 
       {/* Delete Confirmation */}
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>

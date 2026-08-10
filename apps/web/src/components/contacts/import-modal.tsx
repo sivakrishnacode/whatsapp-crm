@@ -1,8 +1,13 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import type { ContactSegment } from '@/types';
+import {
+  addContactsToSegment,
+  listSegmentsLight,
+} from '@/lib/segments/api';
 import {
   dedupeByPhone,
   isUniqueViolation,
@@ -136,12 +141,35 @@ export function ImportModal({
     new Map()
   );
   const [importing, setImporting] = useState(false);
+  // Optional destination segment for the whole file. Static only —
+  // a filter segment works out its own membership.
+  const [segments, setSegments] = useState<ContactSegment[]>([]);
+  const [segmentId, setSegmentId] = useState('');
   const [result, setResult] = useState<{
     imported: number;
     skipped: number;
     failed: number;
     tagsAssigned: number;
+    segmentAdded: number;
   } | null>(null);
+
+  // Loaded when the dialog opens rather than on mount: this component
+  // stays mounted on the contacts page for the whole session.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await listSegmentsLight(supabase);
+        if (!cancelled) setSegments(rows.filter((s) => s.kind === 'static'));
+      } catch {
+        // Optional — import works without a segment.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, supabase]);
 
   function reset() {
     setFile(null);
@@ -149,6 +177,7 @@ export function ImportModal({
     setHasTagsColumn(false);
     setHasCompanyColumn(false);
     setTagColorByKey(new Map());
+    setSegmentId('');
     setResult(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
@@ -362,7 +391,43 @@ export function ImportModal({
         toast.warning('Contacts imported, but some tag assignments failed.');
       }
 
-      setResult({ imported, skipped, failed, tagsAssigned });
+      // 6) File the whole file into the chosen segment — EVERY row, not
+      //    just the newly created ones.
+      //
+      //    "Import this list into March Webinar" means the list, and a
+      //    number that was already a contact is still on it. Adding only
+      //    the inserts would quietly drop your existing customers from
+      //    the audience, which is exactly the group you most wanted in
+      //    it. The membership RPC is idempotent, so re-importing the
+      //    same file changes nothing.
+      let segmentAdded = 0;
+      if (segmentId) {
+        try {
+          const keys = canonicalRows.map((row) => normalizeKey(row.phone));
+          const contactIds: string[] = [];
+          const lookupChunk = 200;
+          for (let i = 0; i < keys.length; i += lookupChunk) {
+            const { data: found } = await supabase
+              .from('contacts')
+              .select('id')
+              .eq('account_id', accountId)
+              .in('phone_normalized', keys.slice(i, i + lookupChunk));
+            for (const row of found ?? []) contactIds.push(row.id);
+          }
+          segmentAdded = await addContactsToSegment(
+            supabase,
+            segmentId,
+            contactIds,
+            'import'
+          );
+        } catch {
+          toast.warning(
+            'Contacts imported, but adding them to the segment failed.'
+          );
+        }
+      }
+
+      setResult({ imported, skipped, failed, tagsAssigned, segmentAdded });
       if (imported > 0) {
         toast.success(
           `${imported} contact${imported !== 1 ? 's' : ''} imported`
@@ -372,6 +437,11 @@ export function ImportModal({
       if (tagsAssigned > 0) {
         toast.success(
           `${tagsAssigned} tag assignment${tagsAssigned !== 1 ? 's' : ''} applied`
+        );
+      }
+      if (segmentAdded > 0) {
+        toast.success(
+          `${segmentAdded} contact${segmentAdded !== 1 ? 's' : ''} added to the segment`
         );
       }
       if (skippedNames.length > 0) {
@@ -609,6 +679,34 @@ export function ImportModal({
             </div>
           )}
 
+          {parsedRows.length > 0 && !result && segments.length > 0 && (
+            <div className="rounded-xl border border-border bg-background/50 p-4">
+              <label
+                htmlFor="import-segment"
+                className="text-sm font-medium text-popover-foreground"
+              >
+                Add everyone to a segment
+              </label>
+              <select
+                id="import-segment"
+                value={segmentId}
+                onChange={(e) => setSegmentId(e.target.value)}
+                className="mt-2 w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none"
+              >
+                <option value="">Don&apos;t add to a segment</option>
+                {segments.map((segment) => (
+                  <option key={segment.id} value={segment.id}>
+                    {segment.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Everyone in the file is added, including numbers you already
+                have — a contact you skip as a duplicate is still on this list.
+              </p>
+            </div>
+          )}
+
           {result && (
             <div className="rounded-xl border border-border bg-background/50 p-4">
               <p className="text-sm font-medium text-popover-foreground">Import complete</p>
@@ -624,6 +722,12 @@ export function ImportModal({
                     <CheckCircle className="size-4 shrink-0" />
                     {result.tagsAssigned} tag
                     {result.tagsAssigned !== 1 ? 's' : ''} assigned
+                  </div>
+                )}
+                {result.segmentAdded > 0 && (
+                  <div className="flex items-center gap-1.5 text-sm text-cyan-400">
+                    <CheckCircle className="size-4 shrink-0" />
+                    {result.segmentAdded} added to segment
                   </div>
                 )}
                 {result.skipped > 0 && (

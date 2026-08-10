@@ -83,6 +83,20 @@ function validateOne(
         issues.push({ path: `${path}.tag_id`, message: 'tag is required' });
       }
       break;
+    case 'add_to_segment':
+    case 'remove_from_segment':
+      // Only presence is checked here, as everywhere else in this file.
+      // Whether the segment still exists, still belongs to this account
+      // and is still static is a run-time question — the answer can
+      // change after activation, so the executor is the only place it
+      // can honestly be asked.
+      if (!nonEmpty(c.segment_id)) {
+        issues.push({
+          path: `${path}.segment_id`,
+          message: 'segment is required',
+        });
+      }
+      break;
     case 'assign_conversation':
       if (c.mode === 'specific' && !nonEmpty(c.agent_id)) {
         issues.push({

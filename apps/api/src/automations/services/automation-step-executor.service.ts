@@ -10,6 +10,7 @@ import {
   UnsupportedOnChannelError,
 } from '../../common/messaging/channel-sender.service';
 import { isDeliverableUrl } from '../../common/security/ssrf.util';
+import { SegmentMembershipService } from '../../common/segments/segment-membership.service';
 import { AutomationConditionService } from './automation-condition.service';
 import { interpolate } from './automation-interpolation.util';
 import type {
@@ -19,6 +20,7 @@ import type {
   AutomationStepType,
   ConditionStepConfig,
   CreateDealStepConfig,
+  SegmentStepConfig,
   SendMessageStepConfig,
   SendTemplateStepConfig,
   SendWebhookStepConfig,
@@ -44,6 +46,7 @@ export class AutomationStepExecutorService {
     /** WhatsApp-only paths (templates). Plain sends go via channelSender. */
     private readonly metaSend: AutomationMetaSendService,
     private readonly channelSender: ChannelSenderService,
+    private readonly segments: SegmentMembershipService,
     @InjectQueue(AUTOMATIONS_PENDING_QUEUE) private readonly queue: Queue,
   ) {}
 
@@ -409,6 +412,51 @@ export class AutomationStepExecutorService {
           where: { contact_id: args.contactId, tag_id: cfg.tag_id },
         });
         return `tag ${cfg.tag_id} removed`;
+      }
+
+      case 'add_to_segment':
+      case 'remove_from_segment': {
+        // Unlike add_tag, this does NOT lean on the dispatch guard
+        // alone. The segment id comes from a config blob and the
+        // contact id ultimately from a webhook payload, so both ends
+        // are pinned: findForAccount pins the segment to this
+        // automation's workspace, and add_contacts_to_segment pins the
+        // contact to the segment's. Either check alone leaves a
+        // cross-tenant write open.
+        const cfg = step.stepConfig as SegmentStepConfig;
+        if (!args.contactId || !cfg.segment_id)
+          throw new Error(`${step.stepType} needs contact + segment_id`);
+
+        const segment = await this.segments.findForAccount(
+          args.automation.accountId,
+          cfg.segment_id,
+        );
+        if (!segment) throw new Error('segment not found in this workspace');
+        if (segment.kind !== 'static') {
+          // Not silently ignored: somebody pointed an automation at a
+          // saved filter and is expecting it to be doing something.
+          throw new Error(
+            `"${segment.name}" is a dynamic segment — its membership comes from its filter and cannot be edited`,
+          );
+        }
+
+        if (step.stepType === 'add_to_segment') {
+          const added = await this.segments.add(
+            segment.id,
+            [args.contactId],
+            'automation',
+          );
+          return added > 0
+            ? `added to segment "${segment.name}"`
+            : `already in segment "${segment.name}"`;
+        }
+
+        const removed = await this.segments.remove(segment.id, [
+          args.contactId,
+        ]);
+        return removed > 0
+          ? `removed from segment "${segment.name}"`
+          : `was not in segment "${segment.name}"`;
       }
 
       case 'assign_conversation': {

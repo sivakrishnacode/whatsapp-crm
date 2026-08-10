@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
+import { SegmentsModule } from '../common/segments/segments.module';
 import { AutomationsController } from './automations.controller';
 import { AutomationsEngineController } from './automations-engine.controller';
 import { AutomationsService } from './automations.service';
@@ -27,6 +28,9 @@ import { QueueModule } from '../queue/queue.module';
     // send_message steps route by conversation channel; send_template
     // steps use it to refuse cleanly on Instagram.
     forwardRef(() => MessagingModule),
+    // add_to_segment / remove_from_segment. No forwardRef: SegmentsModule
+    // depends on Prisma alone and sits below the engines.
+    SegmentsModule,
   ],
   controllers: [AutomationsController, AutomationsEngineController],
   providers: [

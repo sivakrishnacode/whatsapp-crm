@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EntitlementService } from '../../subscription/services/entitlement.service';
 import { toE164 } from '../../v1/utils/phone.util';
 import { resolveAccountCountry } from '../../common/phone/account-country.util';
+import { SegmentMembershipService } from '../../common/segments/segment-membership.service';
 import { BroadcastQueueService } from '../../queue/broadcast-queue.service';
 import {
   BUTTON_PARAMS_KEY,
@@ -20,8 +21,19 @@ import {
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
 export interface AudienceConfig {
-  type: 'all' | 'tags' | 'custom_field' | 'csv';
+  type: 'all' | 'tags' | 'custom_field' | 'csv' | 'segments';
   tagIds?: string[];
+  /**
+   * contact_segments ids (migration 076). Several segments UNION —
+   * "send to these people and also those people", which is what picking
+   * two audiences in the wizard looks like it should do.
+   *
+   * Resolution goes through SegmentMembershipService because a segment
+   * may be a saved filter with no stored membership at all; reading
+   * contact_segment_members here would quietly send a dynamic segment's
+   * broadcast to nobody.
+   */
+  segmentIds?: string[];
   customField?: {
     fieldId: string;
     operator: CustomFieldOperator;
@@ -29,6 +41,8 @@ export interface AudienceConfig {
   };
   csvContacts?: { phone: string; name?: string }[];
   excludeTagIds?: string[];
+  /** Segments to subtract from whatever the above resolved to. */
+  excludeSegmentIds?: string[];
 }
 
 export type VariableMapping =
@@ -166,6 +180,7 @@ export class DashboardBroadcastService {
     private readonly prisma: PrismaService,
     private readonly broadcastQueue: BroadcastQueueService,
     private readonly entitlements: EntitlementService,
+    private readonly segments: SegmentMembershipService,
   ) {}
 
   /**
@@ -303,8 +318,10 @@ export class DashboardBroadcastService {
         audience_filter: {
           type: audience.type,
           tagIds: audience.tagIds,
+          segmentIds: audience.segmentIds,
           customField: audience.customField,
           excludeTagIds: audience.excludeTagIds,
+          excludeSegmentIds: audience.excludeSegmentIds,
           csvCount: audience.csvContacts?.length,
         } as object,
         // 'queued', not 'sending': nothing has been sent yet, and with
@@ -390,6 +407,20 @@ export class DashboardBroadcastService {
         userId,
         audience.csvContacts,
       );
+    } else if (audience.type === 'segments' && audience.segmentIds?.length) {
+      // resolveMany already refuses a segment belonging to another
+      // account, so the id list is safe to feed straight into the
+      // contacts query — which is account-scoped again anyway.
+      const ids = await this.segments.resolveMany(
+        accountId,
+        audience.segmentIds,
+      );
+      if (ids.length > 0) {
+        contacts = await this.prisma.contacts.findMany({
+          where: { id: { in: ids }, account_id: accountId },
+          select,
+        });
+      }
     }
 
     if (audience.excludeTagIds?.length && contacts.length > 0) {
@@ -398,6 +429,16 @@ export class DashboardBroadcastService {
         select: { contact_id: true },
       });
       const excludedIds = new Set(excluded.map((e) => e.contact_id));
+      contacts = contacts.filter((c) => !excludedIds.has(c.id));
+    }
+
+    // Segment exclusion runs on every audience type, not just
+    // 'segments' — "everyone except the people who already bought" is
+    // the shape most suppression lists actually take.
+    if (audience.excludeSegmentIds?.length && contacts.length > 0) {
+      const excludedIds = new Set(
+        await this.segments.resolveMany(accountId, audience.excludeSegmentIds),
+      );
       contacts = contacts.filter((c) => !excludedIds.has(c.id));
     }
 

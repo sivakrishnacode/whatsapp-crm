@@ -2,12 +2,17 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { CustomField, Tag } from '@/types';
+import { ContactSegment, CustomField, Tag } from '@/types';
+import {
+  listSegmentsLight,
+  resolveSegmentContactIds,
+} from '@/lib/segments/api';
 import { Button } from '@/components/ui/button';
 import {
   Users,
   Tags,
   Filter,
+  Layers,
   Upload,
   Loader2,
   ArrowRight,
@@ -15,7 +20,7 @@ import {
   X,
 } from 'lucide-react';
 
-type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
+type AudienceType = 'all' | 'tags' | 'segments' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
 interface CustomFieldFilter {
@@ -27,9 +32,13 @@ interface CustomFieldFilter {
 interface AudienceConfig {
   type: AudienceType;
   tagIds?: string[];
+  /** Several segments UNION — "these people and also those people". */
+  segmentIds?: string[];
   customField?: CustomFieldFilter;
   csvContacts?: { phone: string; name?: string }[];
   excludeTagIds?: string[];
+  /** Suppression list, applied to whatever the audience resolved to. */
+  excludeSegmentIds?: string[];
 }
 
 interface Step2Props {
@@ -58,6 +67,12 @@ const audienceOptions: {
     icon: Tags,
   },
   {
+    type: 'segments',
+    label: 'Saved Segments',
+    description: 'Send to one or more of your saved audiences',
+    icon: Layers,
+  },
+  {
     type: 'custom_field',
     label: 'Custom Field',
     description: 'Filter by a custom field value',
@@ -84,6 +99,7 @@ export function Step2SelectAudience({
   onBack,
 }: Step2Props) {
   const [tags, setTags] = useState<Tag[]>([]);
+  const [segments, setSegments] = useState<ContactSegment[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
   const [loadingFields, setLoadingFields] = useState(false);
@@ -104,6 +120,19 @@ export function Step2SelectAudience({
       }
     }
     fetchTags();
+  }, []);
+
+  // Segments, like tags, serve both the primary picker and the exclude
+  // list, so they load once on mount rather than per audience type.
+  useEffect(() => {
+    async function fetchSegments() {
+      try {
+        setSegments(await listSegmentsLight(createClient()));
+      } catch {
+        // Non-fatal — the other audience types still work.
+      }
+    }
+    fetchSegments();
   }, []);
 
   // Lazy-load custom fields only when that audience type is active.
@@ -146,6 +175,19 @@ export function Step2SelectAudience({
           .in('tag_id', audience.tagIds);
         baseIds = new Set((data ?? []).map((r) => r.contact_id));
       } else if (
+        audience.type === 'segments' &&
+        audience.segmentIds &&
+        audience.segmentIds.length > 0
+      ) {
+        // Resolved through the RPC, not by reading membership rows: a
+        // dynamic segment has none, and counting them as zero here
+        // would show "0 recipients" for an audience the send would
+        // happily deliver to.
+        const resolved = await Promise.all(
+          audience.segmentIds.map((id) => resolveSegmentContactIds(supabase, id)),
+        );
+        baseIds = new Set(resolved.flat());
+      } else if (
         audience.type === 'custom_field' &&
         audience.customField?.fieldId &&
         audience.customField.value
@@ -173,7 +215,8 @@ export function Step2SelectAudience({
         return;
       }
 
-      // Apply exclude tags
+      // Apply exclude tags and exclude segments. Both feed one set —
+      // "leave these people out" does not care which control named them.
       let excludeSet: Set<string> | null = null;
       if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
         const { data: excludeRows } = await supabase
@@ -181,6 +224,15 @@ export function Step2SelectAudience({
           .select('contact_id')
           .in('tag_id', audience.excludeTagIds);
         excludeSet = new Set((excludeRows ?? []).map((r) => r.contact_id));
+      }
+      if (audience.excludeSegmentIds && audience.excludeSegmentIds.length > 0) {
+        const resolved = await Promise.all(
+          audience.excludeSegmentIds.map((id) =>
+            resolveSegmentContactIds(supabase, id),
+          ),
+        );
+        excludeSet ??= new Set<string>();
+        for (const id of resolved.flat()) excludeSet.add(id);
       }
 
       if (baseIds) {
@@ -206,9 +258,11 @@ export function Step2SelectAudience({
   }, [
     audience.type,
     audience.tagIds,
+    audience.segmentIds,
     audience.customField,
     audience.csvContacts,
     audience.excludeTagIds,
+    audience.excludeSegmentIds,
   ]);
 
   useEffect(() => {
@@ -221,6 +275,22 @@ export function Step2SelectAudience({
       ? current.filter((id) => id !== tagId)
       : [...current, tagId];
     onUpdate({ ...audience, tagIds: updated });
+  }
+
+  function toggleSegment(segmentId: string) {
+    const current = audience.segmentIds ?? [];
+    const updated = current.includes(segmentId)
+      ? current.filter((id) => id !== segmentId)
+      : [...current, segmentId];
+    onUpdate({ ...audience, segmentIds: updated });
+  }
+
+  function toggleExcludeSegment(segmentId: string) {
+    const current = audience.excludeSegmentIds ?? [];
+    const updated = current.includes(segmentId)
+      ? current.filter((id) => id !== segmentId)
+      : [...current, segmentId];
+    onUpdate({ ...audience, excludeSegmentIds: updated });
   }
 
   function toggleExcludeTag(tagId: string) {
@@ -243,6 +313,9 @@ export function Step2SelectAudience({
   const isValid =
     audience.type === 'all' ||
     (audience.type === 'tags' && audience.tagIds && audience.tagIds.length > 0) ||
+    (audience.type === 'segments' &&
+      audience.segmentIds &&
+      audience.segmentIds.length > 0) ||
     (audience.type === 'custom_field' &&
       !!audience.customField?.fieldId &&
       audience.customField.value.length > 0) ||
@@ -343,6 +416,48 @@ export function Step2SelectAudience({
         </div>
       )}
 
+      {audience.type === 'segments' && (
+        <div className="rounded-xl border border-border bg-card/50 p-4">
+          <p className="mb-1 text-sm font-medium text-foreground">
+            Select Segments
+          </p>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Picking more than one sends to everyone in any of them.
+          </p>
+          {segments.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No segments yet. Create one from Contacts → Segments.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {segments.map((segment) => {
+                const isSelected = audience.segmentIds?.includes(segment.id);
+                return (
+                  <button
+                    key={segment.id}
+                    onClick={() => toggleSegment(segment.id)}
+                    className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                      isSelected
+                        ? 'border-primary/30 bg-primary/10 text-primary'
+                        : 'border-border bg-muted text-muted-foreground hover:border-border'
+                    }`}
+                  >
+                    <span
+                      className="mr-1.5 h-2 w-2 rounded-full"
+                      style={{ backgroundColor: segment.color }}
+                    />
+                    {segment.name}
+                    {segment.kind === 'dynamic' && (
+                      <Filter className="ml-1.5 h-3 w-3" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {audience.type === 'custom_field' && (
         <div className="space-y-3 rounded-xl border border-border bg-card/50 p-4">
           <p className="text-sm font-medium text-foreground">Custom Field Filter</p>
@@ -429,6 +544,46 @@ export function Step2SelectAudience({
           </div>
         )}
       </div>
+
+      {/* Suppression by segment — the shape most "don't send to these
+          people" lists actually take ("everyone except last month's
+          buyers"), so it applies to every audience type, not just the
+          segment one. */}
+      {segments.length > 0 && (
+        <div className="rounded-xl border border-border bg-card/50 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <X className="h-4 w-4 text-red-400" />
+            <p className="text-sm font-medium text-foreground">
+              Exclude contacts in these segments
+            </p>
+            <span className="text-xs text-muted-foreground">(optional)</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {segments.map((segment) => {
+              const isExcluded = audience.excludeSegmentIds?.includes(
+                segment.id,
+              );
+              return (
+                <button
+                  key={segment.id}
+                  onClick={() => toggleExcludeSegment(segment.id)}
+                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                    isExcluded
+                      ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                      : 'border-border bg-muted text-muted-foreground hover:border-border'
+                  }`}
+                >
+                  <span
+                    className="mr-1.5 h-2 w-2 rounded-full"
+                    style={{ backgroundColor: segment.color }}
+                  />
+                  {segment.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Audience Summary */}
       <div className="rounded-xl border border-border bg-card/50 p-4">

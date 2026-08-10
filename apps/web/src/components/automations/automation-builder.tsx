@@ -33,6 +33,7 @@ import {
   ArrowUp,
   AlertTriangle,
   Calendar,
+  Layers,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -50,6 +51,7 @@ import type {
   Automation,
   AutomationStepType,
   AutomationTriggerType,
+  ContactSegment,
   CustomField,
   KeywordMatchTriggerConfig,
   MessageTemplate,
@@ -102,6 +104,8 @@ const STEP_META: Record<AutomationStepType, StepMeta> = {
   send_template: { label: "Send Template", icon: FileText, border: "border-l-primary" },
   add_tag: { label: "Add Tag", icon: Tag, border: "border-l-primary" },
   remove_tag: { label: "Remove Tag", icon: TagIcon, border: "border-l-primary" },
+  add_to_segment: { label: "Add to Segment", icon: Layers, border: "border-l-primary" },
+  remove_from_segment: { label: "Remove from Segment", icon: Layers, border: "border-l-primary" },
   assign_conversation: { label: "Assign Conversation", icon: UserCheck, border: "border-l-primary" },
   update_contact_field: { label: "Update Contact Field", icon: PencilLine, border: "border-l-primary" },
   create_deal: { label: "Create Deal", icon: Briefcase, border: "border-l-primary" },
@@ -120,6 +124,8 @@ const ADDABLE_STEPS: AutomationStepType[] = [
   "send_booking_link",
   "add_tag",
   "remove_tag",
+  "add_to_segment",
+  "remove_from_segment",
   "assign_conversation",
   "update_contact_field",
   "create_deal",
@@ -173,6 +179,9 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
     case "add_tag":
     case "remove_tag":
       return { tag_id: "" }
+    case "add_to_segment":
+    case "remove_from_segment":
+      return { segment_id: "" }
     case "assign_conversation":
       return { mode: "round_robin" }
     case "update_contact_field":
@@ -204,6 +213,7 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
 
 interface AutomationResources {
   tags: TagRecord[]
+  segments: ContactSegment[]
   members: AccountMember[]
   templates: MessageTemplate[]
   customFields: CustomField[]
@@ -235,6 +245,7 @@ interface PipelineStageOption {
 
 const ResourcesContext = createContext<AutomationResources>({
   tags: [],
+  segments: [],
   members: [],
   templates: [],
   customFields: [],
@@ -250,6 +261,7 @@ function useResources(): AutomationResources {
 
 function ResourcesProvider({ children }: { children: ReactNode }) {
   const [tags, setTags] = useState<TagRecord[]>([])
+  const [segments, setSegments] = useState<ContactSegment[]>([])
   const [members, setMembers] = useState<AccountMember[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [customFields, setCustomFields] = useState<CustomField[]>([])
@@ -267,9 +279,16 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
     // actually be sent (anything else 400s at send time), matching the
     // broadcast picker.
     void (async () => {
-      const [tagsRes, templatesRes, customFieldsRes, pipelinesRes, stagesRes] =
-        await Promise.all([
+      const [
+        tagsRes,
+        segmentsRes,
+        templatesRes,
+        customFieldsRes,
+        pipelinesRes,
+        stagesRes,
+      ] = await Promise.all([
           supabase.from("tags").select("*").order("name"),
+          supabase.from("contact_segments").select("*").order("name"),
           supabase
             .from("message_templates")
             .select("*")
@@ -284,6 +303,7 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
         ])
       if (cancelled) return
       setTags((tagsRes.data as TagRecord[] | null) ?? [])
+      setSegments((segmentsRes.data as ContactSegment[] | null) ?? [])
       setTemplates((templatesRes.data as MessageTemplate[] | null) ?? [])
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? [])
       setPipelines((pipelinesRes.data as PipelineOption[] | null) ?? [])
@@ -335,6 +355,7 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
     <ResourcesContext.Provider
       value={{
         tags,
+        segments,
         members,
         templates,
         customFields,
@@ -397,6 +418,79 @@ function TagSelect({
           <option value={value}>{value} (unknown tag)</option>
         )}
       </select>
+    </div>
+  )
+}
+
+/**
+ * Segment dropdown for the add/remove-from-segment steps.
+ *
+ * Dynamic segments are listed but disabled rather than filtered out. The
+ * engine refuses them at run time (a saved filter has no membership to
+ * edit), and a segment silently missing from a dropdown reads as a bug,
+ * whereas a greyed-out one with a reason is a rule you learn once.
+ */
+function SegmentSelect({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const { segments } = useResources()
+  if (segments.length === 0) {
+    return (
+      <div className="space-y-1">
+        <Input
+          placeholder="Segment id"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="bg-muted text-foreground"
+        />
+        <p className="text-xs text-muted-foreground">
+          No segments yet — create one from Contacts → Segments.
+        </p>
+      </div>
+    )
+  }
+  const selected = segments.find((s) => s.id === value)
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <span
+          className="h-3 w-3 shrink-0 rounded-full border border-border"
+          style={{ backgroundColor: selected?.color ?? "transparent" }}
+          aria-hidden
+        />
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={SELECT_CLASS}
+        >
+          <option value="">Select a segment…</option>
+          {segments.map((s) => (
+            <option
+              key={s.id}
+              value={s.id}
+              disabled={s.kind === "dynamic"}
+            >
+              {s.name}
+              {s.kind === "dynamic" ? " (filter — members are automatic)" : ""}
+            </option>
+          ))}
+          {/* Preserve a saved segment that's since been deleted, so
+              editing an old automation doesn't silently drop it. */}
+          {value && !selected && (
+            <option value={value}>{value} (unknown segment)</option>
+          )}
+        </select>
+      </div>
+      {selected?.kind === "dynamic" && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          This is a filter segment. Its members are worked out from its rules,
+          so this step will fail at run time.
+        </p>
+      )}
     </div>
   )
 }
@@ -1736,6 +1830,16 @@ function StepEditor({
           config={cfg}
           onChange={(patch) => set(patch)}
         />
+      )
+    case "add_to_segment":
+    case "remove_from_segment":
+      return (
+        <FieldBlock label="Segment">
+          <SegmentSelect
+            value={(cfg.segment_id as string) ?? ""}
+            onChange={(v) => set({ segment_id: v })}
+          />
+        </FieldBlock>
       )
     case "add_tag":
     case "remove_tag":

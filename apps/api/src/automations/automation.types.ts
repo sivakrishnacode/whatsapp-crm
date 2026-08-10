@@ -76,6 +76,21 @@ export type AutomationStepType =
   | 'send_template'
   | 'add_tag'
   | 'remove_tag'
+  /**
+   * File the contact into a named audience (migration 076).
+   *
+   * Distinct from `add_tag` on purpose. A tag is a fact about one person
+   * ("vip", "refunded"); a segment is a set with a purpose ("March
+   * webinar attendees") that a broadcast can be pointed at directly.
+   * Both exist because collapsing them is how a tag list becomes sixty
+   * entries nobody dares delete.
+   *
+   * Only a STATIC segment can be added to — a dynamic one computes its
+   * own membership from a filter, and the step fails loudly rather than
+   * appearing to work.
+   */
+  | 'add_to_segment'
+  | 'remove_from_segment'
   | 'assign_conversation'
   | 'update_contact_field'
   | 'create_deal'
@@ -161,6 +176,10 @@ export interface SendTemplateStepConfig {
 
 export interface TagStepConfig {
   tag_id: string;
+}
+
+export interface SegmentStepConfig {
+  segment_id: string;
 }
 
 export interface AssignConversationStepConfig {

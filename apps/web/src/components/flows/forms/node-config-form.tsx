@@ -45,6 +45,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
+import type { ContactSegment } from "@/types";
+import { listSegmentsLight } from "@/lib/segments/api";
 import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media";
 import { slugify, type BuilderNode } from "../shared";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
@@ -178,6 +181,15 @@ export function NodeConfigForm({
         />
       );
 
+    case "set_segment":
+      return (
+        <SetSegmentForm
+          cfg={cfg as SetSegmentCfg}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+        />
+      );
     case "set_tag":
       return (
         <SetTagForm
@@ -820,6 +832,131 @@ function SetTagForm({
       />
     </>
   );
+}
+
+// ============================================================
+// set_segment
+// ============================================================
+
+interface SetSegmentCfg {
+  mode?: "add" | "remove";
+  segment_id?: string;
+  next_node_key?: string;
+}
+
+/**
+ * Segment picker for the set_segment node.
+ *
+ * Dynamic segments are listed but disabled: the engine refuses them at
+ * run time (a saved filter has no membership to edit), and a segment
+ * that silently vanished from a dropdown reads as a bug where a
+ * greyed-out one with a reason reads as a rule.
+ */
+function SetSegmentForm({
+  cfg,
+  allNodes,
+  currentKey,
+  onUpdateConfig,
+}: {
+  cfg: SetSegmentCfg;
+  allNodes: BuilderNode[];
+  currentKey: string;
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+}) {
+  const segments = useAccountSegments();
+  const selected = segments.find((s) => s.id === cfg.segment_id);
+
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-xs text-muted-foreground">Action</label>
+          <Select
+            value={cfg.mode ?? "add"}
+            onValueChange={(v) =>
+              onUpdateConfig({ mode: v as SetSegmentCfg["mode"] })
+            }
+          >
+            <SelectTrigger className="bg-muted">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="add">Add to segment</SelectItem>
+              <SelectItem value="remove">Remove from segment</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-muted-foreground">
+            Segment
+          </label>
+          {segments.length > 0 ? (
+            <Select
+              value={cfg.segment_id ?? ""}
+              onValueChange={(v) => onUpdateConfig({ segment_id: v })}
+            >
+              <SelectTrigger className="bg-muted">
+                <SelectValue placeholder="Pick a segment…" />
+              </SelectTrigger>
+              <SelectContent>
+                {segments.map((seg) => (
+                  <SelectItem
+                    key={seg.id}
+                    value={seg.id}
+                    disabled={seg.kind === "dynamic"}
+                  >
+                    {seg.name}
+                    {seg.kind === "dynamic" ? " (filter)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              value={cfg.segment_id ?? ""}
+              onChange={(e) => onUpdateConfig({ segment_id: e.target.value })}
+              placeholder="Segment UUID"
+              className="bg-muted font-mono text-xs"
+            />
+          )}
+          {selected?.kind === "dynamic" && (
+            <p className="mt-1 text-xs text-amber-500">
+              Filter segments work out their own members, so this node will
+              fail at run time.
+            </p>
+          )}
+        </div>
+      </div>
+      <NextNodeRow
+        value={cfg.next_node_key ?? ""}
+        allNodes={allNodes}
+        currentKey={currentKey}
+        onChange={(v) => onUpdateConfig({ next_node_key: v })}
+        label="Then advance to"
+      />
+    </>
+  );
+}
+
+/** Segments for the picker above. Read straight from the DB — RLS
+ *  scopes them to the caller's account, same as the tag list. */
+function useAccountSegments(): ContactSegment[] {
+  const [segments, setSegments] = useState<ContactSegment[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await listSegmentsLight(createClient());
+        if (!cancelled) setSegments(rows);
+      } catch {
+        // Absent or unreadable — the form falls back to raw UUID input.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return segments;
 }
 
 /**

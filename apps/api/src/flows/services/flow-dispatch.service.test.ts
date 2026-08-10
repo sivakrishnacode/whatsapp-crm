@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { FlowDispatchService } from './flow-dispatch.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { ChannelSenderService } from '../../common/messaging/channel-sender.service';
+import type { SegmentMembershipService } from '../../common/segments/segment-membership.service';
 import type { DispatchInboundInput } from '../flow.types';
 
 // Fresh coverage — the web original's dispatchInboundToFlows /
@@ -128,6 +129,16 @@ function makeMetaSendMock() {
   };
 }
 
+function makeSegmentsMock() {
+  return {
+    findForAccount: vi
+      .fn()
+      .mockResolvedValue({ id: 'seg-1', name: 'VIPs', kind: 'static' }),
+    add: vi.fn().mockResolvedValue(1),
+    remove: vi.fn().mockResolvedValue(1),
+  };
+}
+
 function makeInput(
   overrides: Partial<DispatchInboundInput> = {},
 ): DispatchInboundInput {
@@ -153,6 +164,7 @@ describe('FlowDispatchService.dispatchInbound', () => {
     service = new FlowDispatchService(
       prisma as unknown as PrismaService,
       metaSend as unknown as ChannelSenderService,
+      makeSegmentsMock() as unknown as SegmentMembershipService,
     );
   });
 

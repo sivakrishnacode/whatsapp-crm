@@ -6,7 +6,13 @@ import { useAuth } from '@/hooks/use-auth';
 import { formatCurrency } from '@/lib/currency';
 import { toE164 } from '@/lib/whatsapp/phone-utils';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, MessageTemplate } from '@/types';
+import type { Contact, ContactSegment, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, MessageTemplate } from '@/types';
+import {
+  addContactsToSegment,
+  listSegmentsLight,
+  removeContactsFromSegment,
+  segmentsForContacts,
+} from '@/lib/segments/api';
 import {
   TemplatePicker,
   type TemplateSendValues,
@@ -38,6 +44,7 @@ import {
   Save,
   X,
   DollarSign,
+  Filter,
   LayoutTemplate,
 } from 'lucide-react';
 
@@ -78,6 +85,14 @@ export function ContactDetailView({
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [contactTagIds, setContactTagIds] = useState<string[]>([]);
   const [savingTags, setSavingTags] = useState(false);
+
+  // Segments — shown alongside tags, since both are labels on a person.
+  // Only static segments are togglable; a dynamic one works out its own
+  // membership and is rendered read-only rather than hidden, so a
+  // contact who matches one can still see that they do.
+  const [allSegments, setAllSegments] = useState<ContactSegment[]>([]);
+  const [contactSegmentIds, setContactSegmentIds] = useState<string[]>([]);
+  const [savingSegmentId, setSavingSegmentId] = useState<string | null>(null);
 
   // Notes tab
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -128,6 +143,39 @@ export function ContactDetailView({
       setContactTagIds(contactTagsRes.data.map((ct) => ct.tag_id));
     }
   }, [contactId, supabase]);
+
+  const fetchSegments = useCallback(async () => {
+    if (!contactId) return;
+    try {
+      const [segments, byContact] = await Promise.all([
+        listSegmentsLight(supabase),
+        segmentsForContacts(supabase, [contactId]),
+      ]);
+      setAllSegments(segments);
+      setContactSegmentIds(byContact[contactId] ?? []);
+    } catch {
+      // Non-fatal — the rest of the drawer still works without it.
+    }
+  }, [contactId, supabase]);
+
+  async function toggleSegment(segment: ContactSegment) {
+    if (!contactId || segment.kind !== 'static') return;
+    setSavingSegmentId(segment.id);
+    const isMember = contactSegmentIds.includes(segment.id);
+    try {
+      if (isMember) {
+        await removeContactsFromSegment(supabase, segment.id, [contactId]);
+        setContactSegmentIds((prev) => prev.filter((id) => id !== segment.id));
+      } else {
+        await addContactsToSegment(supabase, segment.id, [contactId], 'manual');
+        setContactSegmentIds((prev) => [...prev, segment.id]);
+      }
+      onUpdated?.();
+    } catch {
+      toast.error('Failed to update segment');
+    }
+    setSavingSegmentId(null);
+  }
 
   const fetchNotes = useCallback(async () => {
     if (!contactId) return;
@@ -182,11 +230,12 @@ export function ContactDetailView({
     if (open && contactId) {
       fetchContact();
       fetchTags();
+      fetchSegments();
       fetchNotes();
       fetchCustomFields();
       fetchDeals();
     }
-  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals]);
+  }, [open, contactId, fetchContact, fetchTags, fetchSegments, fetchNotes, fetchCustomFields, fetchDeals]);
 
   async function copyPhone() {
     // Instagram-only contacts have no phone; the button that calls this
@@ -481,7 +530,7 @@ export function ContactDetailView({
                   value="tags"
                   className="data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
-                  Tags
+                  Tags &amp; segments
                 </TabsTrigger>
                 <TabsTrigger
                   value="notes"
@@ -592,6 +641,67 @@ export function ContactDetailView({
                       })}
                     </div>
                   )}
+
+                  <div className="border-t border-border pt-3 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        Segments
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Named audiences you can broadcast to. Filter segments
+                        work out their own members and cannot be edited here.
+                      </p>
+                    </div>
+
+                    {allSegments.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        No segments yet. Create one from the Contacts page.
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {allSegments.map((segment) => {
+                          const isMember = contactSegmentIds.includes(
+                            segment.id,
+                          );
+                          const isDynamic = segment.kind === 'dynamic';
+                          return (
+                            <button
+                              key={segment.id}
+                              onClick={() => toggleSegment(segment)}
+                              disabled={
+                                isDynamic || savingSegmentId === segment.id
+                              }
+                              title={
+                                isDynamic
+                                  ? 'This segment works out its own members from its rules'
+                                  : undefined
+                              }
+                              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all ${
+                                isDynamic
+                                  ? 'cursor-not-allowed opacity-60'
+                                  : 'cursor-pointer'
+                              } ${
+                                isMember && !isDynamic
+                                  ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
+                                  : 'opacity-50 hover:opacity-80'
+                              }`}
+                              style={{
+                                backgroundColor: segment.color + '20',
+                                color: segment.color,
+                              }}
+                            >
+                              {isDynamic ? (
+                                <Filter className="size-3 mr-1" />
+                              ) : isMember ? (
+                                <Check className="size-3 mr-1" />
+                              ) : null}
+                              {segment.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </TabsContent>
 

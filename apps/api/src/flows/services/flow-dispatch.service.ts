@@ -7,6 +7,7 @@ import {
   UnsupportedOnChannelError,
 } from '../../common/messaging/channel-sender.service';
 import { toChannel } from '../../common/messaging/channel';
+import { SegmentMembershipService } from '../../common/segments/segment-membership.service';
 import { decideFallback, resolveFallbackPolicy } from '../flow-fallback.util';
 import {
   evaluateConditionPredicate,
@@ -27,6 +28,7 @@ import type {
   SendMediaNodeConfig,
   SendMessageNodeConfig,
   StartNodeConfig,
+  SetSegmentNodeConfig,
   SetTagNodeConfig,
 } from '../flow.types';
 
@@ -75,6 +77,7 @@ export class FlowDispatchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly channelSender: ChannelSenderService,
+    private readonly segments: SegmentMembershipService,
   ) {}
 
   // ============================================================
@@ -693,6 +696,41 @@ export class FlowDispatchService {
           // strand the customer mid-flow.
           await this.logEvent(run.id, 'error', node.nodeKey, {
             reason: 'set_tag_failed',
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+        currentKey = cfg.next_node_key;
+        continue;
+      }
+      if (node.nodeType === 'set_segment') {
+        const cfg = node.config as unknown as SetSegmentNodeConfig;
+        try {
+          // findForAccount is what stops a flow whose config names
+          // another workspace's segment from writing into it; the SQL
+          // function pins the contact from the other side.
+          const segment = await this.segments.findForAccount(
+            run.accountId,
+            cfg.segment_id,
+          );
+          if (!segment) {
+            throw new Error('segment not found in this workspace');
+          }
+          if (segment.kind !== 'static') {
+            throw new Error(
+              `"${segment.name}" is a dynamic segment and has no editable membership`,
+            );
+          }
+          if (cfg.mode === 'add') {
+            await this.segments.add(segment.id, [run.contactId!], 'flow');
+          } else {
+            await this.segments.remove(segment.id, [run.contactId!]);
+          }
+        } catch (err) {
+          // Same call as set_tag above: a membership write failing is
+          // not a reason to strand somebody halfway through a
+          // conversation.
+          await this.logEvent(run.id, 'error', node.nodeKey, {
+            reason: 'set_segment_failed',
             detail: err instanceof Error ? err.message : String(err),
           });
         }
