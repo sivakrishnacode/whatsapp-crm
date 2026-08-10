@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -541,6 +541,49 @@ export default function InboxPage() {
     [activeConversation]
   );
 
+  /**
+   * Row-menu actions. The menu writes to Supabase itself and calls these
+   * to keep the page's copy in step — the same division `MessageThread`
+   * already uses for its status dropdown.
+   */
+  const handleUnreadChange = useCallback(
+    (conversationId: string, unreadCount: number) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === conversationId ? { ...c, unread_count: unreadCount } : c,
+        ),
+      );
+      // Deliberately NOT mirrored onto activeConversation: MessageThread
+      // watches its unread_count and zeroes anything above 0, so writing
+      // a 1 there would be undone immediately. The menu closes the pane
+      // before marking the open thread unread, which is what makes the
+      // list copy the only one that needs to change.
+    },
+    [],
+  );
+
+  const handleConversationDeleted = useCallback(
+    (conversationId: string) => {
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+    },
+    [],
+  );
+
+  const rowActions = useMemo(
+    () => ({
+      onStatusChange: handleStatusChange,
+      onUnreadChange: handleUnreadChange,
+      onDeleted: handleConversationDeleted,
+      onDeselect: handleCloseConversation,
+    }),
+    [
+      handleStatusChange,
+      handleUnreadChange,
+      handleConversationDeleted,
+      handleCloseConversation,
+    ],
+  );
+
   // On mobile (<lg) we show a SINGLE pane — either the list or the
   // thread — rather than cramming both side-by-side. Selecting a
   // conversation slides the thread in; the thread's back button pops
@@ -576,6 +619,7 @@ export default function InboxPage() {
             onSelect={handleSelectConversation}
             conversations={conversations}
             onConversationsLoaded={handleConversationsLoaded}
+            actions={rowActions}
             resyncToken={resyncToken}
           />
         </div>

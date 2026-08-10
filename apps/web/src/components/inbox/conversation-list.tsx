@@ -20,6 +20,7 @@ import type {
   ConversationStatus,
   Tag,
 } from "@/types";
+import { ConversationActionsMenu } from "./conversation-actions-menu";
 import { conversationChannel } from "@/lib/inbox/channel";
 import { contactDisplayName, contactInitial } from "@/lib/contacts/display";
 import {
@@ -41,11 +42,29 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+/**
+ * The row-menu callbacks, bundled so adding an action is one field
+ * rather than another prop threaded through two components.
+ *
+ * Every one of these mutates state the PAGE owns (the list, the open
+ * thread), which is why the menu reports outward instead of holding its
+ * own copy — two sources of truth for "is this unread" is how a badge
+ * ends up disagreeing with the row it sits on.
+ */
+export interface ConversationRowActions {
+  onStatusChange: (conversationId: string, status: ConversationStatus) => void;
+  onUnreadChange: (conversationId: string, unreadCount: number) => void;
+  onDeleted: (conversationId: string) => void;
+  onDeselect: () => void;
+}
+
 interface ConversationListProps {
   activeConversationId: string | null;
   onSelect: (conversation: Conversation) => void;
   conversations: Conversation[];
   onConversationsLoaded: (conversations: Conversation[]) => void;
+  /** Row-level actions. See ConversationRowActions. */
+  actions: ConversationRowActions;
   /**
    * Increment to force the fetch effect below to refire. The parent
    * bumps this on realtime reconnect / tab visibility → visible so the
@@ -96,6 +115,7 @@ export function ConversationList({
   onSelect,
   conversations,
   onConversationsLoaded,
+  actions,
   resyncToken = 0,
 }: ConversationListProps) {
   const [search, setSearch] = useState("");
@@ -558,6 +578,7 @@ export function ConversationList({
                 conversation={conv}
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
+                actions={actions}
               />
             ))}
 
@@ -588,6 +609,7 @@ interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
+  actions: ConversationRowActions;
 }
 
 /**
@@ -629,6 +651,7 @@ function ConversationItem({
   conversation,
   isActive,
   onSelect,
+  actions,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contactDisplayName(contact);
@@ -645,14 +668,22 @@ function ConversationItem({
       })
     : "";
 
+  // The row is a <div> wrapper holding two siblings — the selection
+  // button and the actions menu — rather than one button containing the
+  // other. A <button> inside a <button> is invalid HTML that browsers
+  // recover from unpredictably, and the menu trigger has to be a real
+  // button to stay keyboard-reachable.
   return (
-    <button
-      onClick={handleClick}
+    <div
       className={cn(
-        "flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50",
+        "group/conv relative transition-colors hover:bg-muted/50",
         isActive && "border-l-2 border-primary bg-muted/70"
       )}
     >
+      <button
+        onClick={handleClick}
+        className="flex w-full items-start gap-3 px-3 py-3 text-left"
+      >
       {/* Avatar, with a channel glyph pinned to its corner. A badge on
           the avatar rather than a row of its own: an agent scanning the
           list needs to know which platform they are about to reply on
@@ -678,7 +709,13 @@ function ConversationItem({
           <span className="truncate text-sm font-medium text-foreground">
             {displayName}
           </span>
-          <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
+          {/* Yields to the actions menu on hover rather than sitting
+              under it — an overlaid button on top of live text reads as
+              a rendering glitch, and the timestamp is the one thing on
+              the row nobody needs while reaching for an action. */}
+          <span className="shrink-0 text-[10px] text-muted-foreground transition-opacity group-hover/conv:opacity-0">
+            {timeAgo}
+          </span>
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs text-muted-foreground">
@@ -700,6 +737,20 @@ function ConversationItem({
           </div>
         </div>
       </div>
-    </button>
+      </button>
+
+      {/* Sits over the timestamp, which is the least informative thing
+          on the row and is the corner every list-with-a-menu uses. */}
+      <div className="absolute right-2 top-2">
+        <ConversationActionsMenu
+          conversation={conversation}
+          isActive={isActive}
+          onStatusChange={actions.onStatusChange}
+          onUnreadChange={actions.onUnreadChange}
+          onDeleted={actions.onDeleted}
+          onDeselect={actions.onDeselect}
+        />
+      </div>
+    </div>
   );
 }
