@@ -10,6 +10,7 @@ import { contactDisplayName } from "@/lib/contacts/display";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -242,18 +243,27 @@ export function ConversationActionsMenu({
               </DropdownMenuItem>
 
               <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Status
-              </DropdownMenuLabel>
-              {STATUS_ITEMS.map(({ value, label, icon: Icon }) => (
-                <DropdownMenuItem key={value} onClick={() => setStatus(value)}>
-                  <Icon className="h-4 w-4" />
-                  {label}
-                  {conversation.status === value && (
-                    <Check className="ml-auto h-3.5 w-3.5 text-primary" />
-                  )}
-                </DropdownMenuItem>
-              ))}
+              {/* ⚠ The Group is REQUIRED, not decoration. DropdownMenuLabel
+                  is base-ui's Menu.GroupLabel, which reads a Menu.Group
+                  context and THROWS at render when it is missing — the
+                  whole page white-screens the moment the menu opens.
+                  That is issue #336, pinned by
+                  ui/dropdown-menu-group-label.test.tsx. A label always
+                  goes inside a DropdownMenuGroup. */}
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                  Status
+                </DropdownMenuLabel>
+                {STATUS_ITEMS.map(({ value, label, icon: Icon }) => (
+                  <DropdownMenuItem key={value} onClick={() => setStatus(value)}>
+                    <Icon className="h-4 w-4" />
+                    {label}
+                    {conversation.status === value && (
+                      <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
             </>
           )}
 
