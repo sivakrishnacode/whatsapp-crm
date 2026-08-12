@@ -12,6 +12,7 @@ import { usePresence } from "@/hooks/use-presence";
 import { PresenceDot } from "@/components/presence/presence-dot";
 import { presenceLabel } from "@/lib/presence";
 import { conversationChannel } from "@/lib/inbox/channel";
+import { collisionLabel, type InboxPresence } from "@/lib/inbox/collision";
 import {
   contactDisplayName as displayNameFor,
   contactHandle,
@@ -39,6 +40,7 @@ import {
   BotOff,
   PanelRightOpen,
   PanelRightClose,
+  Users,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -121,6 +123,13 @@ interface MessageThreadProps {
    */
   contactPanelOpen?: boolean;
   onToggleContactPanel?: () => void;
+  /**
+   * Teammates who also have this thread open, self already excluded
+   * (see lib/inbox/collision.ts). Empty when nobody else is here.
+   */
+  viewers?: InboxPresence[];
+  /** Bubbles the composer's draft state up for the collision warning. */
+  onComposingChange?: (composing: boolean) => void;
 }
 
 function formatDateSeparator(dateStr: string): string {
@@ -149,7 +158,7 @@ function groupMessagesByDate(messages: Message[]) {
 
 const STATUS_OPTIONS: { label: string; value: ConversationStatus; color: string }[] = [
   { label: "Open", value: "open", color: "text-primary" },
-  { label: "Pending", value: "pending", color: "text-amber-400" },
+  { label: "Pending", value: "pending", color: "text-warning" },
   { label: "Closed", value: "closed", color: "text-muted-foreground" },
 ];
 
@@ -180,6 +189,8 @@ export function MessageThread({
   onRefresh,
   contactPanelOpen,
   onToggleContactPanel,
+  viewers,
+  onComposingChange,
 }: MessageThreadProps) {
   const { user } = useAuth();
   const { getPresence, getRow, now } = usePresence();
@@ -1081,6 +1092,7 @@ export function MessageThread({
   const currentStatus = STATUS_OPTIONS.find(
     (s) => s.value === conversation.status
   );
+  const collisionWarning = collisionLabel(viewers ?? []);
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
   const assignLabel = assignedAgentId
@@ -1126,7 +1138,7 @@ export function MessageThread({
             variant="outline"
             className={cn(
               "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2",
-              sessionInfo.expired ? "text-red-400" : "text-primary"
+              sessionInfo.expired ? "text-destructive" : "text-primary"
             )}
           >
             <Clock className="h-3 w-3" />
@@ -1307,8 +1319,47 @@ export function MessageThread({
         </div>
       </div>
 
-      {/* Messages Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+      {/* Collision warning. Sits directly above the history and below
+          the header — in the path between deciding to reply and
+          replying, which is the only place it can change what the
+          agent does. A toast would be gone by the time they finish
+          reading the thread, and the composer is too late.
+
+          `role="status"` (polite) rather than an alert: it is a nudge
+          to coordinate, not an error, and it can change every few
+          seconds as people move around the queue. */}
+      {collisionWarning && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center gap-2 border-b border-warning/20 bg-warning-surface px-4 py-1.5"
+        >
+          <Users className="h-3.5 w-3.5 shrink-0 text-warning" />
+          <p className="text-xs text-warning">{collisionWarning}</p>
+        </div>
+      )}
+
+      {/* Messages Area.
+          `role="log"` + `aria-live="polite"` is what makes an inbound
+          message audible: without it a screen-reader user sits in a
+          silent thread and only discovers the reply by manually
+          re-reading. Polite rather than assertive so a burst of
+          messages queues behind whatever the agent is typing instead
+          of interrupting it.
+
+          `tabIndex={0}` because this is a scrollable region with no
+          focusable child of its own once the history is long — a
+          keyboard-only agent otherwise cannot scroll back through it
+          at all (WCAG 2.1.1). It gets a visible ring like any other
+          focus target. */}
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-label="Message history"
+        tabIndex={0}
+        className="flex-1 overflow-y-auto px-4 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      >
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -1429,6 +1480,7 @@ export function MessageThread({
         onClearReply={() => setReplyTo(null)}
         onSendProduct={handleSendProduct}
         onSendProductList={handleSendProductList}
+        onTypingChange={onComposingChange}
       />
 
       {/* Templates are a WhatsApp mechanism. Instagram has none, and web

@@ -6,9 +6,13 @@ import { createClient } from "@/lib/supabase/client";
 import {
   CONVERSATION_SELECT,
   normalizeConversation,
+  nextUnreadCount,
 } from "@/lib/inbox/conversations";
 import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
+import { useAuth } from "@/hooks/use-auth";
+import { useInboxPresence } from "@/hooks/use-inbox-presence";
+import { occupiedConversationIds, viewersOf } from "@/lib/inbox/collision";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
@@ -234,10 +238,17 @@ export default function InboxPage() {
                     ...c,
                     last_message_text: newMsg.content_text ?? "",
                     last_message_at: newMsg.created_at,
-                    unread_count:
-                      activeConversation?.id === newMsg.conversation_id
-                        ? 0
-                        : c.unread_count + 1,
+                    // Only a customer message may raise this — see
+                    // nextUnreadCount. Counting our own replies here
+                    // gave every *other* teammate's list a phantom
+                    // unread on every message anyone sent, bot
+                    // included, with no server event to undo it.
+                    unread_count: nextUnreadCount({
+                      current: c.unread_count,
+                      senderType: newMsg.sender_type,
+                      isActive:
+                        activeConversation?.id === newMsg.conversation_id,
+                    }),
                   }
                 : c,
             ),
@@ -387,6 +398,30 @@ export default function InboxPage() {
    */
   const wasConnectedRef = useRef(false);
   const initialConnectDoneRef = useRef(false);
+  /**
+   * Whether to tell the agent the live feed is down.
+   *
+   * Not simply `!isConnected`: the flag is false for the first moment
+   * of every page load while the channel is still opening, and a
+   * "Reconnecting…" bar that flashes on each navigation trains people
+   * to ignore it. So this only ever goes true *after* a connection has
+   * been established once and then lost.
+   *
+   * It needs saying at all because the inbox degrades silently. A
+   * dropped socket looks exactly like a quiet afternoon — no new
+   * conversations, no new messages — and an agent will sit in front of
+   * a frozen queue believing they are up to date. The resync on
+   * reconnect below repairs the data; this repairs the agent's belief
+   * about it in the meantime.
+   */
+  const [staleFeed, setStaleFeed] = useState(false);
+  useEffect(() => {
+    if (isConnected) {
+      setStaleFeed(false);
+    } else if (initialConnectDoneRef.current) {
+      setStaleFeed(true);
+    }
+  }, [isConnected]);
   useEffect(() => {
     if (isConnected && !wasConnectedRef.current) {
       // false → true transition
@@ -627,6 +662,51 @@ export default function InboxPage() {
     [],
   );
 
+  /**
+   * Shared-inbox collision detection.
+   *
+   * Two agents replying to the same customer is the characteristic
+   * failure of a shared queue, and nothing in the product surfaced it
+   * before: assignment exists but is a deliberate act almost nobody
+   * performs, so in practice the queue is worked unassigned and
+   * invisibly. Presence is ephemeral (Realtime, not a table) and the
+   * channel is private per account — see migration 079.
+   */
+  const { user, profile, accountId } = useAuth();
+  const [composing, setComposing] = useState(false);
+  const { others } = useInboxPresence({
+    accountId,
+    userId: user?.id ?? null,
+    name: profile?.full_name?.trim() || user?.email || "A teammate",
+    conversationId: activeConversation?.id ?? null,
+    typing: composing,
+  });
+
+  // Re-derived on a tick so stale entries age out of the UI on their
+  // own, rather than only when the next presence event happens to
+  // arrive — a suspended laptop stops sending events by definition.
+  const [presenceNow, setPresenceNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setPresenceNow(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const activeViewers = useMemo(
+    () =>
+      viewersOf(
+        others,
+        activeConversation?.id ?? null,
+        user?.id ?? null,
+        presenceNow,
+      ),
+    [others, activeConversation?.id, user?.id, presenceNow],
+  );
+
+  const occupiedIds = useMemo(
+    () => occupiedConversationIds(others, user?.id ?? null, presenceNow),
+    [others, user?.id, presenceNow],
+  );
+
   const rowActions = useMemo(
     () => ({
       onStatusChange: handleStatusChange,
@@ -651,12 +731,32 @@ export default function InboxPage() {
 
   return (
     <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
+      {/* Live-feed banner. Sits above the WhatsApp one because it is
+          the more urgent of the two: a disconnected socket means what
+          is on screen right now may already be wrong, whereas an
+          unconnected WhatsApp account is a settings task.
+
+          `role="status"` so it is announced once when it appears
+          rather than politely ignored. */}
+      {staleFeed && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center justify-center gap-2 border-b border-warning/20 bg-warning-surface px-4 py-2"
+        >
+          <WifiOff className="h-4 w-4 shrink-0 text-warning" />
+          <p className="text-xs text-warning">
+            Live updates are disconnected — new messages may not appear.
+            Reconnecting…
+          </p>
+        </div>
+      )}
+
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
       {whatsappConnected === false && (
-        <div className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2">
-          <WifiOff className="h-4 w-4 text-amber-400" />
-          <p className="text-xs text-amber-400">
+        <div className="flex shrink-0 items-center justify-center gap-2 border-b border-warning/20 bg-warning-surface px-4 py-2">
+          <WifiOff className="h-4 w-4 text-warning" />
+          <p className="text-xs text-warning">
             WhatsApp® is not connected. Go to Settings to connect your account.
           </p>
         </div>
@@ -679,6 +779,7 @@ export default function InboxPage() {
             onConversationsLoaded={handleConversationsLoaded}
             actions={rowActions}
             resyncToken={resyncToken}
+            occupiedConversationIds={occupiedIds}
           />
         </div>
 
@@ -713,6 +814,8 @@ export default function InboxPage() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            viewers={activeViewers}
+            onComposingChange={setComposing}
           />
         </div>
 

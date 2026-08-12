@@ -1,4 +1,4 @@
-import type { Conversation, Contact, Tag } from "@/types";
+import type { Conversation, Contact, Tag, SenderType } from "@/types";
 
 /**
  * Conversation select that embeds the contact plus its tags, so the Inbox
@@ -40,6 +40,40 @@ export function normalizeConversations(
   rows: RawConversation[],
 ): Conversation[] {
   return rows.map(normalizeConversation);
+}
+
+/**
+ * The unread count a conversation row should carry once `senderType`'s
+ * message lands in it.
+ *
+ * ONLY A CUSTOMER MESSAGE COUNTS. The server already agrees: every
+ * inbound path bumps `unread_count` (whatsapp-webhook.service.ts,
+ * instagram-webhook.service.ts, web-inbound.service.ts) and no outbound
+ * path touches it. So incrementing on an `agent` or `bot` message
+ * invents a badge that no conversation UPDATE will ever come along to
+ * clear — it survives until a full refetch.
+ *
+ * That is a shared-inbox bug specifically, and it compounds: the rule
+ * fires on every teammate's open tab, so one agent working through a
+ * queue silently adds a phantom unread to every other agent's list for
+ * each reply they send, and the AI auto-reply bot does the same on
+ * threads nobody has touched. The badge is the one number an agent
+ * triages by, so inflating it is worse than showing nothing.
+ *
+ * `isActive` short-circuits to 0: a message arriving in the thread the
+ * agent is looking at right now has been read by definition.
+ */
+export function nextUnreadCount({
+  current,
+  senderType,
+  isActive,
+}: {
+  current: number;
+  senderType: SenderType;
+  isActive: boolean;
+}): number {
+  if (isActive) return 0;
+  return senderType === "customer" ? current + 1 : current;
 }
 
 export interface ContactFilters {

@@ -125,6 +125,17 @@ interface MessageComposerProps {
       productRetailerIds: string[];
     }>;
   }) => void;
+  /**
+   * Fires when the agent starts or stops composing, for the shared-inbox
+   * collision warning (see useInboxPresence).
+   *
+   * Derived from whether the box has content rather than from keystrokes:
+   * a per-keystroke signal would broadcast on every character, and the
+   * thing a teammate needs to know is "someone is part-way through a
+   * reply here", which a half-typed message left on screen answers just
+   * as truthfully as an actively moving cursor.
+   */
+  onTypingChange?: (typing: boolean) => void;
 }
 
 function formatDuration(seconds: number): string {
@@ -149,6 +160,7 @@ export function MessageComposer({
   onClearReply,
   onSendProduct,
   onSendProductList,
+  onTypingChange,
 }: MessageComposerProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -159,6 +171,18 @@ export function MessageComposer({
   const { setBalance } = useAiCredits();
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Announce composing state to teammates. Keyed on emptiness, so it
+  // fires twice per reply (first character, and again on send/clear)
+  // rather than once per keystroke. Also clears when the agent leaves
+  // the thread — `conversationId` in the deps means the cleanup runs on
+  // switch, so a half-typed reply left behind does not go on claiming
+  // the old thread.
+  const hasDraft = text.trim().length > 0;
+  useEffect(() => {
+    onTypingChange?.(hasDraft);
+    return () => onTypingChange?.(false);
+  }, [hasDraft, conversationId, onTypingChange]);
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
   // attachment; `busy` covers the upload/transcode window.
@@ -501,8 +525,8 @@ export function MessageComposer({
         </div>
       )}
       {sessionExpired && (
-        <div className="mb-2 flex items-center justify-between gap-2 rounded-lg bg-amber-500/10 px-3 py-2">
-          <p className="text-xs text-amber-400">
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-lg bg-warning-surface px-3 py-2">
+          <p className="text-xs text-warning">
             {channel === "whatsapp"
               ? "24-hour session expired. Use a template to re-engage."
               : // Telling an Instagram agent to "use a template" would
@@ -520,7 +544,7 @@ export function MessageComposer({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 shrink-0 text-xs text-amber-400 hover:text-amber-300"
+              className="h-7 shrink-0 text-xs text-warning hover:text-warning/80"
               onClick={onOpenTemplates}
             >
               <LayoutTemplate className="mr-1 h-3 w-3" />
@@ -574,7 +598,7 @@ export function MessageComposer({
       ) : recording ? (
         // Recording bar — replaces the composer while the mic is live.
         <div className="flex items-center gap-3 rounded-xl border border-border bg-muted px-4 py-2.5">
-          <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500" />
+          <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-destructive" />
           <span className="flex-1 text-sm text-foreground">
             Recording… {formatDuration(recordSeconds)} /{" "}
             {formatDuration(MAX_RECORDING_SECONDS)}

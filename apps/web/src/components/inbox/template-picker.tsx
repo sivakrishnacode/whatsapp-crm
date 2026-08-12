@@ -403,7 +403,7 @@ export function TemplatePicker({
             {/* Naming the gap beats Meta's after-the-fact rejection,
                 which arrives as a toast once the send has failed. */}
             {missing.length > 0 && (
-              <p className="text-[11px] text-amber-500">
+              <p className="text-[11px] text-warning">
                 Still needed: {missing.join(", ")}.
               </p>
             )}

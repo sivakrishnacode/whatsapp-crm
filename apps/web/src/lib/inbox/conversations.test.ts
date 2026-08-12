@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   matchesContactFilters,
+  nextUnreadCount,
   normalizeConversation,
 } from "./conversations";
 import type { Conversation } from "@/types";
@@ -141,5 +142,41 @@ describe("normalizeConversation", () => {
     };
     // A contactless row passes through untouched (consumers use `?.`).
     expect(normalizeConversation(raw).contact).toBeNull();
+  });
+});
+
+describe("nextUnreadCount", () => {
+  it("counts an inbound customer message", () => {
+    expect(
+      nextUnreadCount({ current: 2, senderType: "customer", isActive: false }),
+    ).toBe(3);
+  });
+
+  // The regression this exists for. The server bumps unread_count only
+  // on inbound webhooks, so a client-side increment on our own outbound
+  // message is a badge nothing will ever clear — and in a shared inbox
+  // it lands on every teammate's list, not just the sender's.
+  it("leaves the count alone for an agent's own reply", () => {
+    expect(
+      nextUnreadCount({ current: 2, senderType: "agent", isActive: false }),
+    ).toBe(2);
+  });
+
+  it("leaves the count alone for an AI auto-reply", () => {
+    expect(
+      nextUnreadCount({ current: 2, senderType: "bot", isActive: false }),
+    ).toBe(2);
+  });
+
+  it("zeroes the count for the thread being read right now", () => {
+    expect(
+      nextUnreadCount({ current: 7, senderType: "customer", isActive: true }),
+    ).toBe(0);
+  });
+
+  it("keeps an already-clear conversation clear when we reply to it", () => {
+    expect(
+      nextUnreadCount({ current: 0, senderType: "agent", isActive: false }),
+    ).toBe(0);
   });
 });

@@ -31,7 +31,7 @@ import {
 // hand-rolled SVGs with a narrower signature, so a record holding both
 // needs the contract the nav registry already settled on.
 import type { NavIcon } from "@/lib/nav/channels";
-import { Search, ChevronDown, X, Loader2, Globe } from "lucide-react";
+import { Search, ChevronDown, X, Loader2, Globe, Users } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Input } from "@/components/ui/input";
 import {
@@ -72,11 +72,18 @@ interface ConversationListProps {
    * or the tab was throttled. Optional so existing callers keep working.
    */
   resyncToken?: number;
+  /**
+   * Conversations a teammate currently has open (self excluded). Marks
+   * the row *before* the click, which is the whole point — knowing the
+   * thread is busy after you have already opened it and started typing
+   * is knowing it too late.
+   */
+  occupiedConversationIds?: Set<string>;
 }
 
 const STATUS_COLORS: Record<ConversationStatus, string> = {
   open: "bg-primary",
-  pending: "bg-amber-500",
+  pending: "bg-warning",
   closed: "bg-muted-foreground",
 };
 
@@ -117,6 +124,7 @@ export function ConversationList({
   onConversationsLoaded,
   actions,
   resyncToken = 0,
+  occupiedConversationIds,
 }: ConversationListProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
@@ -579,6 +587,7 @@ export function ConversationList({
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
                 actions={actions}
+                occupied={occupiedConversationIds?.has(conv.id) ?? false}
               />
             ))}
 
@@ -610,6 +619,8 @@ interface ConversationItemProps {
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
   actions: ConversationRowActions;
+  /** A teammate has this thread open right now. */
+  occupied?: boolean;
 }
 
 /**
@@ -642,7 +653,11 @@ function ChannelBadge({ channel }: { channel: ConversationChannel }) {
       title={label}
       className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-card ring-2 ring-card"
     >
-      <Icon className={cn("h-3.5 w-3.5", className)} />
+      <Icon className={cn("h-3.5 w-3.5", className)} aria-hidden="true" />
+      {/* Which platform the reply goes out on is decision-relevant
+          before the click, and an icon with a `title` does not carry
+          it to a screen reader. */}
+      <span className="sr-only">{label}</span>
     </span>
   );
 }
@@ -652,6 +667,7 @@ function ConversationItem({
   isActive,
   onSelect,
   actions,
+  occupied = false,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contactDisplayName(contact);
@@ -682,6 +698,10 @@ function ConversationItem({
     >
       <button
         onClick={handleClick}
+        // `aria-current` is the only thing that tells a screen-reader
+        // user which thread is open — the selected row is otherwise
+        // distinguished purely by a left border and a background wash.
+        aria-current={isActive ? "true" : undefined}
         className="flex w-full items-start gap-3 px-3 py-3 text-left"
       >
       {/* Avatar, with a channel glyph pinned to its corner. A badge on
@@ -722,18 +742,45 @@ function ConversationItem({
             {conversation.last_message_text || "No messages yet"}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
-            {conversation.unread_count > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                {conversation.unread_count}
+            {/* Someone else is in here. Deliberately quiet — a glyph,
+                not a coloured pill: it must be findable when scanning
+                for it and ignorable when not, because on a busy team
+                a noisy version would be on half the rows all day. */}
+            {occupied && (
+              <span title="A teammate has this conversation open">
+                <Users
+                  className="h-3 w-3 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <span className="sr-only">
+                  A teammate has this conversation open
+                </span>
               </span>
             )}
+            {conversation.unread_count > 0 && (
+              // The bare number reads as "3" on its own. Announce the
+              // unit and suppress the digit, so the row says
+              // "3 unread messages" rather than leaving the listener
+              // to guess what the 3 counts.
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                <span aria-hidden="true">{conversation.unread_count}</span>
+                <span className="sr-only">
+                  {conversation.unread_count} unread{" "}
+                  {conversation.unread_count === 1 ? "message" : "messages"}
+                </span>
+              </span>
+            )}
+            {/* Status is otherwise hue-only (WCAG 1.4.1) and `title` on
+                a span is not reliably announced — carry the word. */}
             <span
               className={cn(
                 "h-2 w-2 rounded-full",
                 STATUS_COLORS[conversation.status]
               )}
               title={conversation.status}
-            />
+            >
+              <span className="sr-only">Status: {conversation.status}</span>
+            </span>
           </div>
         </div>
       </div>
