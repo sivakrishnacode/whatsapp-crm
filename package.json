@@ -23,6 +23,10 @@
   "packageManager": "npm@10.9.7",
   "scripts": {
     "dev": "turbo run dev",
+    "dev:web": "turbo run dev --filter=web",
+    "dev:api": "turbo run dev --filter=api",
+    "dev:admin": "turbo run dev --filter=admin-panel",
+    "dev:app": "turbo run dev --filter=web --filter=api",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
