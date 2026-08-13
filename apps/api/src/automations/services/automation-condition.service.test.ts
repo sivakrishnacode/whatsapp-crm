@@ -2,6 +2,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AutomationConditionService } from './automation-condition.service';
 import type { StepExecutionArgs } from '../automation.types';
 import type { PrismaService } from '../../prisma/prisma.service';
+import type { SegmentMembershipService } from '../../common/segments/segment-membership.service';
+
+/**
+ * Segment lookups are only reached by the `segment_membership` subject;
+ * every other test would otherwise have to care about a dependency it
+ * never touches. The default answers "no such segment", which is the
+ * safe direction — a membership rule against a missing segment is false.
+ */
+function stubSegments(
+  overrides: Partial<SegmentMembershipService> = {},
+): SegmentMembershipService {
+  return {
+    findForAccount: vi.fn().mockResolvedValue(null),
+    resolve: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  } as unknown as SegmentMembershipService;
+}
 
 function baseArgs(
   overrides: Partial<StepExecutionArgs> = {},
@@ -25,6 +42,7 @@ describe('AutomationConditionService', () => {
       const prisma = { contact_tags: { count: vi.fn().mockResolvedValue(1) } };
       const service = new AutomationConditionService(
         prisma as unknown as PrismaService,
+        stubSegments(),
       );
       const result = await service.evaluate(
         { subject: 'tag_presence', operand: 'tag-uuid' },
@@ -40,6 +58,7 @@ describe('AutomationConditionService', () => {
       const prisma = { contact_tags: { count: vi.fn().mockResolvedValue(0) } };
       const service = new AutomationConditionService(
         prisma as unknown as PrismaService,
+        stubSegments(),
       );
       expect(
         await service.evaluate(
@@ -53,6 +72,7 @@ describe('AutomationConditionService', () => {
       const prisma = { contact_tags: { count: vi.fn() } };
       const service = new AutomationConditionService(
         prisma as unknown as PrismaService,
+        stubSegments(),
       );
       expect(
         await service.evaluate(
@@ -76,6 +96,7 @@ describe('AutomationConditionService', () => {
       };
       const service = new AutomationConditionService(
         prisma as unknown as PrismaService,
+        stubSegments(),
       );
       const result = await service.evaluate(
         { subject: 'contact_field', operand: 'email', value: 'a@b.com' },
@@ -96,6 +117,7 @@ describe('AutomationConditionService', () => {
       };
       const service = new AutomationConditionService(
         prisma as unknown as PrismaService,
+        stubSegments(),
       );
       expect(
         await service.evaluate(
@@ -115,6 +137,7 @@ describe('AutomationConditionService', () => {
       };
       const service = new AutomationConditionService(
         prisma as unknown as PrismaService,
+        stubSegments(),
       );
       expect(
         await service.evaluate(
@@ -132,6 +155,7 @@ describe('AutomationConditionService', () => {
       const prisma = { contacts: { findFirst: vi.fn() } };
       const service = new AutomationConditionService(
         prisma as unknown as PrismaService,
+        stubSegments(),
       );
       expect(
         await service.evaluate(
@@ -145,7 +169,7 @@ describe('AutomationConditionService', () => {
 
   describe('message_content', () => {
     it('matches a case-insensitive substring of the triggering message', async () => {
-      const service = new AutomationConditionService({} as PrismaService);
+      const service = new AutomationConditionService({} as PrismaService, stubSegments());
       const result = await service.evaluate(
         { subject: 'message_content', value: 'PRICING' },
         baseArgs({ context: { message_text: 'ask about pricing please' } }),
@@ -154,7 +178,7 @@ describe('AutomationConditionService', () => {
     });
 
     it('does not match when the substring is absent', async () => {
-      const service = new AutomationConditionService({} as PrismaService);
+      const service = new AutomationConditionService({} as PrismaService, stubSegments());
       const result = await service.evaluate(
         { subject: 'message_content', value: 'refund' },
         baseArgs({ context: { message_text: 'ask about pricing' } }),
@@ -169,7 +193,7 @@ describe('AutomationConditionService', () => {
 
     it('matches within a same-day window', async () => {
       vi.setSystemTime(new Date(2024, 0, 1, 10, 30));
-      const service = new AutomationConditionService({} as PrismaService);
+      const service = new AutomationConditionService({} as PrismaService, stubSegments());
       expect(
         await service.evaluate(
           { subject: 'time_of_day', operand: '09:00-18:00' },
@@ -180,7 +204,7 @@ describe('AutomationConditionService', () => {
 
     it('does not match outside a same-day window', async () => {
       vi.setSystemTime(new Date(2024, 0, 1, 20, 0));
-      const service = new AutomationConditionService({} as PrismaService);
+      const service = new AutomationConditionService({} as PrismaService, stubSegments());
       expect(
         await service.evaluate(
           { subject: 'time_of_day', operand: '09:00-18:00' },
@@ -190,7 +214,7 @@ describe('AutomationConditionService', () => {
     });
 
     it('handles an overnight-wrapping window', async () => {
-      const service = new AutomationConditionService({} as PrismaService);
+      const service = new AutomationConditionService({} as PrismaService, stubSegments());
       vi.setSystemTime(new Date(2024, 0, 1, 23, 0));
       expect(
         await service.evaluate(
@@ -215,7 +239,7 @@ describe('AutomationConditionService', () => {
     });
 
     it('returns false for a malformed operand', async () => {
-      const service = new AutomationConditionService({} as PrismaService);
+      const service = new AutomationConditionService({} as PrismaService, stubSegments());
       expect(
         await service.evaluate(
           { subject: 'time_of_day', operand: '' },
@@ -229,7 +253,7 @@ describe('AutomationConditionService', () => {
   });
 
   it('returns false for an unrecognized subject', async () => {
-    const service = new AutomationConditionService({} as PrismaService);
+    const service = new AutomationConditionService({} as PrismaService, stubSegments());
     expect(
       await service.evaluate(
         { subject: 'unknown_subject' as never },

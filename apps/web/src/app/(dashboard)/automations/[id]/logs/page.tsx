@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Check,
   Loader2,
+  SkipForward,
   X,
   ChevronDown,
   ChevronRight,
@@ -18,6 +19,7 @@ import type {
 } from "@/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { STEP_META } from "@/lib/automations/step-meta"
 import { formatRelative } from "@/lib/automations/trigger-meta"
 
 export default function AutomationLogsPage({
@@ -181,18 +183,37 @@ function StatusBadge({ status }: { status: AutomationLog["status"] }) {
 
 function StepRow({ result }: { result: AutomationLogStepResult }) {
   const ok = result.status === "success"
+  // A step can also be SKIPPED — the channel could not do it, or there
+  // was nobody to send to. That is neither a success nor a failure, and
+  // showing it as either is how "works on WhatsApp, half-works on
+  // Instagram" goes unnoticed.
+  const skipped = result.status === "skipped"
+  const meta = STEP_META[result.step_type]
   return (
     <li className="flex items-start gap-2 text-xs">
       <span
         className={cn(
           "mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full",
-          ok ? "bg-primary/20 text-primary" : "bg-red-500/20 text-red-400",
+          ok
+            ? "bg-primary/20 text-primary"
+            : skipped
+              ? "bg-warning-surface text-warning"
+              : "bg-red-500/20 text-red-400",
         )}
         aria-hidden
       >
-        {ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+        {ok ? (
+          <Check className="h-3 w-3" />
+        ) : skipped ? (
+          <SkipForward className="h-3 w-3" />
+        ) : (
+          <X className="h-3 w-3" />
+        )}
       </span>
-      <span className="text-muted-foreground">{result.step_type}</span>
+      {/* The editor's label, not the raw type — "HTTP request" rather
+          than "http_request". One registry, so a step renamed there is
+          renamed in the logs too. */}
+      <span className="text-foreground">{meta?.label ?? result.step_type}</span>
       {result.detail && (
         <span className="truncate text-muted-foreground">— {result.detail}</span>
       )}

@@ -709,9 +709,21 @@ export type AutomationTriggerType =
   | 'appointment_cancelled'
   | 'appointment_rescheduled';
 
+/**
+ * Mirrors AutomationStepType in
+ * apps/api/src/automations/automation.types.ts. There is no shared types
+ * package yet; a type added on one side and not the other saves fine and
+ * then fails at run time, so change both together.
+ */
 export type AutomationStepType =
   | 'send_message'
   | 'send_template'
+  // Media and interactive sends. Routed per conversation channel, so
+  // they work on WhatsApp, Instagram and web — except lists, which
+  // Instagram has no equivalent for and which skip there.
+  | 'send_media'
+  | 'send_buttons'
+  | 'send_list'
   | 'add_tag'
   | 'remove_tag'
   // Put the contact into (or take them out of) a named audience. A tag
@@ -721,11 +733,31 @@ export type AutomationStepType =
   | 'remove_from_segment'
   | 'assign_conversation'
   | 'update_contact_field'
+  // Stores a value in `vars` for later steps — the glue between a step
+  // that produces data and a step that needs it shaped.
+  | 'set_variable'
   | 'create_deal'
+  | 'update_deal'
+  // Internal note on the contact's timeline; team-only.
+  | 'add_note'
+  // In-app notification for one member or the whole workspace.
+  | 'notify_team'
   | 'wait'
+  // Holds until a wall-clock time rather than for a duration.
+  | 'wait_until'
   | 'condition'
+  // Percentage split down the same yes/no branches a condition uses.
+  | 'random_split'
+  // HTTP request whose response later steps can read. `send_webhook` is
+  // its fire-and-forget ancestor, kept so existing automations run.
+  | 'http_request'
   | 'send_webhook'
   | 'close_conversation'
+  | 'set_conversation_status'
+  // Hands the contact over to a Flow.
+  | 'start_flow'
+  // Runs another automation as a sub-routine (depth-guarded).
+  | 'run_automation'
   // Sends a form link (or inline card on web) to the contact.
   | 'send_form'
   // Sends a booking page link to the contact.

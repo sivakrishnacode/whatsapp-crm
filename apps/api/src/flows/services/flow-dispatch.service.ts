@@ -1016,6 +1016,84 @@ export class FlowDispatchService {
     return { consumed: true, flow_run_id: run.id, outcome: 'completed' };
   }
 
+  /**
+   * Start a named flow for a contact, with no inbound message behind it.
+   *
+   * WHY THIS EXISTS SEPARATELY FROM dispatchInbound
+   *   `dispatchInbound` answers "does this message belong to a flow?" —
+   *   it matches triggers and needs a real Meta message id for
+   *   idempotency. An automation's `start_flow` step has already decided
+   *   which flow to run and has no message at all, so trigger matching
+   *   would be wrong (the flow's own keyword must NOT have to match) and
+   *   the message id has to be synthesised.
+   *
+   *   Everything after that decision is shared: the same `startNewRun`
+   *   inserts the run, logs the same events and drives the same advance
+   *   loop, so a flow started from an automation behaves identically to
+   *   one started by a keyword.
+   *
+   * ALREADY-IN-A-FLOW IS A REFUSAL, NOT AN OVERRIDE
+   *   The partial unique index allows one active run per contact. If the
+   *   contact is mid-flow, the INSERT collides and this reports
+   *   `duplicate_inbound_ignored` rather than abandoning the run they are
+   *   in — being dropped halfway through a conversation because an
+   *   unrelated automation fired is worse than the second flow not
+   *   starting.
+   */
+  async startForContact(input: {
+    accountId: string;
+    flowId: string;
+    contactId: string;
+    conversationId: string;
+    /** Sender-of-record for the flow's outbound prompts. */
+    userId: string;
+  }): Promise<DispatchInboundResult> {
+    try {
+      const flow = await this.prisma.flow.findFirst({
+        // Account-scoped: the flow id arrives from a step config, and
+        // Prisma bypasses RLS. Without this, one workspace's automation
+        // could run another's flow at their contact.
+        where: { id: input.flowId, accountId: input.accountId },
+      });
+      if (!flow) {
+        return { consumed: false, outcome: 'no_match' };
+      }
+      if (flow.status !== 'active') {
+        // A draft flow has not been validated for publication; running it
+        // would send half-built prompts to a real person.
+        return { consumed: false, outcome: 'no_match' };
+      }
+      if (!flow.entryNodeId) {
+        return { consumed: false, outcome: 'no_match' };
+      }
+
+      const nodes = await this.loadAllNodes(flow.id);
+      return this.startNewRun(
+        flow,
+        {
+          accountId: input.accountId,
+          userId: input.userId,
+          contactId: input.contactId,
+          conversationId: input.conversationId,
+          // Synthetic, and namespaced so it can never collide with a
+          // real Meta id in the idempotency check.
+          message: {
+            kind: 'text',
+            text: '',
+            meta_message_id: `automation:${input.flowId}:${Date.now()}`,
+          },
+          isFirstInboundMessage: false,
+        },
+        nodes,
+      );
+    } catch (err) {
+      this.logger.error(
+        `startForContact threw: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { consumed: false, outcome: 'no_match' };
+    }
+  }
+
   private async startNewRun(
     flow: Flow,
     input: DispatchInboundInput,

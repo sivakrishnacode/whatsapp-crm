@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
 import { SegmentsModule } from '../common/segments/segments.module';
+import { FlowsModule } from '../flows/flows.module';
 import { AutomationsController } from './automations.controller';
 import { AutomationsEngineController } from './automations-engine.controller';
 import { AutomationsService } from './automations.service';
@@ -31,6 +32,10 @@ import { QueueModule } from '../queue/queue.module';
     // add_to_segment / remove_from_segment. No forwardRef: SegmentsModule
     // depends on Prisma alone and sits below the engines.
     SegmentsModule,
+    // The `start_flow` step. forwardRef because the two engines now
+    // reference each other: the flow runner already reports back to the
+    // webhook that decides whether automations also fire.
+    forwardRef(() => FlowsModule),
   ],
   controllers: [AutomationsController, AutomationsEngineController],
   providers: [

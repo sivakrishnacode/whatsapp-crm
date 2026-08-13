@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import type { Prisma } from '@prisma/client';
@@ -9,28 +9,67 @@ import {
   NoReachableConversationError,
   UnsupportedOnChannelError,
 } from '../../common/messaging/channel-sender.service';
-import { isDeliverableUrl } from '../../common/security/ssrf.util';
 import { SegmentMembershipService } from '../../common/segments/segment-membership.service';
+import { FlowDispatchService } from '../../flows/services/flow-dispatch.service';
 import { AutomationConditionService } from './automation-condition.service';
-import { interpolate } from './automation-interpolation.util';
+import { interpolate, resolveValue } from './automation-interpolation.util';
+import {
+  HttpStepError,
+  performHttpStep,
+  redactUrl,
+  type HttpStepOutput,
+} from './automation-http.util';
 import type {
+  AddNoteStepConfig,
   AssignConversationStepConfig,
   AutomationContext,
   AutomationLogStepResult,
   AutomationStepType,
+  CommonStepOptions,
   ConditionStepConfig,
   CreateDealStepConfig,
+  NotifyTeamStepConfig,
+  RandomSplitStepConfig,
+  RunAutomationStepConfig,
   SegmentStepConfig,
+  SendButtonsStepConfig,
+  SendListStepConfig,
+  SendMediaStepConfig,
   SendMessageStepConfig,
   SendTemplateStepConfig,
   SendWebhookStepConfig,
+  SetConversationStatusStepConfig,
+  SetVariableStepConfig,
+  StartFlowStepConfig,
   StepExecutionArgs,
   TagStepConfig,
   UpdateContactFieldStepConfig,
+  UpdateDealStepConfig,
   WaitStepConfig,
+  WaitUntilStepConfig,
 } from '../automation.types';
 
 export const AUTOMATIONS_PENDING_QUEUE = 'automations-pending';
+
+/**
+ * How many `run_automation` hops one run may make.
+ *
+ * Two automations that call each other is not an obviously wrong thing to
+ * write, and without a ceiling it fills the queue until Redis falls over.
+ * Three is deep enough for "qualify → enrich → notify" and shallow enough
+ * that a cycle dies immediately.
+ */
+export const MAX_AUTOMATION_DEPTH = 3;
+
+/**
+ * What a step publishes to later steps, plus the human-readable line for
+ * the log. `output` lands in `context.steps[<key>]`; `detail` is what the
+ * logs UI renders.
+ */
+interface StepResult {
+  detail: string;
+  output?: unknown;
+}
 
 /**
  * Ported from apps/web/src/lib/automations/engine.ts's `executeStepsFrom()`
@@ -47,6 +86,10 @@ export class AutomationStepExecutorService {
     private readonly metaSend: AutomationMetaSendService,
     private readonly channelSender: ChannelSenderService,
     private readonly segments: SegmentMembershipService,
+    /** `start_flow`. forwardRef because FlowsModule and AutomationsModule
+     *  both sit at the same layer and each can now reach the other. */
+    @Inject(forwardRef(() => FlowDispatchService))
+    private readonly flows: FlowDispatchService,
     @InjectQueue(AUTOMATIONS_PENDING_QUEUE) private readonly queue: Queue,
   ) {}
 
@@ -74,11 +117,33 @@ export class AutomationStepExecutorService {
     let errorMessage: string | null = null;
 
     for (const step of steps) {
-      // `wait` is the suspension point: enqueue and stop processing this
-      // scope. The BullMQ processor picks it up later.
-      if (step.stepType === 'wait') {
-        const cfg = step.stepConfig as unknown as WaitStepConfig;
-        const ms = this.waitMs(cfg);
+      const options = (step.stepConfig ?? {}) as CommonStepOptions;
+
+      // A disabled step is not a failure and not an omission — it is a
+      // step the author switched off. Logging it as skipped is how they
+      // find out why the run did nothing, rather than concluding the
+      // engine dropped it.
+      if (options.disabled) {
+        results.push({
+          step_id: step.id,
+          step_type: step.stepType as AutomationStepType,
+          status: 'skipped',
+          detail: 'step is switched off',
+        });
+        continue;
+      }
+
+      // `wait` and `wait_until` are the suspension points: enqueue and
+      // stop processing this scope. The BullMQ processor picks it up
+      // later, with the context — including every step output collected
+      // so far — restored from the pending row.
+      if (step.stepType === 'wait' || step.stepType === 'wait_until') {
+        const ms =
+          step.stepType === 'wait'
+            ? this.waitMs(step.stepConfig as unknown as WaitStepConfig)
+            : this.waitUntilMs(
+                step.stepConfig as unknown as WaitUntilStepConfig,
+              );
         const pending = await this.prisma.automationPendingExecution.create({
           data: {
             automationId: args.automation.id,
@@ -108,7 +173,7 @@ export class AutomationStepExecutorService {
           step_id: step.id,
           step_type: step.stepType as AutomationStepType,
           status: 'success',
-          detail: `waiting ${cfg.amount} ${cfg.unit}`,
+          detail: `resuming in ${Math.round(ms / 1000)}s`,
         });
         status = 'partial';
         await this.appendResults(args.logId, results, status, errorMessage);
@@ -116,15 +181,25 @@ export class AutomationStepExecutorService {
       }
 
       try {
-        if (step.stepType === 'condition') {
-          const cfg = step.stepConfig as unknown as ConditionStepConfig;
-          const taken = await this.condition.evaluate(cfg, args);
+        if (step.stepType === 'condition' || step.stepType === 'random_split') {
+          const taken =
+            step.stepType === 'condition'
+              ? await this.condition.evaluate(
+                  step.stepConfig as unknown as ConditionStepConfig,
+                  args,
+                )
+              : this.rollSplit(
+                  step.stepConfig as unknown as RandomSplitStepConfig,
+                );
           results.push({
             step_id: step.id,
-            step_type: 'condition',
+            step_type: step.stepType as AutomationStepType,
             status: 'success',
             detail: `branch=${taken ? 'yes' : 'no'}`,
           });
+          // The branch a run took is itself data — a later step can send
+          // a different message to the half that got the discount.
+          this.publishOutput(step, args, { branch: taken ? 'yes' : 'no' });
           // Recurse into the chosen branch at position 0 (children use
           // their own ordering within the branch scope).
           await this.executeStepsFrom({
@@ -137,7 +212,10 @@ export class AutomationStepExecutorService {
           continue;
         }
 
-        const detail = await this.runStep(step, args);
+        const { detail, output } = await this.runStep(step, args);
+        // Publish BEFORE the next step runs — that ordering is the whole
+        // feature: step N+1 builds its request out of step N's output.
+        this.publishOutput(step, args, output);
         results.push({
           step_id: step.id,
           step_type: step.stepType as AutomationStepType,
@@ -146,6 +224,14 @@ export class AutomationStepExecutorService {
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+
+        // An HTTP step that failed still has a status code and a body,
+        // and a `continue`-on-error step exists precisely so the run can
+        // branch on them. Publish before deciding what to do with the
+        // error, or "if the lookup 404s, do X" is unwritable.
+        if (err instanceof HttpStepError && err.output) {
+          this.publishOutput(step, args, err.output);
+        }
 
         // A step the channel simply cannot do is SKIPPED, not failed.
         //
@@ -183,6 +269,21 @@ export class AutomationStepExecutorService {
           status: 'failed',
           detail: msg,
         });
+
+        // `on_error: continue` — the step failed, the RUN carries on.
+        //
+        // The default (abort) is right for a send that depends on a
+        // lookup: firing it with half the data is worse than not firing
+        // it. It is wrong for the "also ping our CRM" step at the end,
+        // where a third party being down should not cancel the tag and
+        // the deal that already succeeded. The run still ends `failed`,
+        // so nobody has to read the whole log to notice something broke.
+        if (options.on_error === 'continue') {
+          if (!errorMessage) errorMessage = msg;
+          status = 'failed';
+          continue;
+        }
+
         status = 'failed';
         errorMessage = msg;
         break;
@@ -197,7 +298,402 @@ export class AutomationStepExecutorService {
     }
   }
 
+  /**
+   * Steps that PRODUCE something a later step can read.
+   *
+   * Split from the original switch (now `runLegacyStep`) along that
+   * line rather than by age: these return a structured `output` that
+   * lands in `context.steps[<key>]`, the others return a log line and
+   * nothing else. Keeping the two apart stops every existing case from
+   * having to be rewritten to say `{ detail }`.
+   */
   private async runStep(
+    step: {
+      id: string;
+      key?: string | null;
+      stepType: string;
+      stepConfig: unknown;
+      position: number;
+    },
+    args: StepExecutionArgs,
+  ): Promise<StepResult> {
+    switch (step.stepType) {
+      case 'http_request':
+      case 'send_webhook': {
+        const cfg = step.stepConfig as SendWebhookStepConfig;
+        if (!cfg.url) throw new Error(`${step.stepType} needs a url`);
+        const output = await performHttpStep(cfg, args.context);
+        return {
+          // The URL is redacted: automation logs are readable by every
+          // member of the workspace and an API key in a query string is
+          // exactly what ends up there.
+          detail: `${cfg.method ?? 'POST'} ${redactUrl(
+            interpolate(cfg.url, args.context),
+          )} → ${output.status} in ${output.duration_ms}ms`,
+          output,
+        };
+      }
+
+      case 'set_variable': {
+        const cfg = step.stepConfig as SetVariableStepConfig;
+        const name = String(cfg.name ?? '').trim();
+        if (!name) throw new Error('set_variable needs a name');
+        // resolveValue, not interpolate: a config that is exactly one
+        // token keeps the underlying type, so `{{ steps.x.body }}` stores
+        // the object rather than a string of JSON that nothing can index.
+        const value = resolveValue(cfg.value, args.context);
+        args.context.vars = { ...(args.context.vars ?? {}), [name]: value };
+        return {
+          detail: `${name} set`,
+          output: { name, value },
+        };
+      }
+
+      case 'send_media': {
+        const cfg = step.stepConfig as SendMediaStepConfig;
+        if (!args.contactId) throw new Error('send_media needs a contact');
+        const link = interpolate(String(cfg.link ?? ''), args.context);
+        if (!link.trim()) throw new Error('send_media needs a link');
+        const conversationId = await this.resolveConversationId(args);
+        const { messageId } = await this.channelSender.sendMedia({
+          accountId: args.automation.accountId,
+          conversationId,
+          contactId: args.contactId,
+          kind: cfg.kind ?? 'image',
+          link,
+          caption: cfg.caption
+            ? interpolate(cfg.caption, args.context)
+            : undefined,
+          filename: cfg.filename
+            ? interpolate(cfg.filename, args.context)
+            : undefined,
+        });
+        return { detail: `${cfg.kind ?? 'image'} sent (${messageId})`, output: { message_id: messageId } };
+      }
+
+      case 'send_buttons': {
+        const cfg = step.stepConfig as SendButtonsStepConfig;
+        if (!args.contactId) throw new Error('send_buttons needs a contact');
+        const buttons = (cfg.buttons ?? [])
+          .map((b, i) => ({
+            // A stable id matters beyond this send: it is what comes back
+            // on the webhook when the recipient taps, and what a flow or
+            // a keyword automation matches on.
+            id: (b.id?.trim() || `btn_${i + 1}`).slice(0, 256),
+            title: interpolate(String(b.title ?? ''), args.context),
+          }))
+          .filter((b) => b.title.trim());
+        if (buttons.length === 0) {
+          throw new Error('send_buttons needs at least one button');
+        }
+        const conversationId = await this.resolveConversationId(args);
+        const { messageId } = await this.channelSender.sendButtons({
+          accountId: args.automation.accountId,
+          conversationId,
+          contactId: args.contactId,
+          bodyText: interpolate(String(cfg.body_text ?? ''), args.context),
+          buttons,
+          headerText: cfg.header_text
+            ? interpolate(cfg.header_text, args.context)
+            : undefined,
+          footerText: cfg.footer_text
+            ? interpolate(cfg.footer_text, args.context)
+            : undefined,
+        });
+        return {
+          detail: `${buttons.length} button(s) sent (${messageId})`,
+          output: { message_id: messageId, button_ids: buttons.map((b) => b.id) },
+        };
+      }
+
+      case 'send_list': {
+        const cfg = step.stepConfig as SendListStepConfig;
+        if (!args.contactId) throw new Error('send_list needs a contact');
+        const sections = (cfg.sections ?? []).map((s, si) => ({
+          title: interpolate(String(s.title ?? `Section ${si + 1}`), args.context),
+          rows: (s.rows ?? [])
+            .map((r, ri) => ({
+              id: (r.id?.trim() || `row_${si + 1}_${ri + 1}`).slice(0, 200),
+              title: interpolate(String(r.title ?? ''), args.context),
+              description: r.description
+                ? interpolate(r.description, args.context)
+                : undefined,
+            }))
+            .filter((r) => r.title.trim()),
+        }));
+        if (!sections.some((s) => s.rows.length > 0)) {
+          throw new Error('send_list needs at least one row');
+        }
+        const conversationId = await this.resolveConversationId(args);
+        // Instagram has no list message; assertSupported/sendList raises
+        // UnsupportedOnChannelError, which the loop above treats as a
+        // skip rather than a failure.
+        const { messageId } = await this.channelSender.sendList({
+          accountId: args.automation.accountId,
+          conversationId,
+          contactId: args.contactId,
+          bodyText: interpolate(String(cfg.body_text ?? ''), args.context),
+          buttonLabel: interpolate(
+            String(cfg.button_label ?? 'Choose'),
+            args.context,
+          ),
+          sections,
+          headerText: cfg.header_text
+            ? interpolate(cfg.header_text, args.context)
+            : undefined,
+          footerText: cfg.footer_text
+            ? interpolate(cfg.footer_text, args.context)
+            : undefined,
+        });
+        return { detail: `list sent (${messageId})`, output: { message_id: messageId } };
+      }
+
+      case 'create_deal': {
+        const cfg = step.stepConfig as CreateDealStepConfig;
+        if (!cfg.pipeline_id || !cfg.stage_id)
+          throw new Error('create_deal needs pipeline + stage');
+        // Match the account's configured default currency rather than a
+        // static DB default — keeps automation-created deals consistent
+        // with the one-currency-per-account rule. Falls back to USD.
+        const acct = await this.prisma.account.findUnique({
+          where: { id: args.automation.accountId },
+          select: { defaultCurrency: true },
+        });
+        // Both ids come from a config blob and Prisma bypasses RLS, so
+        // pin the stage to a pipeline this account owns. Without it a
+        // copied automation could file deals into another tenant's board.
+        const stage = await this.prisma.pipeline_stages.findFirst({
+          where: {
+            id: cfg.stage_id,
+            pipeline_id: cfg.pipeline_id,
+            pipelines: { account_id: args.automation.accountId },
+          },
+          select: { id: true },
+        });
+        if (!stage) {
+          throw new Error('that pipeline stage is not in this workspace');
+        }
+        const deal = await this.prisma.deals.create({
+          data: {
+            account_id: args.automation.accountId,
+            user_id: args.automation.userId,
+            pipeline_id: cfg.pipeline_id,
+            stage_id: cfg.stage_id,
+            contact_id: args.contactId,
+            title: interpolate(cfg.title, args.context),
+            value: this.toDecimal(cfg.value, args.context) ?? 0,
+            currency: acct?.defaultCurrency ?? 'USD',
+            status: 'open',
+          },
+          select: { id: true, title: true },
+        });
+        return {
+          detail: 'deal created',
+          // The id is the point: "create a deal, then post its id to
+          // Slack" is not expressible without it.
+          output: { deal_id: deal.id, title: deal.title },
+        };
+      }
+
+      case 'update_deal': {
+        const cfg = step.stepConfig as UpdateDealStepConfig;
+        const dealId =
+          cfg.target === 'by_id'
+            ? interpolate(String(cfg.deal_id ?? ''), args.context).trim()
+            : await this.latestDealIdForContact(args);
+        if (!dealId) {
+          throw new Error(
+            cfg.target === 'by_id'
+              ? 'update_deal needs a deal id'
+              : 'this contact has no deal to update',
+          );
+        }
+        if (cfg.stage_id) {
+          // Same cross-tenant reasoning as create_deal: a stage id from
+          // config is not authority.
+          const stage = await this.prisma.pipeline_stages.findFirst({
+            where: {
+              id: cfg.stage_id,
+              pipelines: { account_id: args.automation.accountId },
+            },
+            select: { id: true },
+          });
+          if (!stage) {
+            throw new Error('that pipeline stage is not in this workspace');
+          }
+        }
+        const value = this.toDecimal(cfg.value, args.context);
+        const updated = await this.prisma.deals.updateMany({
+          // Account-scoped so a deal id from a config blob cannot reach
+          // another tenant's board.
+          where: { id: dealId, account_id: args.automation.accountId },
+          data: {
+            ...(cfg.stage_id ? { stage_id: cfg.stage_id } : {}),
+            ...(cfg.status ? { status: cfg.status } : {}),
+            ...(value !== undefined ? { value } : {}),
+            ...(cfg.title
+              ? { title: interpolate(cfg.title, args.context) }
+              : {}),
+            updated_at: new Date(),
+          },
+        });
+        if (updated.count === 0) {
+          throw new Error('deal not found in this workspace');
+        }
+        return { detail: `deal ${dealId} updated`, output: { deal_id: dealId } };
+      }
+
+      case 'add_note': {
+        const cfg = step.stepConfig as AddNoteStepConfig;
+        if (!args.contactId) throw new Error('add_note needs a contact');
+        const text = interpolate(String(cfg.text ?? ''), args.context);
+        if (!text.trim()) throw new Error('add_note has empty text');
+        const note = await this.prisma.contact_notes.create({
+          data: {
+            account_id: args.automation.accountId,
+            contact_id: args.contactId,
+            // The automation's author owns notes it writes: contact_notes
+            // requires a user, and attributing them to the person who
+            // wrote the rule is the only honest answer available.
+            user_id: args.automation.userId,
+            note_text: text,
+          },
+          select: { id: true },
+        });
+        return { detail: 'note added', output: { note_id: note.id } };
+      }
+
+      case 'notify_team': {
+        const cfg = step.stepConfig as NotifyTeamStepConfig;
+        const title = interpolate(String(cfg.title ?? ''), args.context);
+        if (!title.trim()) throw new Error('notify_team needs a title');
+        const body = cfg.body ? interpolate(cfg.body, args.context) : null;
+        const userIds = await this.notifyRecipients(cfg, args);
+        if (userIds.length === 0) return { detail: 'nobody to notify' };
+        await this.prisma.notifications.createMany({
+          data: userIds.map((userId) => ({
+            account_id: args.automation.accountId,
+            user_id: userId,
+            type: 'automation',
+            contact_id: args.contactId,
+            conversation_id: args.context.conversation_id ?? null,
+            title,
+            body,
+          })),
+        });
+        return {
+          detail: `notified ${userIds.length} member(s)`,
+          output: { notified: userIds.length },
+        };
+      }
+
+      case 'set_conversation_status': {
+        const cfg = step.stepConfig as SetConversationStatusStepConfig;
+        if (!args.contactId)
+          throw new Error('set_conversation_status needs a contact');
+        const status = cfg.status ?? 'open';
+        await this.prisma.conversations.updateMany({
+          where: this.conversationScope(args),
+          data: { status, updated_at: new Date() },
+        });
+        return { detail: `conversation set to ${status}` };
+      }
+
+      case 'start_flow': {
+        const cfg = step.stepConfig as StartFlowStepConfig;
+        if (!cfg.flow_id) throw new Error('start_flow needs a flow');
+        if (!args.contactId) throw new Error('start_flow needs a contact');
+        // A flow talks to somebody, so it needs a thread to talk on.
+        // resolveConversationId throws NoReachableConversationError,
+        // which the loop treats as a skip — right answer for a
+        // form_submitted run whose contact has never messaged.
+        const conversationId = await this.resolveConversationId(args);
+        const result = await this.flows.startForContact({
+          accountId: args.automation.accountId,
+          flowId: cfg.flow_id,
+          contactId: args.contactId,
+          conversationId,
+          userId: args.automation.userId,
+        });
+        if (!result.consumed) {
+          // Not an exception: the usual causes are a draft flow or a
+          // contact already in one, and neither should fail a run that
+          // has already tagged and assigned correctly.
+          return {
+            detail: `flow not started (${result.outcome ?? 'no match'})`,
+            output: { started: false, outcome: result.outcome ?? null },
+          };
+        }
+        return {
+          detail: `flow started (${result.flow_run_id ?? 'run'})`,
+          output: { started: true, flow_run_id: result.flow_run_id ?? null },
+        };
+      }
+
+      case 'run_automation': {
+        const cfg = step.stepConfig as RunAutomationStepConfig;
+        if (!cfg.automation_id) throw new Error('run_automation needs a target');
+        if (cfg.automation_id === args.automation.id) {
+          // Direct self-recursion is never what someone meant, and the
+          // depth counter would only catch it three runs later.
+          throw new Error('an automation cannot run itself');
+        }
+        const depth = args.context.depth ?? 0;
+        if (depth >= MAX_AUTOMATION_DEPTH) {
+          throw new Error(
+            `automation chain is too deep (limit ${MAX_AUTOMATION_DEPTH}) — check for a loop`,
+          );
+        }
+        const target = await this.prisma.automation.findFirst({
+          // Account-scoped: the id comes from a config blob.
+          where: {
+            id: cfg.automation_id,
+            accountId: args.automation.accountId,
+          },
+          select: { id: true, name: true, isActive: true, userId: true },
+        });
+        if (!target) throw new Error('that automation is not in this workspace');
+        if (!target.isActive) {
+          return { detail: `"${target.name}" is inactive — not run` };
+        }
+        // Run inline rather than through dispatch: dispatch re-matches
+        // triggers, and this target's trigger has nothing to do with why
+        // it is being called. The context (vars, step outputs) carries
+        // over, which is the reason to call a sub-automation at all.
+        await this.executeStepsFrom({
+          automation: {
+            id: target.id,
+            accountId: args.automation.accountId,
+            userId: target.userId,
+          },
+          contactId: args.contactId,
+          context: { ...args.context, depth: depth + 1 },
+          parentStepId: null,
+          branch: null,
+          startPosition: 0,
+          // Its own log row would be orphaned from any trigger; keeping
+          // the caller's log means one readable timeline.
+          logId: args.logId,
+          triggerEvent: `run_automation:${args.triggerEvent}`,
+        });
+        return {
+          detail: `ran "${target.name}"`,
+          output: { automation_id: target.id },
+        };
+      }
+
+      default:
+        return { detail: await this.runLegacyStep(step, args) };
+    }
+  }
+
+  /**
+   * Steps whose only product is a log line.
+   *
+   * This is the original switch, unchanged apart from `create_deal` and
+   * `send_webhook` moving up into `runStep` (they now publish an output).
+   */
+  private async runLegacyStep(
     step: {
       id: string;
       stepType: string;
@@ -546,63 +1042,6 @@ export class AutomationStepExecutorService {
         return `${cfg.field} updated`;
       }
 
-      case 'create_deal': {
-        const cfg = step.stepConfig as CreateDealStepConfig;
-        if (!cfg.pipeline_id || !cfg.stage_id)
-          throw new Error('create_deal needs pipeline + stage');
-        // Match the account's configured default currency rather than a
-        // static DB default — keeps automation-created deals consistent
-        // with the one-currency-per-account rule. Falls back to USD.
-        const acct = await this.prisma.account.findUnique({
-          where: { id: args.automation.accountId },
-          select: { defaultCurrency: true },
-        });
-        await this.prisma.deals.create({
-          data: {
-            account_id: args.automation.accountId,
-            user_id: args.automation.userId,
-            pipeline_id: cfg.pipeline_id,
-            stage_id: cfg.stage_id,
-            contact_id: args.contactId,
-            title: interpolate(cfg.title, args.context),
-            value: cfg.value ?? 0,
-            currency: acct?.defaultCurrency ?? 'USD',
-            status: 'open',
-          },
-        });
-        return 'deal created';
-      }
-
-      case 'send_webhook': {
-        const cfg = step.stepConfig as SendWebhookStepConfig;
-        if (!cfg.url) throw new Error('send_webhook needs url');
-        // SSRF guard: the URL and headers are account-controlled and the
-        // server makes the request, so refuse any destination that
-        // resolves to a private / loopback / link-local / reserved
-        // address.
-        if (!(await isDeliverableUrl(cfg.url))) {
-          throw new Error('send_webhook: destination not allowed');
-        }
-        const body = cfg.body_template
-          ? interpolate(cfg.body_template, args.context)
-          : JSON.stringify(args.context);
-        const res = await fetch(cfg.url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(cfg.headers ?? {}),
-          },
-          body,
-          // Do NOT follow redirects — a public URL could 3xx-bounce to an
-          // internal address, defeating the guard above. Bound the
-          // request so a hung/slow internal host can't tie up the runner.
-          redirect: 'manual',
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!res.ok) throw new Error(`webhook returned ${res.status}`);
-        return `webhook ${res.status}`;
-      }
-
       case 'close_conversation': {
         if (!args.contactId)
           throw new Error('close_conversation needs a contact');
@@ -775,6 +1214,120 @@ export class AutomationStepExecutorService {
     return convo.id;
   }
 
+  /**
+   * File a step's output under its key so later steps can read it as
+   * `{{ steps.<key>.… }}`, and optionally copy it to a variable.
+   *
+   * KEYED BY `key`, NOT BY ROW ID
+   *   Saving an automation is delete-then-reinsert, so ids change on
+   *   every save and any token built on one would rot silently. A step
+   *   with no key (a client that predates migration 080) simply
+   *   publishes nothing — its output was unreferenceable anyway.
+   *
+   * Mutates `args.context` in place because that same object is what
+   * gets persisted on a wait, so an output collected before a three-day
+   * wait is still there when the run resumes.
+   */
+  private publishOutput(
+    step: { key?: string | null; stepConfig: unknown },
+    args: StepExecutionArgs,
+    output: unknown,
+  ): void {
+    if (output === undefined) return;
+    if (step.key) {
+      args.context.steps = { ...(args.context.steps ?? {}), [step.key]: output };
+    }
+    const saveAs = (step.stepConfig as CommonStepOptions)?.save_as?.trim();
+    if (saveAs) {
+      args.context.vars = { ...(args.context.vars ?? {}), [saveAs]: output };
+    }
+  }
+
+  /**
+   * Which branch a `random_split` takes.
+   *
+   * Per RUN, not per contact: a contact who triggers the automation
+   * twice can legitimately land in different halves. Sticky assignment
+   * would need a stored bucket per contact, which is a different feature
+   * (and a migration) — this one is honest A/B on traffic.
+   */
+  private rollSplit(cfg: RandomSplitStepConfig): boolean {
+    const percent = Math.min(100, Math.max(0, Number(cfg.percent ?? 50)));
+    return Math.random() * 100 < percent;
+  }
+
+  /** The contact's most recent deal, for `update_deal`'s default target. */
+  private async latestDealIdForContact(
+    args: StepExecutionArgs,
+  ): Promise<string | null> {
+    if (!args.contactId) return null;
+    const deal = await this.prisma.deals.findFirst({
+      where: {
+        contact_id: args.contactId,
+        account_id: args.automation.accountId,
+      },
+      orderBy: { created_at: 'desc' },
+      select: { id: true },
+    });
+    return deal?.id ?? null;
+  }
+
+  /** Who a `notify_team` step writes notification rows for. */
+  private async notifyRecipients(
+    cfg: NotifyTeamStepConfig,
+    args: StepExecutionArgs,
+  ): Promise<string[]> {
+    if (cfg.recipient === 'specific') {
+      if (!cfg.user_id) return [];
+      // Membership check, not a bare id: the id comes from config, and
+      // notifications are keyed by (account, user) — writing one for a
+      // user outside the workspace would surface this account's contact
+      // and conversation ids in their notification list.
+      const member = await this.prisma.profile.findFirst({
+        where: {
+          userId: cfg.user_id,
+          accountId: args.automation.accountId,
+        },
+        select: { userId: true },
+      });
+      return member ? [member.userId] : [];
+    }
+
+    if (cfg.recipient === 'assigned_agent') {
+      if (!args.contactId) return [];
+      const convo = await this.prisma.conversations.findFirst({
+        where: this.conversationScope(args),
+        orderBy: { last_message_at: 'desc' },
+        select: { assigned_agent_id: true },
+      });
+      return convo?.assigned_agent_id ? [convo.assigned_agent_id] : [];
+    }
+
+    const members = await this.prisma.profile.findMany({
+      where: { accountId: args.automation.accountId },
+      select: { userId: true },
+    });
+    return members.map((m) => m.userId);
+  }
+
+  /**
+   * A money/number config field, interpolated then coerced.
+   *
+   * Returns undefined for "leave it alone" so an update can distinguish
+   * an omitted field from an explicit zero — `value: ""` on an update
+   * must not silently zero a deal.
+   */
+  private toDecimal(
+    raw: unknown,
+    context: AutomationContext,
+  ): number | undefined {
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const text =
+      typeof raw === 'string' ? interpolate(raw, context) : String(raw);
+    const n = Number(text.replace(/[^0-9.\-]/g, ''));
+    return Number.isFinite(n) ? n : undefined;
+  }
+
   private waitMs(cfg: WaitStepConfig): number {
     const unitMs =
       cfg.unit === 'days'
@@ -783,6 +1336,138 @@ export class AutomationStepExecutorService {
           ? 3_600_000
           : 60_000;
     return Math.max(1_000, cfg.amount * unitMs);
+  }
+
+  /**
+   * Milliseconds until the next `HH:mm` in the configured zone that also
+   * falls on an allowed weekday.
+   *
+   * WHY THIS IS NOT `wait`
+   *   "Reply at 9am" and "reply in 12 hours" are different rules and one
+   *   cannot express the other: 12 hours after a 10pm message is 10am
+   *   only if the message arrived at 10pm.
+   *
+   * TIMEZONE HANDLING
+   *   Computed by formatting `now` into the target zone with Intl and
+   *   measuring the offset from that — no dependency, and correct across
+   *   a DST boundary because the offset is recomputed from the target
+   *   instant rather than assumed constant.
+   *
+   *   An unknown zone falls back to UTC rather than to the server's local
+   *   time: a silently different answer per deploy is worse than one
+   *   documented default.
+   */
+  private waitUntilMs(cfg: WaitUntilStepConfig): number {
+    const [rawH, rawM] = String(cfg.time ?? '09:00').split(':');
+    const hour = Math.min(23, Math.max(0, Number(rawH) || 0));
+    const minute = Math.min(59, Math.max(0, Number(rawM) || 0));
+    const zone = cfg.timezone?.trim() || 'UTC';
+    const allowedDays =
+      Array.isArray(cfg.days) && cfg.days.length > 0
+        ? new Set(cfg.days.map((d) => Number(d)))
+        : null;
+
+    const now = new Date();
+    // Search day by day: at most a week, and it handles "Monday 9am"
+    // from a Friday without any date arithmetic of our own.
+    for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
+      const candidate = this.zonedTimeToInstant(
+        now,
+        dayOffset,
+        hour,
+        minute,
+        zone,
+      );
+      if (candidate.getTime() <= now.getTime()) continue;
+      if (allowedDays && !allowedDays.has(this.weekdayIn(candidate, zone))) {
+        continue;
+      }
+      return Math.max(1_000, candidate.getTime() - now.getTime());
+    }
+    // No allowed day in the next week (an empty `days` set that somehow
+    // matched nothing). An hour is a safe, visible fallback — better than
+    // a run that never resumes.
+    return 3_600_000;
+  }
+
+  /**
+   * Day of week (0=Sun) as it reads in `zone` at that instant.
+   *
+   * Matters near midnight: 23:30 UTC on Sunday is Monday in Sydney, and
+   * a "weekdays only" wait must agree with the recipient's calendar.
+   */
+  private weekdayIn(at: Date, zone: string): number {
+    const NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    try {
+      const label = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone,
+        weekday: 'short',
+      }).format(at);
+      const index = NAMES.indexOf(label);
+      return index === -1 ? at.getUTCDay() : index;
+    } catch {
+      return at.getUTCDay();
+    }
+  }
+
+  /**
+   * The instant at which the wall clock in `zone` reads `hour:minute`,
+   * `dayOffset` days from today.
+   *
+   * Two-pass: guess in UTC, measure how far that guess lands from the
+   * wanted wall-clock time in the target zone, then correct. One
+   * correction is enough for every real zone (offsets are whole minutes).
+   */
+  private zonedTimeToInstant(
+    now: Date,
+    dayOffset: number,
+    hour: number,
+    minute: number,
+    zone: string,
+  ): Date {
+    const parts = (d: Date) => {
+      try {
+        const fmt = new Intl.DateTimeFormat('en-US', {
+          timeZone: zone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        });
+        const map: Record<string, number> = {};
+        for (const p of fmt.formatToParts(d)) {
+          if (p.type !== 'literal') map[p.type] = Number(p.value);
+        }
+        return map;
+      } catch {
+        // Unknown zone — treat as UTC (see waitUntilMs).
+        return {
+          year: d.getUTCFullYear(),
+          month: d.getUTCMonth() + 1,
+          day: d.getUTCDate(),
+          hour: d.getUTCHours(),
+          minute: d.getUTCMinutes(),
+          second: d.getUTCSeconds(),
+        };
+      }
+    };
+
+    const today = parts(now);
+    let guess = new Date(
+      Date.UTC(today.year, today.month - 1, today.day + dayOffset, hour, minute, 0),
+    );
+    const atGuess = parts(guess);
+    const wantedMinutes = hour * 60 + minute;
+    const actualMinutes = atGuess.hour * 60 + atGuess.minute;
+    // Difference wraps at midnight; normalise into ±12h.
+    let deltaMinutes = wantedMinutes - actualMinutes;
+    if (deltaMinutes > 720) deltaMinutes -= 1440;
+    if (deltaMinutes < -720) deltaMinutes += 1440;
+    guess = new Date(guess.getTime() + deltaMinutes * 60_000);
+    return guess;
   }
 
   async appendResults(

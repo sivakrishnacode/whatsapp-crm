@@ -8,6 +8,7 @@ import {
   type BuilderInitial,
   type BuilderStep,
 } from "@/components/automations/automation-builder"
+import { blankStep } from "@/lib/automations/graph"
 import { AUTOMATION_TEMPLATES, type TemplateSlug } from "@/lib/automations/templates"
 import type { AutomationStepType, AutomationTriggerType } from "@/types"
 
@@ -59,25 +60,15 @@ interface SeedRow {
   parent_index: number | null
 }
 
-function uid(): string {
-  return (
-    "c_" +
-    (typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : Math.random().toString(36).slice(2) + Date.now().toString(36))
-  )
-}
-
 /** Template seeds are flat with parent_index references. Expand into the
  *  builder's nested tree, preserving order within each scope. */
 function expandFromSeeds(rows: SeedRow[]): BuilderStep[] {
-  const nodes: BuilderStep[] = rows.map((r) => ({
-    cid: uid(),
-    step_type: r.step_type,
-    step_config: r.step_config,
-    branches:
-      r.step_type === "condition" ? { yes: [], no: [] } : undefined,
-  }))
+  // Keys are the canvas node ids and the token paths, so they have to be
+  // unique across the whole tree — hence one shared set, not per-scope.
+  const taken = new Set<string>()
+  const nodes: BuilderStep[] = rows.map((r) =>
+    blankStep(r.step_type, taken, r.step_config),
+  )
   const roots: BuilderStep[] = []
   rows.forEach((r, i) => {
     if (r.parent_index == null) {

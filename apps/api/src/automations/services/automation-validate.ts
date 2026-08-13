@@ -47,7 +47,10 @@ function walk(
   steps.forEach((s, i) => {
     const path = `${prefix}steps[${i}]`;
     validateOne(s, path, issues);
-    if (s.step_type === 'condition' && s.branches) {
+    if (
+      (s.step_type === 'condition' || s.step_type === 'random_split') &&
+      s.branches
+    ) {
       if (s.branches.yes) walk(s.branches.yes, `${path}.yes.`, issues);
       if (s.branches.no) walk(s.branches.no, `${path}.no.`, issues);
     }
@@ -151,40 +154,240 @@ function validateOne(
         });
       }
       break;
-    case 'condition':
-      if (!nonEmpty(c.subject)) {
+    case 'wait_until':
+      if (!/^\d{1,2}:\d{2}$/.test(String(c.time ?? ''))) {
         issues.push({
-          path: `${path}.subject`,
-          message: 'condition subject is required',
+          path: `${path}.time`,
+          message: 'time must look like HH:mm (24-hour)',
         });
       }
-      if (!nonEmpty(c.operand)) {
+      break;
+    case 'condition': {
+      // Two shapes are legal: the legacy single triple, and `rules[]`.
+      // Requiring `subject` unconditionally would reject every condition
+      // written in the new editor; requiring `rules` would reject every
+      // one already live.
+      const rules = Array.isArray(c.rules)
+        ? (c.rules as Record<string, unknown>[])
+        : null;
+      if (rules && rules.length > 0) {
+        rules.forEach((r, i) => {
+          if (!nonEmpty(r?.subject)) {
+            issues.push({
+              path: `${path}.rules[${i}].subject`,
+              message: 'each rule needs a subject',
+            });
+          }
+          // `channel` reads its comparison from `value`; every other
+          // subject names what it is looking at in `operand`.
+          if (r?.subject !== 'channel' && !nonEmpty(r?.operand)) {
+            issues.push({
+              path: `${path}.rules[${i}].operand`,
+              message: 'each rule needs something to look at',
+            });
+          }
+        });
+      } else if (!nonEmpty(c.subject)) {
+        issues.push({
+          path: `${path}.subject`,
+          message: 'add at least one rule to this condition',
+        });
+      } else if (!nonEmpty(c.operand)) {
         issues.push({
           path: `${path}.operand`,
           message: 'condition operand is required',
         });
       }
       break;
+    }
+    case 'random_split': {
+      const percent = Number(c.percent ?? 50);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+        issues.push({
+          path: `${path}.percent`,
+          message: 'split percentage must be between 0 and 100',
+        });
+      }
+      break;
+    }
     case 'send_webhook':
+    case 'http_request': {
       if (!nonEmpty(c.url)) {
         issues.push({
           path: `${path}.url`,
-          message: 'webhook URL is required',
+          message: 'a URL is required',
         });
         break;
       }
-      try {
-        const u = new URL(String(c.url));
-        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      // A URL built from tokens (`{{ vars.endpoint }}/orders`) cannot be
+      // parsed until run time. Skip the shape check rather than reject
+      // it — the SSRF guard still runs on the resolved value, which is
+      // the check that actually matters.
+      if (!String(c.url).includes('{{')) {
+        try {
+          const u = new URL(String(c.url));
+          if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+            issues.push({
+              path: `${path}.url`,
+              message: 'the URL must use http or https',
+            });
+          }
+        } catch {
           issues.push({
             path: `${path}.url`,
-            message: 'webhook URL must use http or https',
+            message: 'that is not a valid URL',
           });
         }
-      } catch {
+      }
+      if (
+        c.body_mode === 'raw' &&
+        nonEmpty(c.body_template) &&
+        !String(c.body_template).includes('{{')
+      ) {
+        // Only checkable when there are no tokens: a template full of
+        // them is not JSON yet. Catching a stray trailing comma here
+        // beats a 400 from the recipient at 3am.
+        try {
+          JSON.parse(String(c.body_template));
+        } catch {
+          issues.push({
+            path: `${path}.body_template`,
+            message: 'the raw body is not valid JSON',
+          });
+        }
+      }
+      break;
+    }
+    case 'set_variable':
+      if (!nonEmpty(c.name)) {
         issues.push({
-          path: `${path}.url`,
-          message: 'webhook URL is not a valid URL',
+          path: `${path}.name`,
+          message: 'variable name is required',
+        });
+      } else if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(String(c.name))) {
+        // It is addressed as `{{ vars.<name> }}`; a dot or a space there
+        // splits the path and the token silently resolves to nothing.
+        issues.push({
+          path: `${path}.name`,
+          message: 'variable names can use letters, numbers and underscores only',
+        });
+      }
+      break;
+    case 'send_media':
+      if (!nonEmpty(c.link)) {
+        issues.push({ path: `${path}.link`, message: 'a media URL is required' });
+      }
+      if (!['image', 'video', 'document', 'audio'].includes(String(c.kind))) {
+        issues.push({
+          path: `${path}.kind`,
+          message: 'media kind must be image, video, document or audio',
+        });
+      }
+      break;
+    case 'send_buttons': {
+      if (!nonEmpty(c.body_text)) {
+        issues.push({
+          path: `${path}.body_text`,
+          message: 'message text is required',
+        });
+      }
+      const buttons = Array.isArray(c.buttons) ? c.buttons : [];
+      if (buttons.length === 0) {
+        issues.push({
+          path: `${path}.buttons`,
+          message: 'add at least one button',
+        });
+      }
+      // Meta's hard limit. Sending 4 fails the whole message at the API,
+      // so catching it at save time is the difference between a fixable
+      // form error and a silent dead automation.
+      if (buttons.length > 3) {
+        issues.push({
+          path: `${path}.buttons`,
+          message: 'WhatsApp allows at most 3 buttons',
+        });
+      }
+      break;
+    }
+    case 'send_list': {
+      if (!nonEmpty(c.body_text)) {
+        issues.push({
+          path: `${path}.body_text`,
+          message: 'message text is required',
+        });
+      }
+      const sections = Array.isArray(c.sections)
+        ? (c.sections as { rows?: unknown[] }[])
+        : [];
+      const rowCount = sections.reduce(
+        (n, s) => n + (Array.isArray(s?.rows) ? s.rows.length : 0),
+        0,
+      );
+      if (rowCount === 0) {
+        issues.push({
+          path: `${path}.sections`,
+          message: 'add at least one row to the list',
+        });
+      }
+      if (rowCount > 10) {
+        issues.push({
+          path: `${path}.sections`,
+          message: 'WhatsApp allows at most 10 rows across all sections',
+        });
+      }
+      break;
+    }
+    case 'add_note':
+      if (!nonEmpty(c.text)) {
+        issues.push({ path: `${path}.text`, message: 'note text is required' });
+      }
+      break;
+    case 'notify_team':
+      if (!nonEmpty(c.title)) {
+        issues.push({
+          path: `${path}.title`,
+          message: 'notification title is required',
+        });
+      }
+      if (c.recipient === 'specific' && !nonEmpty(c.user_id)) {
+        issues.push({
+          path: `${path}.user_id`,
+          message: 'pick who to notify',
+        });
+      }
+      break;
+    case 'update_deal':
+      if (c.target === 'by_id' && !nonEmpty(c.deal_id)) {
+        issues.push({
+          path: `${path}.deal_id`,
+          message: 'a deal id is required when targeting by id',
+        });
+      }
+      if (!nonEmpty(c.stage_id) && !nonEmpty(c.status) && !nonEmpty(c.value) && !nonEmpty(c.title)) {
+        issues.push({
+          path: `${path}.stage_id`,
+          message: 'choose at least one thing to change on the deal',
+        });
+      }
+      break;
+    case 'set_conversation_status':
+      if (!['open', 'pending', 'closed'].includes(String(c.status))) {
+        issues.push({
+          path: `${path}.status`,
+          message: 'status must be open, pending or closed',
+        });
+      }
+      break;
+    case 'start_flow':
+      if (!nonEmpty(c.flow_id)) {
+        issues.push({ path: `${path}.flow_id`, message: 'pick a flow to start' });
+      }
+      break;
+    case 'run_automation':
+      if (!nonEmpty(c.automation_id)) {
+        issues.push({
+          path: `${path}.automation_id`,
+          message: 'pick an automation to run',
         });
       }
       break;

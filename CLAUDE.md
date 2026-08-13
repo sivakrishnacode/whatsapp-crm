@@ -363,6 +363,64 @@ list becomes sixty entries nobody dares delete.
   segment scope: a new scope is absent from every key already issued, so every
   live integration would 403 the day it shipped.
 
+## Automations — canvas editor + step engine
+
+An automation is a **sequence of steps where a branching step owns two child
+sequences** (`yes` / `no`), persisted as `automation_steps.parent_step_id` +
+`branch`. It is a TREE, not a free graph — that difference is the whole reason
+the editor works the way it does.
+
+- ⚠️ **`automation_steps.key` is the identity that matters** (migration 080).
+  Saving is delete-then-reinsert (`replaceSteps`), so **row ids change on every
+  save** — a token or a canvas node built on one would rot silently. The key is
+  author-chosen, unique per automation, sanitised to `[a-z0-9_]` in TWO places
+  that must agree: `uniqueKey()` (api) and `uniqueStepKey()` (web).
+- **`position_x`/`position_y` are NULLABLE on purpose.** NULL = "never laid
+  out" and triggers dagre; `0` = deliberately placed. `NOT NULL DEFAULT 0`
+  would make every pre-canvas automation a pile at the origin.
+- ⚠️ **A step's output is published to later steps** under
+  `context.steps[<key>]`, which is what `{{ steps.lookup.body.id }}` reads.
+  Published BEFORE the next step runs, and also on a *failed* HTTP step — a
+  `continue`-on-error step exists precisely so a condition can branch on the
+  status code it just got.
+- **`automation-interpolation.util.ts` is the expression engine**: deep paths
+  (`steps.x.body.items.0.sku`), namespaces (`contact`, `message`, `vars`,
+  `steps`, `trigger`, `conversation`, `form`, `now`) and filters
+  (`| default:"x"`, `json`, `upper`, `digits`, …). ⚠️ **An unknown token still
+  resolves to an EMPTY STRING**, never verbatim — a visible `{{vars.name}}` in
+  a customer's chat reads as a broken app. `resolveValue()` keeps the TYPE when
+  a field is exactly one token, which is how a JSON body posts `3` not `"3"`.
+- **Conditions are `rules[] + match: all|any`.** The pre-existing single
+  `{subject, operand, value}` triple is lifted into a one-rule list when
+  `rules` is absent — those rows are live, and a condition silently flipping
+  branch is a customer getting the wrong message.
+- **`send_webhook` and `close_conversation` are superseded, not removed**
+  (`http_request`, `set_conversation_status`). They stay readable and are
+  hidden from the add menu via `STEP_META[...].deprecated`.
+- ⚠️ **Everything that can go wrong at run time is SILENT by design**: an
+  unsupported step is skipped, an unknown token is empty, a missing contact is
+  skipped. `lib/automations/diagnostics.ts` is the editor's answer to that —
+  pre-flight checks for dead tokens, cross-branch references, channel
+  capability, WhatsApp's 24-hour window, SSRF-refused URLs, self-calling
+  automations. It is a MIRROR of run-time behaviour; `automation-validate.ts`
+  (api) remains the only thing that blocks activation.
+- **`lib/automations/availability.ts` mirrors `CHANNEL_CAPABILITIES`.**
+  Instagram has no templates and no lists; web has no templates. A step that
+  works on *some* selected channels is `partial` (legitimate — one automation
+  branching per channel); one that works on *none* is `never` and is dead
+  config. An UNSCOPED automation is not warned about partial support, or every
+  template step in the product would carry a warning nobody reads.
+- **Editor (`components/automations/canvas/*`)**: React Flow canvas + docked
+  right inspector, design spec in `docs/automation-canvas-design.md`. Edges are
+  DERIVED from the tree, so drag-to-connect is a **move**, not a link. A
+  branching step's yes/no ports live inside a two-column card footer; the
+  dashed **continue** edge (right edge → right edge) is where the parent
+  sequence resumes, and it exists because without it every condition looked
+  like the end of the automation.
+- **Colour is per CATEGORY, not per step type** (24 hues is noise), and
+  `stepColors().line` — not `solid` — paints every stroke and glyph: the raw
+  hue measures 2.53:1 on a light card, under WCAG 1.4.11's 3:1.
+
 ## Queues (`apps/api/src/queue`, BullMQ + Redis)
 
 **Anything that calls somebody else's API on behalf of a request runs on a

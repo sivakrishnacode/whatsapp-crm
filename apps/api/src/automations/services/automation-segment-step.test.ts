@@ -64,16 +64,22 @@ function makeService(segments: ReturnType<typeof makeSegmentsMock>) {
     {} as unknown as AutomationMetaSendService,
     {} as unknown as ChannelSenderService,
     segments as unknown as SegmentMembershipService,
+    // start_flow only; a segment step never reaches it.
+    { startForContact: vi.fn() } as never,
     { add: vi.fn() } as never,
   );
   // runStep is private by design — it is an interpreter step, not an
   // API. Reaching it directly is what lets these assertions be about one
   // step's behaviour instead of a whole automation run.
-  return (
+  //
+  // It returns `{ detail, output }` now that steps publish data to later
+  // steps; these tests are about the human-readable line, so unwrap it
+  // here rather than in every assertion.
+  return async (
     step: { stepType: string; stepConfig: unknown },
     args: StepExecutionArgs = makeArgs(),
-  ) =>
-    (
+  ) => {
+    const result = await (
       service as unknown as {
         runStep: (
           s: {
@@ -83,9 +89,11 @@ function makeService(segments: ReturnType<typeof makeSegmentsMock>) {
             position: number;
           },
           a: StepExecutionArgs,
-        ) => Promise<string>;
+        ) => Promise<{ detail: string; output?: unknown }>;
       }
     ).runStep({ id: 'step-1', position: 0, ...step }, args);
+    return result.detail;
+  };
 }
 
 describe('add_to_segment', () => {

@@ -70,7 +70,9 @@ describe('validateStepsForActivation', () => {
     const noUrl = validateStepsForActivation([
       { step_type: 'send_webhook', step_config: {} },
     ]);
-    expect(noUrl.map((i) => i.message)).toContain('webhook URL is required');
+    // Wording is shared with `http_request` now that both run the same
+    // validator, so it no longer says "webhook".
+    expect(noUrl.map((i) => i.message)).toContain('a URL is required');
 
     const wrongProtocol = validateStepsForActivation([
       {
@@ -79,15 +81,13 @@ describe('validateStepsForActivation', () => {
       },
     ]);
     expect(wrongProtocol.map((i) => i.message)).toContain(
-      'webhook URL must use http or https',
+      'the URL must use http or https',
     );
 
     const garbage = validateStepsForActivation([
       { step_type: 'send_webhook', step_config: { url: 'not a url' } },
     ]);
-    expect(garbage.map((i) => i.message)).toContain(
-      'webhook URL is not a valid URL',
-    );
+    expect(garbage.map((i) => i.message)).toContain('that is not a valid URL');
   });
 
   it("validates assign_conversation only when mode is 'specific'", () => {
@@ -163,13 +163,101 @@ describe('validateStepsForActivation', () => {
     ]);
   });
 
-  it('flags condition subject/operand independently', () => {
+  it('asks for a rule when a condition is empty', () => {
+    // An empty condition reports ONE issue, not two. It used to flag the
+    // missing subject and the missing operand separately, which read as
+    // two problems when there is only one: the condition has no rules.
     const issues = validateStepsForActivation([
       { step_type: 'condition', step_config: {} },
     ]);
-    expect(issues.map((i) => i.path).sort()).toEqual([
-      'steps[0].operand',
-      'steps[0].subject',
+    expect(issues).toEqual([
+      {
+        path: 'steps[0].subject',
+        message: 'add at least one rule to this condition',
+      },
+    ]);
+  });
+
+  it('validates each rule of a multi-rule condition', () => {
+    const issues = validateStepsForActivation([
+      {
+        step_type: 'condition',
+        step_config: {
+          match: 'all',
+          rules: [
+            { subject: 'tag_presence', operand: 'tag-1' },
+            // No operand — nothing to look at.
+            { subject: 'contact_field' },
+            // `channel` reads its comparison from `value`, so a missing
+            // operand is correct here and must NOT be flagged.
+            { subject: 'channel', value: 'whatsapp' },
+          ],
+        },
+      },
+    ]);
+    expect(issues.map((i) => i.path)).toEqual(['steps[0].rules[1].operand']);
+  });
+
+  it('still accepts the legacy single-rule condition shape', () => {
+    // Every condition written before rules[] existed has this shape and
+    // must keep activating — these rows are live.
+    expect(
+      validateStepsForActivation([
+        {
+          step_type: 'condition',
+          step_config: { subject: 'tag_presence', operand: 'tag-1' },
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('skips URL shape checks when the URL is built from tokens', () => {
+    // `{{ vars.endpoint }}/orders` is not parseable until run time. The
+    // SSRF guard still checks the resolved value, which is the check
+    // that matters.
+    expect(
+      validateStepsForActivation([
+        {
+          step_type: 'http_request',
+          step_config: { url: '{{ vars.endpoint }}/orders' },
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('catches malformed JSON in a raw webhook body', () => {
+    const issues = validateStepsForActivation([
+      {
+        step_type: 'http_request',
+        step_config: {
+          url: 'https://example.test/hook',
+          body_mode: 'raw',
+          body_template: '{"a": 1,}',
+        },
+      },
+    ]);
+    expect(issues.map((i) => i.path)).toEqual(['steps[0].body_template']);
+  });
+
+  it('enforces WhatsApp interactive limits at save time', () => {
+    // Meta rejects the whole send for a 4th button, so catching it here
+    // is the difference between a form error and a dead automation.
+    const issues = validateStepsForActivation([
+      {
+        step_type: 'send_buttons',
+        step_config: {
+          body_text: 'Pick one',
+          buttons: [
+            { id: 'a', title: 'A' },
+            { id: 'b', title: 'B' },
+            { id: 'c', title: 'C' },
+            { id: 'd', title: 'D' },
+          ],
+        },
+      },
+    ]);
+    expect(issues.map((i) => i.message)).toEqual([
+      'WhatsApp allows at most 3 buttons',
     ]);
   });
 });

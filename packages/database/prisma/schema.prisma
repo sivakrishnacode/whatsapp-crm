@@ -924,12 +924,21 @@ model AutomationStep {
   stepType          String                       @map("step_type")
   stepConfig        Json                         @default("{}") @map("step_config")
   position          Int
+  /// Author-facing, save-stable reference (migration 080). Other steps address
+  /// this one as {{ steps.<key>.… }}, and the canvas uses it as the node id.
+  /// Row ids cannot serve either purpose: saving is delete-then-reinsert.
+  key               String?
+  /// Canvas coordinates. NULL means "never laid out" — distinct from a
+  /// deliberate (0,0) — so the editor knows when to run auto-layout.
+  positionX         Float?                       @map("position_x")
+  positionY         Float?                       @map("position_y")
   createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
   pendingExecutions AutomationPendingExecution[]
   automation        Automation                   @relation(fields: [automationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   parentStep        AutomationStep?              @relation("StepParent", fields: [parentStepId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   childSteps        AutomationStep[]             @relation("StepParent")
 
+  @@unique([automationId, key], map: "idx_automation_steps_key")
   @@index([automationId, position], map: "idx_automation_steps_automation_id")
   @@index([parentStepId], map: "idx_automation_steps_parent", where: raw("(parent_step_id IS NOT NULL)"))
   @@map("automation_steps")
