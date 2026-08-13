@@ -72,6 +72,42 @@ interface StepResult {
 }
 
 /**
+ * Cap on the output copied into a log row.
+ *
+ * The log is read on every open of the logs page AND by the editor, for
+ * every run. An HTTP step can return megabytes; storing all of it would
+ * bloat every row for a benefit that stops after the first few fields —
+ * the editor only needs enough to show the SHAPE of what came back.
+ */
+export const LOG_OUTPUT_MAX_BYTES = 4_000;
+
+/**
+ * The output as it goes into the log: whole when small, and replaced by
+ * a marker when not.
+ *
+ * Deliberately NOT a partial object. Half a JSON body looks like a
+ * complete one with fields missing, and somebody would build a token
+ * path against a field that was merely cut off.
+ */
+function truncateOutput(output: unknown): unknown {
+  if (output === undefined || output === null) return undefined;
+  try {
+    const json = JSON.stringify(output);
+    if (json === undefined) return undefined;
+    if (json.length <= LOG_OUTPUT_MAX_BYTES) return output;
+    return {
+      _truncated: true,
+      _bytes: json.length,
+      _note: 'Too large to keep in the log. The full value was available to later steps at run time.',
+    };
+  } catch {
+    // Circular or otherwise unserialisable — the run does not care, but
+    // the log write would throw.
+    return undefined;
+  }
+}
+
+/**
  * Ported from apps/web/src/lib/automations/engine.ts's `executeStepsFrom()`
  * + `runStep()`. Shared by AutomationDispatchService (fresh executions)
  * and AutomationsProcessor (BullMQ wait-step resume) via DI — the exact
@@ -126,6 +162,7 @@ export class AutomationStepExecutorService {
       if (options.disabled) {
         results.push({
           step_id: step.id,
+          step_key: step.key ?? null,
           step_type: step.stepType as AutomationStepType,
           status: 'skipped',
           detail: 'step is switched off',
@@ -171,6 +208,7 @@ export class AutomationStepExecutorService {
         );
         results.push({
           step_id: step.id,
+          step_key: step.key ?? null,
           step_type: step.stepType as AutomationStepType,
           status: 'success',
           detail: `resuming in ${Math.round(ms / 1000)}s`,
@@ -193,6 +231,7 @@ export class AutomationStepExecutorService {
                 );
           results.push({
             step_id: step.id,
+            step_key: step.key ?? null,
             step_type: step.stepType as AutomationStepType,
             status: 'success',
             detail: `branch=${taken ? 'yes' : 'no'}`,
@@ -218,9 +257,15 @@ export class AutomationStepExecutorService {
         this.publishOutput(step, args, output);
         results.push({
           step_id: step.id,
+          step_key: step.key ?? null,
           step_type: step.stepType as AutomationStepType,
           status: 'success',
           detail,
+          // Recorded so the EDITOR can show what this step really
+          // returned last time, next to each token that reads it.
+          // Guessing at sample values would be worse than none: somebody
+          // would build a body around a field shape that does not exist.
+          output: truncateOutput(output),
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -255,6 +300,7 @@ export class AutomationStepExecutorService {
         ) {
           results.push({
             step_id: step.id,
+            step_key: step.key ?? null,
             step_type: step.stepType as AutomationStepType,
             status: 'skipped',
             detail: msg,
@@ -265,6 +311,7 @@ export class AutomationStepExecutorService {
 
         results.push({
           step_id: step.id,
+          step_key: step.key ?? null,
           step_type: step.stepType as AutomationStepType,
           status: 'failed',
           detail: msg,

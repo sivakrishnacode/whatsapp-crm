@@ -390,7 +390,9 @@ export interface CanvasEdge {
   id: string;
   source: string;
   target: string;
-  sourceHandle: 'next' | 'yes' | 'no';
+  /** Must name a handle the SOURCE card actually renders — React Flow
+   *  resolves by id and silently drops an edge that names a missing one. */
+  sourceHandle: 'next' | 'yes' | 'no' | 'continue';
   label?: string;
   /** The post-branch continuation — drawn dashed, since it is a return
    *  to the parent sequence rather than a step's own output. */
@@ -410,11 +412,16 @@ export function deriveEdges(steps: BuilderStep[]): CanvasEdge[] {
           id: `${previous}->${step.key}`,
           source: previous,
           target: step.key,
-          sourceHandle: 'next',
+          // MUST match a handle the source card actually renders. A
+          // branching card has yes / no / continue and NO `next`, and
+          // React Flow resolves handles by id — naming a handle that is
+          // not there drops the edge silently, leaving the receiving
+          // card with an inbound port and nothing arriving at it.
+          sourceHandle: previousIsBranching ? 'continue' : 'next',
           // From a branching step, this is the "whatever the branch
           // decided, carry on here" edge.
           dashed: previousIsBranching,
-          label: previousIsBranching ? 'then' : undefined,
+          label: previousIsBranching ? 'continues after' : undefined,
         });
       }
 
@@ -453,14 +460,34 @@ export function deriveEdges(steps: BuilderStep[]): CanvasEdge[] {
  * generated ones puts new cards on top of old ones, which reads as a
  * rendering bug. Either the author has arranged this canvas or they
  * have not.
+ *
+ * ⚠️ THE CALLER MUST PERSIST WHAT THIS GENERATES (see
+ * `needsAutoLayout`). Left unpersisted, a single unpositioned step keeps
+ * this on the dagre path, and every drag is silently overwritten by the
+ * next layout pass — the canvas simply refuses to be arranged.
  */
+/**
+ * Does any step still lack a position?
+ *
+ * The canvas persists the generated layout the first time this is true,
+ * so the state is transient rather than permanent — which is what makes
+ * a drag stick.
+ */
+export function needsAutoLayout(steps: BuilderStep[]): boolean {
+  const flat = flattenSteps(steps);
+  if (flat.length === 0) return false;
+  return flat.some(
+    (f) =>
+      typeof f.step.position_x !== 'number' ||
+      typeof f.step.position_y !== 'number',
+  );
+}
+
 export function derivePositions(
   steps: BuilderStep[],
 ): Map<string, { x: number; y: number }> {
   const flat = flattenSteps(steps);
-  const placed = flat.every(
-    (f) => typeof f.step.position_x === 'number' && typeof f.step.position_y === 'number',
-  );
+  const placed = !needsAutoLayout(steps);
 
   if (placed && flat.length > 0) {
     const map = new Map<string, { x: number; y: number }>();
@@ -485,23 +512,27 @@ export function derivePositions(
       })),
     ],
     edges.map((e) => ({ source: e.source, target: e.target })),
-    { direction: 'TB' },
+    // LEFT TO RIGHT. An automation reads as a sentence — trigger, then
+    // this, then that — and a horizontal spine matches how the branches
+    // fan out. It also keeps a long automation on one screen height
+    // rather than one screen width.
+    { direction: 'LR' },
   );
 }
 
 /**
  * Where the trigger card sits on an already-arranged canvas.
  *
- * Above and horizontally aligned with the topmost step, so an author who
- * dragged their steps somewhere far from the origin does not have to
- * scroll back to find what starts the automation.
+ * To the LEFT of the first step and vertically aligned with it, so an
+ * author who dragged their steps somewhere far from the origin does not
+ * have to scroll back to find what starts the automation.
  */
 function triggerPosition(flat: FlatStep[]): { x: number; y: number } {
   if (flat.length === 0) return { x: 0, y: 0 };
   const first = flat[0].step;
   return {
-    x: first.position_x ?? 0,
-    y: (first.position_y ?? 0) - (NODE_HEIGHT + 60),
+    x: (first.position_x ?? 0) - (NODE_WIDTH + 80),
+    y: first.position_y ?? 0,
   };
 }
 

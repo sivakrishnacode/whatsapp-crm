@@ -129,7 +129,14 @@ function colorsForCategory(cat: StepCategory | 'trigger' | 'neutral'): StepColor
   return {
     solid,
     line: `color-mix(in oklch, ${solid}, var(--foreground) 22%)`,
-    soft: `color-mix(in oklch, ${solid} 16%, var(--card))`,
+    // ALPHA, not `color-mix(… , var(--card))`.
+    //
+    // `--card` has non-zero chroma, so its hue is not powerless and
+    // participates at 84% weight in an oklch mix — which dragged every
+    // category's chip to roughly the same pale blue (h244–h286) and
+    // destroyed the one thing the chip is for. Alpha over the card
+    // preserves the hue exactly, which is what the flows canvas does.
+    soft: `oklch(${t.l} ${t.c} ${t.h} / 0.14)`,
     ring: `oklch(${t.l} ${t.c} ${t.h} / 0.45)`,
     text: `color-mix(in oklch, ${solid}, var(--foreground) 38%)`,
   };
@@ -440,7 +447,10 @@ export function StepIconChip({
         'flex shrink-0 items-center justify-center rounded-lg',
         className,
       )}
-      style={{ width: size, height: size, background: c.soft, color: c.solid }}
+      // `line`, never `solid`: the raw hue measures 2.2–2.9:1 for six of
+      // the nine categories against the chip in light mode, under WCAG
+      // 1.4.11's 3:1 for a meaningful glyph.
+      style={{ width: size, height: size, background: c.soft, color: c.line }}
     >
       <Icon size={iconSize} />
     </span>

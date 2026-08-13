@@ -9,13 +9,14 @@
  *   - `line`, never `solid`, paints every stroke and glyph. The raw hue
  *     fails WCAG 1.4.11 on a light card (2.53:1 for amber); `line` mixes
  *     22% toward `--foreground`, which inverts with the theme.
- *   - A branching step's yes/no ports live INSIDE the card, in a
- *     two-column footer, each under its own labelled half. Ports floating
- *     beside a card get mis-aimed.
+ *   - A branching step's yes/no ports live INSIDE the card, as two
+ *     labelled rows in its footer, each port on its own row's right
+ *     edge. Ports floating beside a card get mis-aimed.
  *   - The "continue" port — where execution rejoins the parent sequence
- *     after a branch — leaves the RIGHT edge as a dashed ring, not the
- *     bottom as a filled dot. A third output from one card reads as a
- *     mistake unless it is visibly a different kind of thing.
+ *     after a branch — leaves the BOTTOM edge as a dashed ring, not the
+ *     right as a filled dot. With the spine running left-to-right, right
+ *     IS the ordinary next-step direction, so the bypass has to leave
+ *     from somewhere else or it reads as a third branch.
  */
 
 import { Handle, Position, type NodeProps } from '@xyflow/react';
@@ -154,7 +155,7 @@ export function TriggerNodeCard({ data, selected }: NodeProps) {
       <Handle
         type="source"
         id="next"
-        position={Position.Bottom}
+        position={Position.Right}
         style={{ borderColor: 'var(--nc-line)' }}
         className={HANDLE_CLASS}
       />
@@ -190,7 +191,7 @@ export function StepNodeCard({ data, selected }: NodeProps) {
       <Handle
         type="target"
         id="in"
-        position={Position.Top}
+        position={Position.Left}
         style={{ borderColor: 'var(--nc-line)' }}
         className={HANDLE_CLASS}
       />
@@ -297,7 +298,7 @@ export function StepNodeCard({ data, selected }: NodeProps) {
         <Handle
           type="source"
           id="next"
-          position={Position.Bottom}
+          position={Position.Right}
           style={{ borderColor: 'var(--nc-line)' }}
           className={HANDLE_CLASS}
         />
@@ -309,7 +310,7 @@ export function StepNodeCard({ data, selected }: NodeProps) {
         <Handle
           type="source"
           id="continue"
-          position={Position.Right}
+          position={Position.Bottom}
           style={{ borderColor: 'var(--muted-foreground)', background: 'transparent' }}
           className={cn(HANDLE_CLASS, '!border-dashed !bg-transparent')}
         />
@@ -318,7 +319,7 @@ export function StepNodeCard({ data, selected }: NodeProps) {
         <Handle
           type="target"
           id="rejoin"
-          position={Position.Right}
+          position={Position.Bottom}
           style={{ borderColor: 'var(--muted-foreground)', background: 'transparent' }}
           className={cn(HANDLE_CLASS, '!border-dashed !bg-transparent')}
         />
@@ -340,28 +341,28 @@ function BranchFooter({ step }: { step: BuilderStep }) {
       ? Number(step.step_config.percent ?? 50)
       : null;
   return (
-    <div className="border-border relative mt-1 grid grid-cols-2 border-t">
-      <div className="bg-success-surface relative rounded-bl-[10px] px-2 py-1.5 text-center">
+    <div className="border-border relative mt-1 flex flex-col border-t">
+      <div className="bg-success-surface relative flex items-center justify-between rounded-bl-[10px] px-3 py-1.5">
         <span className="text-success text-[10px] font-bold tracking-wider uppercase">
           {percent === null ? 'Yes' : `${percent}%`}
         </span>
         <Handle
           type="source"
           id="yes"
-          position={Position.Bottom}
-          style={{ borderColor: 'var(--success)', left: '50%' }}
+          position={Position.Right}
+          style={{ borderColor: 'var(--success)', top: '50%' }}
           className={HANDLE_CLASS}
         />
       </div>
-      <div className="bg-destructive-surface border-border relative rounded-br-[10px] border-l px-2 py-1.5 text-center">
+      <div className="bg-destructive-surface border-border relative flex items-center justify-between rounded-b-[10px] border-t px-3 py-1.5">
         <span className="text-destructive text-[10px] font-bold tracking-wider uppercase">
           {percent === null ? 'No' : `${100 - percent}%`}
         </span>
         <Handle
           type="source"
           id="no"
-          position={Position.Bottom}
-          style={{ borderColor: 'var(--destructive)', left: '50%' }}
+          position={Position.Right}
+          style={{ borderColor: 'var(--destructive)', top: '50%' }}
           className={HANDLE_CLASS}
         />
       </div>

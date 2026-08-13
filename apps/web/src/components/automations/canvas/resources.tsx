@@ -22,6 +22,7 @@ import {
 } from 'react';
 
 import { createClient } from '@/lib/supabase/client';
+import type { SampleData } from '@/lib/automations/tokens';
 import type {
   AccountMember,
   Automation,
@@ -88,6 +89,20 @@ export function useAutomationResources(): AutomationResources {
   return useContext(ResourcesContext);
 }
 
+/**
+ * Real values for the token picker: a contact from this workspace, their
+ * last message, and what each step returned on recent runs.
+ *
+ * Its own context rather than a field on the resources object, because
+ * it is read by every token picker on the screen and changes on a
+ * different schedule from the pickers' option lists.
+ */
+const SampleDataContext = createContext<SampleData | undefined>(undefined);
+
+export function useSampleData(): SampleData | undefined {
+  return useContext(SampleDataContext);
+}
+
 export function AutomationResourcesProvider({
   currentAutomationId,
   children,
@@ -96,6 +111,7 @@ export function AutomationResourcesProvider({
   children: ReactNode;
 }) {
   const [state, setState] = useState<AutomationResources>(EMPTY);
+  const [sample, setSample] = useState<SampleData | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,10 +218,29 @@ export function AutomationResourcesProvider({
       }
     })();
 
+    // Fetched once per open and reused by every picker: asking per field
+    // would be one request per token on screen.
+    void (async () => {
+      try {
+        const query = currentAutomationId
+          ? `?automation_id=${encodeURIComponent(currentAutomationId)}`
+          : '';
+        const res = await fetch(`/api/automations/sample-data${query}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const json = (await res.json()) as SampleData;
+        if (!cancelled) setSample(json);
+      } catch {
+        // The picker still lists every token; it just cannot show what
+        // each one currently holds.
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [currentAutomationId]);
 
   const value = useMemo(
     () => ({ ...state, currentAutomationId }),
@@ -214,7 +249,9 @@ export function AutomationResourcesProvider({
 
   return (
     <ResourcesContext.Provider value={value}>
-      {children}
+      <SampleDataContext.Provider value={sample}>
+        {children}
+      </SampleDataContext.Provider>
     </ResourcesContext.Provider>
   );
 }

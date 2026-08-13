@@ -31,6 +31,58 @@ export interface TokenOption {
   conditional?: boolean;
 }
 
+/**
+ * Real values from this workspace, shown beside each token.
+ *
+ * From `GET /automations/sample-data`: a real contact, their last
+ * message, and what each step returned on recent runs. Real throughout —
+ * an invented "John Doe" would let somebody build a body around a field
+ * shape that does not exist.
+ */
+export interface SampleData {
+  contact?: Record<string, unknown>;
+  message?: string;
+  channel?: string | null;
+  steps?: Record<string, unknown>;
+  note?: string;
+}
+
+/**
+ * The value a token would resolve to right now, as a short string.
+ *
+ * Returns undefined when there is nothing to show — which the picker
+ * renders as blank rather than as "undefined", because a token with no
+ * sample is not the same as a token whose value is empty.
+ */
+export function sampleFor(
+  path: string,
+  sample: SampleData | undefined,
+): string | undefined {
+  if (!sample) return undefined;
+  const [ns, ...rest] = path.split('.');
+  let value: unknown;
+  if (ns === 'contact') value = dig(sample.contact, rest);
+  else if (ns === 'message') value = sample.message;
+  else if (ns === 'steps') value = dig(sample.steps, rest);
+  else if (ns === 'trigger' && rest[0] === 'channel') value = sample.channel;
+  else return undefined;
+
+  if (value === undefined || value === null || value === '') return undefined;
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return text.length > 42 ? `${text.slice(0, 41)}…` : text;
+}
+
+function dig(root: unknown, path: string[]): unknown {
+  let current: unknown = root;
+  for (const key of path) {
+    if (current === null || current === undefined || typeof current !== 'object') {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
 export interface TokenGroup {
   id: string;
   label: string;

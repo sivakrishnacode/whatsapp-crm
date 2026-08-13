@@ -39,6 +39,7 @@ import '@xyflow/react/dist/style.css';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import {
   STEP_META,
+  blankConfig,
   stepColors,
   TRIGGER_COLORS,
 } from '@/lib/automations/step-meta';
@@ -50,7 +51,9 @@ import {
   blankStep,
   connectSteps,
   deriveEdges,
+  uniqueStepKey,
   derivePositions,
+  needsAutoLayout,
   duplicateStep,
   findStep,
   flattenSteps,
@@ -68,7 +71,9 @@ import type { AutomationStepType, AutomationTriggerType } from '@/types';
 import { StepNodeCard, TriggerNodeCard } from './step-node-card';
 import { StepInspector } from './step-inspector';
 import { TriggerInspector, TRIGGER_OPTIONS } from './trigger-inspector';
-import { AddStepMenu } from './add-step-menu';
+import { AddStepDialog } from './add-step-dialog';
+import type { AppPreset } from '@/lib/automations/app-presets';
+import { Plus } from 'lucide-react';
 
 const NODE_TYPES = { step: StepNodeCard, trigger: TriggerNodeCard };
 
@@ -114,6 +119,7 @@ function CanvasInner({
 }: CanvasProps) {
   const reactFlow = useReactFlow();
   const isNarrow = useIsNarrow();
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const positions = useMemo(() => derivePositions(steps), [steps]);
   const edges = useMemo(() => deriveEdges(steps), [steps]);
@@ -160,6 +166,11 @@ function CanvasInner({
         id: step.key,
         type: 'step',
         position: positions.get(step.key) ?? { x: 0, y: 0 },
+        // Carried in the derived node, not left to React Flow's own
+        // state: local node state is REPLACED whenever the tree changes,
+        // so without this, typing one character in the inspector cleared
+        // the selection ring on the card being edited.
+        selected: step.key === selectedKey,
         data: {
           step,
           invalid: validateStep(step).length > 0,
@@ -169,7 +180,69 @@ function CanvasInner({
       });
     }
     return nodes;
-  }, [flat, positions, triggerType, channels, rejoinTargets, availabilityFor]);
+  }, [
+    flat,
+    positions,
+    triggerType,
+    channels,
+    rejoinTargets,
+    availabilityFor,
+    selectedKey,
+  ]);
+
+  // Every step ends up with a position, and it is WRITTEN BACK.
+  //
+  // Without this the canvas cannot be arranged at all: one unpositioned
+  // step — which is every newly added one — keeps derivePositions on the
+  // dagre path, and the next layout pass silently overwrites whatever
+  // was just dragged.
+  //
+  // Two cases, and they need different answers:
+  //   nothing placed  → adopt the dagre layout wholesale (a legacy
+  //                     automation, or a brand-new one).
+  //   some placed     → leave the arranged cards alone and drop the new
+  //                     one below them. Re-running dagre here would
+  //                     rearrange work somebody did by hand.
+  useEffect(() => {
+    if (!needsAutoLayout(steps)) return;
+    setSteps((current) => {
+      const all = flattenSteps(current);
+      const placed = all.filter(
+        (f) =>
+          typeof f.step.position_x === 'number' &&
+          typeof f.step.position_y === 'number',
+      );
+      let next = current;
+
+      if (placed.length === 0) {
+        for (const [key, pos] of positions) {
+          if (key === TRIGGER_KEY) continue;
+          next = setStepPosition(next, key, pos.x, pos.y);
+        }
+        return next;
+      }
+
+      // A new step lands to the RIGHT of everything else, on the same
+      // line as the last one — the direction the automation reads in.
+      const rightmost = Math.max(
+        ...placed.map((f) => f.step.position_x as number),
+      );
+      const lastRow =
+        placed.find((f) => f.step.position_x === rightmost)?.step.position_y ?? 0;
+      let column = 0;
+      for (const f of all) {
+        if (typeof f.step.position_x === 'number') continue;
+        column += 1;
+        next = setStepPosition(
+          next,
+          f.step.key,
+          rightmost + column * (NODE_WIDTH + 80),
+          lastRow as number,
+        );
+      }
+      return next;
+    });
+  }, [steps, positions, setSteps]);
 
   // React Flow needs to own node state (drag positions, selection), but
   // the tree is the source of truth — so local state is REPLACED
@@ -223,10 +296,15 @@ function CanvasInner({
   // ---- mutations -------------------------------------------------
 
   const addStep = useCallback(
-    (type: AutomationStepType) => {
+    (type: AutomationStepType, config?: Record<string, unknown>, keyHint?: string) => {
       let newKey: string | null = null;
       setSteps((current) => {
-        const step = blankStep(type, allKeys(current));
+        const taken = allKeys(current);
+        const step = blankStep(type, taken, config);
+        // An app preset names its step after the app, so the token that
+        // reads its response says `steps.slack.body` rather than
+        // `steps.http_request_3.body`.
+        if (keyHint) step.key = uniqueStepKey(keyHint, taken);
         newKey = step.key;
         // Appended to the end of the root sequence. Dropping it beside
         // whatever is selected sounds friendlier and is worse: a step
@@ -341,6 +419,23 @@ function CanvasInner({
         keyTaken={(candidate) =>
           candidate !== selected.step.key && allKeys(steps).has(candidate)
         }
+        automationId={currentAutomationId}
+        onChangeType={(type) => {
+          // The KEY is kept: tokens elsewhere point at this step by name,
+          // and silently breaking them because somebody swapped the type
+          // would be a worse surprise than losing settings that belonged
+          // to the old type anyway.
+          setSteps((current) =>
+            updateStep(current, selected.step.key, (s) => ({
+              ...s,
+              step_type: type,
+              step_config: blankConfig(type),
+              branches: STEP_META[type]?.branching
+                ? (s.branches ?? { yes: [], no: [] })
+                : undefined,
+            })),
+          );
+        }}
         onChangeConfig={(patch) =>
           setSteps((current) =>
             updateStepConfig(current, selected.step.key, patch),
@@ -373,9 +468,33 @@ function CanvasInner({
       />
     ) : null;
 
+  /**
+   * Enter / Space opens the settings for the focused card.
+   *
+   * React Flow tabs through nodes and handles Enter internally to select
+   * one, but it never calls `onNodeClick` for a keypress — so without
+   * this, a keyboard user can reach every card and cannot open any of
+   * them. Read off the focused element rather than tracking focus in
+   * state: the node wrapper is React Flow's DOM, not ours.
+   */
+  const handleCanvasKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const node = (event.target as HTMLElement)?.closest?.('.react-flow__node');
+      const id = node?.getAttribute('data-id');
+      if (!id) return;
+      event.preventDefault();
+      setSelectedKey(id);
+    },
+    [setSelectedKey],
+  );
+
   return (
     <div className="flex h-full min-h-0">
-      <div className="relative min-w-0 flex-1">
+      <div
+        className="relative min-w-0 flex-1"
+        onKeyDown={handleCanvasKeyDown}
+      >
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
@@ -425,11 +544,14 @@ function CanvasInner({
             className="!border-border !bg-card !rounded-xl !border"
           />
           <Panel position="top-left" className="!top-4 !left-4">
-            <AddStepMenu
-              onPick={addStep}
-              channels={channels}
-              triggerType={triggerType}
-            />
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-medium shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)] transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              Add step
+            </button>
           </Panel>
         </ReactFlow>
 
@@ -447,6 +569,17 @@ function CanvasInner({
       {inspectorOpen && !isNarrow && (
         <div className="w-[clamp(360px,30vw,460px)] shrink-0">{inspector}</div>
       )}
+      <AddStepDialog
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onPickStep={(type) => addStep(type)}
+        onPickApp={(preset: AppPreset) =>
+          addStep(preset.stepType, { ...preset.config }, preset.id)
+        }
+        channels={channels}
+        triggerType={triggerType}
+      />
+
       {isNarrow && (
         <Sheet
           open={inspectorOpen}

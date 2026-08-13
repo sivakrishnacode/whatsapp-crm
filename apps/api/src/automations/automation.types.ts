@@ -602,9 +602,27 @@ export interface AutomationStepJson {
 
 export interface AutomationLogStepResult {
   step_id: string;
+  /**
+   * The step's author-facing key (migration 080).
+   *
+   * Recorded ALONGSIDE step_id because ids do not survive a save
+   * (delete-then-reinsert), so a log written yesterday cannot be lined
+   * up with today's steps by id. The editor reads the last run's outputs
+   * by key to show real sample values next to each token.
+   */
+  step_key?: string | null;
   step_type: AutomationStepType;
   status: 'success' | 'skipped' | 'failed';
   detail?: string;
+  /**
+   * What the step produced, as published to `context.steps[<key>]`.
+   *
+   * ⚠️ TRUNCATED — see LOG_OUTPUT_MAX_BYTES. An HTTP step can return
+   * megabytes, and this row is read by the logs UI and the editor on
+   * every open; storing the whole body would bloat every log for a
+   * benefit that stops after the first few fields.
+   */
+  output?: unknown;
 }
 
 export interface AutomationLogJson {

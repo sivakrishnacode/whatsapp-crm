@@ -13,6 +13,7 @@ import {
   AutomationStepExecutorService,
 } from './services/automation-step-executor.service';
 import { AutomationConditionService } from './services/automation-condition.service';
+import { AutomationStepPreviewService } from './services/automation-step-preview.service';
 import { AutomationStepsTreeService } from './services/automation-steps-tree.service';
 import { AutomationsProcessor } from './automations.processor';
 import { InternalDispatchGuard } from './guards/internal-dispatch.guard';
@@ -44,6 +45,7 @@ import { QueueModule } from '../queue/queue.module';
     AutomationDispatchService,
     AutomationStepExecutorService,
     AutomationConditionService,
+    AutomationStepPreviewService,
     AutomationsProcessor,
     AutomationTriggerProcessor,
     InternalDispatchGuard,

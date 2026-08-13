@@ -16,6 +16,11 @@
 
 import { useState } from 'react';
 import { Ban, Copy, TriangleAlert, X } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { StepTestPanel } from './step-test-panel';
+import { AddStepDialog } from './add-step-dialog';
+import { STEP_CATEGORIES } from '@/lib/automations/step-meta';
+import type { AutomationStepType } from '@/types';
 import { toast } from 'sonner';
 
 import { cn } from '@/lib/utils';
@@ -42,7 +47,9 @@ export function StepInspector({
   groups,
   availability,
   keyTaken,
+  automationId,
   onChangeConfig,
+  onChangeType,
   onRename,
   onDuplicate,
   onDelete,
@@ -54,7 +61,10 @@ export function StepInspector({
   availability: Availability;
   /** Other steps' keys — a duplicate is caught here, not at save time. */
   keyTaken: (candidate: string) => boolean;
+  /** Saved automation id, so Test can read earlier steps' last outputs. */
+  automationId?: string;
   onChangeConfig: (patch: Record<string, unknown>) => void;
+  onChangeType: (type: AutomationStepType) => void;
   onRename: (key: string) => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -64,6 +74,7 @@ export function StepInspector({
   const c = stepColors(step.step_type);
   const cfg = step.step_config;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [changingType, setChangingType] = useState(false);
 
   // NOTE: the canvas mounts this with `key={step.key}`, so selecting a
   // different step gives a fresh component — scrolled to the top, with
@@ -119,8 +130,83 @@ export function StepInspector({
         />
       </div>
 
-      {/* ---- Body ---- */}
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4">
+      {/* ---- Setup / Configure / Test ----
+          Three stages in the order somebody works: what kind of step is
+          this, what does it say, and does it actually do the right
+          thing. Test is last because it is only meaningful once the
+          other two are filled in. */}
+      <Tabs
+        defaultValue="configure"
+        className="flex min-h-0 flex-1 flex-col gap-0"
+      >
+        <TabsList className="border-border bg-transparent flex-none gap-1 border-b px-3 py-1.5">
+          <TabsTrigger value="setup" className="text-xs">
+            Setup
+          </TabsTrigger>
+          <TabsTrigger value="configure" className="text-xs">
+            Configure
+          </TabsTrigger>
+          <TabsTrigger value="test" className="text-xs">
+            Test
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent
+          value="setup"
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4"
+        >
+          <FieldBlock
+            label="Step type"
+            hint="Changing this keeps the reference name, so tokens pointing at this step still resolve — but the settings start fresh, because they belong to the old type."
+          >
+            <button
+              type="button"
+              onClick={() => setChangingType(true)}
+              className="border-border bg-muted hover:border-primary/40 flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors"
+            >
+              <StepIconChip type={step.step_type} size={22} iconSize={12} className="rounded-md" />
+              <span className="text-foreground text-[12.5px]">
+                {meta?.label ?? step.step_type}
+              </span>
+              <span className="text-muted-foreground ml-auto text-[11px]">
+                Change
+              </span>
+            </button>
+          </FieldBlock>
+
+          <FieldBlock
+            label="Runs on"
+            hint="Which channels this step can actually work on, given the automation's trigger and channel scope."
+            group
+          >
+            <p
+              className={cn(
+                'text-[11.5px] leading-relaxed',
+                availability.status === 'never'
+                  ? 'text-destructive'
+                  : availability.status === 'partial'
+                    ? 'text-warning'
+                    : 'text-muted-foreground',
+              )}
+            >
+              {availability.reason ?? 'Every channel this automation runs on.'}
+            </p>
+          </FieldBlock>
+
+          <FieldBlock label="Category" group>
+            <p className="text-muted-foreground text-[11.5px]">
+              {STEP_CATEGORIES.find((c) => c.id === meta?.category)?.label ??
+                meta?.category}
+              {' · '}
+              {meta?.blurb}
+            </p>
+          </FieldBlock>
+        </TabsContent>
+
+        <TabsContent
+          value="configure"
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4"
+        >
         {/* Said here as well as on the card, because this is where
             somebody is when they are choosing the template that will
             never send. */}
@@ -249,7 +335,15 @@ export function StepInspector({
             </AccordionItem>
           )}
         </Accordion>
-      </div>
+        </TabsContent>
+
+        <TabsContent
+          value="test"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4"
+        >
+          <StepTestPanel step={step} automationId={automationId} />
+        </TabsContent>
+      </Tabs>
 
       {/* ---- Footer ---- */}
       <div className="border-border flex flex-none items-center justify-between border-t px-4 py-3">
@@ -291,6 +385,18 @@ export function StepInspector({
           </Button>
         )}
       </div>
+
+      <AddStepDialog
+        open={changingType}
+        onOpenChange={setChangingType}
+        onPickStep={(type) => onChangeType(type)}
+        onPickApp={(preset) => {
+          onChangeType(preset.stepType);
+          onChangeConfig(preset.config);
+        }}
+        channels={[]}
+        triggerType={'new_message_received'}
+      />
     </aside>
   );
 }

@@ -21,7 +21,7 @@
  *   below it shows what the value will actually read as.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 
 import { Braces, Search } from 'lucide-react';
 
@@ -33,44 +33,111 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { toTokenText, type TokenGroup } from '@/lib/automations/tokens';
+import {
+  sampleFor,
+  toTokenText,
+  type SampleData,
+  type TokenGroup,
+} from '@/lib/automations/tokens';
+import { useSampleData } from './resources';
 
 // ============================================================
 // Field block — label row (with the token button), control, helper
 // ============================================================
 
+/**
+ * Label + control + helper text, with the label ACTUALLY associated.
+ *
+ * Two renderings, because one association is wrong for half the cases:
+ *
+ *   default — the whole block is a `<label>`, so the control inside is
+ *             associated implicitly. No ids to generate, none to keep
+ *             unique across ~25 forms, and it cannot fall out of step
+ *             the way an `htmlFor` pointing at a renamed id does.
+ *
+ *   group   — a `<div role="group" aria-labelledby>`, for blocks holding
+ *             SEVERAL controls (radio sets, the weekday pills, the
+ *             key/value tables). Wrapping those in a `<label>` would
+ *             associate the text with only the first control and make
+ *             clicking the label focus something arbitrary.
+ *
+ * Without either, every one of these fields announced as "edit text,
+ * blank" to a screen reader.
+ */
 export function FieldBlock({
   label,
-  htmlFor,
   hint,
   action,
+  group,
+  htmlFor,
   children,
 }: {
   label: string;
-  htmlFor?: string;
   hint?: string;
   /** Right side of the label row — the token button lives here, never
    *  inside the input where it would overlap the text being typed. */
   action?: React.ReactNode;
+  /** Set when this block wraps more than one control. */
+  group?: boolean;
+  /**
+   * Explicit association. Required when `action` is present: a button
+   * inside a `<label>` also activates the labelled control, so the token
+   * picker would pull focus back into the input as it opened.
+   */
+  htmlFor?: string;
   children: React.ReactNode;
 }) {
-  return (
-    <div className="space-y-1.5">
-      <div className="flex min-h-[20px] items-center justify-between gap-2">
+  const generatedId = useId();
+  const labelId = htmlFor ?? generatedId;
+  // Implicit association (the block IS the label) only when it is safe:
+  // one control, no interactive chrome in the label row.
+  const implicit = !group && !htmlFor && !action;
+
+  const labelRow = (
+    <span className="flex min-h-[20px] items-center justify-between gap-2">
+      {implicit ? (
+        <span className="text-muted-foreground text-xs font-medium">
+          {label}
+        </span>
+      ) : htmlFor ? (
         <label
           htmlFor={htmlFor}
           className="text-muted-foreground text-xs font-medium"
         >
           {label}
         </label>
-        {action}
-      </div>
+      ) : (
+        <span id={labelId} className="text-muted-foreground text-xs font-medium">
+          {label}
+        </span>
+      )}
+      {action}
+    </span>
+  );
+
+  const body = (
+    <>
+      {labelRow}
       {children}
       {hint && (
-        <p className="text-muted-foreground text-[11px] leading-relaxed">
+        <span className="text-muted-foreground block text-[11px] leading-relaxed">
           {hint}
-        </p>
+        </span>
       )}
+    </>
+  );
+
+  if (implicit) {
+    return <label className="block space-y-1.5">{body}</label>;
+  }
+  return (
+    <div
+      className="block space-y-1.5"
+      {...(group || !htmlFor
+        ? { role: 'group', 'aria-labelledby': labelId }
+        : {})}
+    >
+      {body}
     </div>
   );
 }
@@ -90,6 +157,7 @@ export function TokenPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const sample = useSampleData();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -110,14 +178,18 @@ export function TokenPicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        aria-label="Insert data from an earlier step"
+        aria-label="Insert data from the trigger or an earlier step"
         aria-haspopup="dialog"
         className={cn(
-          'text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring flex h-5 w-5 items-center justify-center rounded transition-colors focus-visible:ring-2 focus-visible:outline-none',
+          // A LABELLED button, not a bare glyph. As a 20px braces icon
+          // this was the single most-missed control in the editor —
+          // people could not find how to reference earlier data at all.
+          'text-muted-foreground hover:text-foreground hover:bg-muted border-border hover:border-primary/40 focus-visible:ring-ring flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[10.5px] font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
           className,
         )}
       >
-        <Braces size={13} />
+        <Braces size={11} />
+        Insert data
       </PopoverTrigger>
       <PopoverContent
         align="end"
@@ -184,8 +256,14 @@ export function TokenPicker({
                       </span>
                     )}
                   </span>
-                  <span className="text-muted-foreground w-full truncate font-mono text-[10.5px]">
-                    {option.path}
+                  <span className="flex w-full items-baseline justify-between gap-2">
+                    <span className="text-muted-foreground truncate font-mono text-[10.5px]">
+                      {option.path}
+                    </span>
+                    {/* The real value this token holds right now. Blank
+                        when there is nothing to show — an absent sample
+                        and an empty value are different facts. */}
+                    <SampleValue path={option.path} sample={sample} />
                   </span>
                 </button>
               ))}
@@ -194,7 +272,7 @@ export function TokenPicker({
         </div>
 
         <div className="border-border text-muted-foreground border-t px-3 py-1.5 text-[10.5px]">
-          Click to insert at the cursor
+          {sample?.note ?? 'Values shown are from your latest contact and runs'}
         </div>
       </PopoverContent>
     </Popover>
@@ -231,6 +309,9 @@ export function TokenInput({
   invalid,
 }: TokenInputProps) {
   const ref = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  // Explicit id: this block carries the token button in its label row,
+  // so it cannot use the implicit `<label>`-wrapper association.
+  const controlId = useId();
   const hasTokens = value.includes('{{');
   const tokenCount = (value.match(/\{\{/g) ?? []).length;
 
@@ -273,6 +354,7 @@ export function TokenInput({
     <FieldBlock
       label={label}
       hint={hint}
+      htmlFor={controlId}
       action={
         <span className="flex items-center gap-1.5">
           {tokenCount > 0 && (
@@ -476,5 +558,23 @@ export function KeyValueTable({
         </button>
       </div>
     </FieldBlock>
+  );
+}
+
+
+/** The value a token holds right now, for the picker's right column. */
+function SampleValue({
+  path,
+  sample,
+}: {
+  path: string;
+  sample: SampleData | undefined;
+}) {
+  const value = sampleFor(path, sample);
+  if (!value) return null;
+  return (
+    <span className="text-foreground/70 max-w-[110px] shrink-0 truncate text-[10.5px]">
+      {value}
+    </span>
   );
 }
