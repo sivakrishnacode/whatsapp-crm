@@ -56,6 +56,23 @@ import type {
 export const AUTOMATIONS_PENDING_QUEUE = 'automations-pending';
 
 /**
+ * Does this step's config mention a `contact.*` token?
+ *
+ * A string scan of the serialised config, deliberately loose: a false
+ * positive costs one indexed lookup by primary key, while a false
+ * negative silently writes an empty value into somebody's spreadsheet.
+ * The asymmetry is the whole reason it is not cleverer.
+ */
+function referencesContactTokens(config: unknown): boolean {
+  if (!config) return false;
+  try {
+    return JSON.stringify(config).includes('contact.');
+  } catch {
+    return true; // unserialisable: assume yes and pay the query
+  }
+}
+
+/**
  * How many `run_automation` hops one run may make.
  *
  * Two automations that call each other is not an obviously wrong thing to
@@ -176,6 +193,33 @@ export class AutomationStepExecutorService {
           detail: 'step is switched off',
         });
         continue;
+      }
+
+      // Hydrate `{{ contact.* }}` before the step that asks for it.
+      //
+      // WHY HERE AND NOT AT DISPATCH
+      //   `context.contact` is filled ON DEMAND on purpose: most runs
+      //   never reference it, and making every run pay for a contact
+      //   lookup to serve the few that do is a cost with no reader.
+      //
+      // WHY HERE AND NOT IN EACH `case`
+      //   It used to be, and only `send_template` remembered. Every
+      //   other step — send_message, add_note, http_request and now
+      //   app_action — silently resolved `{{ contact.name }}` to an
+      //   EMPTY STRING, because that is what the engine does with a
+      //   token it cannot resolve. The failure is invisible: a Sheets
+      //   step appended a blank row and reported success, a message went
+      //   out addressed to nobody. Doing it in the loop means a step
+      //   type cannot forget.
+      //
+      // Still at most ONE query per run: `withContactTokens` returns
+      // early once `context.contact` is set, and the result is assigned
+      // back so later steps (and a resumed wait) reuse it.
+      if (args.contactId && referencesContactTokens(step.stepConfig)) {
+        args.context = await this.withContactTokens(
+          args.context,
+          args.contactId,
+        );
       }
 
       // `wait` and `wait_until` are the suspension points: enqueue and
