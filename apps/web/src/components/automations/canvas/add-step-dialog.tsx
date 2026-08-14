@@ -47,6 +47,7 @@ import {
   type CatalogApp,
 } from '@/lib/automations/connectors';
 import { useAutomationResources } from './resources';
+import { AppIcon } from '@/components/integrations/app-icon';
 import type { AutomationStepType, AutomationTriggerType } from '@/types';
 
 type RailId = StepCategory | 'all' | 'apps';
@@ -277,16 +278,11 @@ export function AddStepDialog({
                         }}
                         className="hover:bg-muted flex items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors"
                       >
-                        <span
-                          className="mt-0.5 flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
-                          style={{
-                            background: `color-mix(in oklch, ${app.hue} 16%, transparent)`,
-                            color: `color-mix(in oklch, ${app.hue}, var(--foreground) 22%)`,
-                          }}
-                          aria-hidden
-                        >
-                          {app.monogram}
-                        </span>
+                        <AppIcon
+                          app={app}
+                          size={30}
+                          className="mt-0.5 rounded-lg"
+                        />
                         <span className="min-w-0 flex-1">
                           <span className="text-foreground flex items-center gap-1.5 text-[13px] font-medium">
                             {app.name} · {action.label}

@@ -31,6 +31,7 @@ export const googleMeetConnector: Connector = {
   app: 'google_meet',
   name: 'Google Meet',
   blurb: 'Create an instant meeting link, no calendar invite',
+  icon: '/icons/google-meet.png',
   monogram: 'MT',
   hue: 'oklch(0.66 0.15 145)',
 

@@ -75,6 +75,7 @@ export class ConnectorRegistryService {
       app: connector.app,
       name: connector.name,
       blurb: connector.blurb,
+      icon: connector.icon,
       monogram: connector.monogram,
       hue: connector.hue,
       // Built field-by-field rather than by spreading and deleting

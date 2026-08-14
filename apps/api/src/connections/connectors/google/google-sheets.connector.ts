@@ -95,6 +95,7 @@ export const googleSheetsConnector: Connector = {
   app: 'google_sheets',
   name: 'Google Sheets',
   blurb: 'Append, update and look up rows in a spreadsheet',
+  icon: '/icons/google-sheets.png',
   monogram: 'GS',
   hue: 'oklch(0.62 0.15 150)',
 

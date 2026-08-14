@@ -121,7 +121,20 @@ export interface Connector {
   app: string;
   name: string;
   blurb: string;
-  /** Two-letter monogram + hue for the picker tile (no external logos). */
+  /**
+   * Product icon, served from the web app's `public/icons/`.
+   *
+   * SELF-HOSTED, NEVER HOTLINKED. A remote logo URL makes every
+   * dashboard load ping a third party (a privacy leak and a dependency
+   * on somebody else's uptime), and the file can change under us. Same
+   * arrangement as the Shopify / Woo / Zapier icons that predate this.
+   */
+  icon?: string;
+  /**
+   * Two-letter monogram + hue. Still the FALLBACK, not dead code: it is
+   * what renders if an icon file is missing or fails to load, so a
+   * broken asset degrades to a tinted initial rather than a gap.
+   */
   monogram: string;
   hue: string;
   actions: ConnectorAction[];
@@ -150,6 +163,7 @@ export interface CatalogApp {
   app: string;
   name: string;
   blurb: string;
+  icon?: string;
   monogram: string;
   hue: string;
   actions: CatalogAction[];

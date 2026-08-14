@@ -55,6 +55,8 @@ export interface CatalogApp {
   app: string;
   name: string;
   blurb: string;
+  /** Self-hosted product icon under /public/icons. Monogram is the fallback. */
+  icon?: string;
   monogram: string;
   hue: string;
   actions: CatalogAction[];

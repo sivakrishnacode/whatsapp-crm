@@ -122,6 +122,7 @@ export const gmailConnector: Connector = {
   app: 'gmail',
   name: 'Gmail',
   blurb: 'Send email from your connected Google account',
+  icon: '/icons/gmail.png',
   monogram: 'GM',
   hue: 'oklch(0.62 0.19 25)',
 

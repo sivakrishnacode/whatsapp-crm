@@ -42,6 +42,7 @@ import {
   type AppConnection,
   type CatalogApp,
 } from '@/lib/automations/connectors';
+import { AppIcon } from './app-icon';
 
 export function ConnectedApps() {
   const [apps, setApps] = useState<CatalogApp[]>([]);
@@ -154,16 +155,7 @@ export function ConnectedApps() {
             >
               <CardHeader className="pb-4">
                 <div className="flex items-start justify-between">
-                  <span
-                    className="flex size-11 items-center justify-center rounded-xl text-xs font-bold"
-                    style={{
-                      background: `color-mix(in oklch, ${app.hue} 16%, transparent)`,
-                      color: `color-mix(in oklch, ${app.hue}, var(--foreground) 22%)`,
-                    }}
-                    aria-hidden
-                  >
-                    {app.monogram}
-                  </span>
+                  <AppIcon app={app} size={44} />
 
                   {broken.length > 0 ? (
                     <Badge

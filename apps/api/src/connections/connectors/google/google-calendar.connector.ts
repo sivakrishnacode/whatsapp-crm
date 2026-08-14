@@ -91,6 +91,7 @@ export const googleCalendarConnector: Connector = {
   app: 'google_calendar',
   name: 'Google Calendar',
   blurb: 'Create and manage events, and check availability',
+  icon: '/icons/google-calendar.png',
   monogram: 'GC',
   hue: 'oklch(0.62 0.16 255)',
 
