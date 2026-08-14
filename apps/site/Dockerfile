@@ -11,17 +11,15 @@
 # less routing so /privacy and /terms resolve to their .html files.
 FROM nginx:1.27-alpine
 
-# JSON form because the source filename contains spaces — the shell form would
-# read it as two arguments and fail with "requires at least two arguments".
+# Static marketing homepage — fully crawlable by Google's renderer without
+# JavaScript. This is what serves / (converse360.in/).
 #
-# `index.html`, not the original filename: that is what the stock config serves,
-# and it also means the URL is `/` rather than `/Converse360%20Website.html`.
-#
-# Of the three exports in this directory this is the only self-contained one.
-# The two `*.dc.html` files reference `./support.js`, which is not in the repo,
-# so serving either would render a blank page. Keep that in mind if a designer
-# hands over a new export: check for external references before swapping it in.
-COPY ["apps/site/Converse360 Website.html", "/usr/share/nginx/html/index.html"]
+# The original Framer bundle ("Converse360 Website.html") is kept in the repo
+# for reference but is no longer served as index.html because the bundler
+# replaces document.documentElement at runtime, which means Google's JS renderer
+# sees the bundle content rather than any static wrapper we add — making it
+# impossible to inject stable, crawlable content into the bundle's HTML shell.
+COPY apps/site/index.html /usr/share/nginx/html/index.html
 
 # Privacy Policy and Terms of Service.
 #
