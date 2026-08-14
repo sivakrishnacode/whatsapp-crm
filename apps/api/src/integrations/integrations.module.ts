@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ZapierController } from './controllers/zapier.controller';
+import { V1Module } from '../v1/v1.module';
 
 /**
  * Third-party integrations that are neither a channel nor an app
@@ -23,6 +24,14 @@ import { ZapierController } from './controllers/zapier.controller';
  * user, with no OAuth and no stored third-party credential.
  */
 @Module({
+  // V1Module for WebhookDeliverService — a Zapier connection IS a
+  // `webhook_endpoints` row, so the controller shares the delivery
+  // service with the public API.
+  //
+  // QueueModule is deliberately NOT here any more: the only thing that
+  // needed it was the lead-fetch queue, which moved to AdsModule with
+  // migration 081.
+  imports: [V1Module],
   controllers: [ZapierController],
 })
 export class IntegrationsModule {}
