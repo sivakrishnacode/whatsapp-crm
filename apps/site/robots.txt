@@ -1,0 +1,11 @@
+# converse360.in — public marketing site.
+#
+# This has to be a real file. The nginx catch-all used to answer every unknown
+# path with the homepage, so /robots.txt returned HTML with a 200 and any
+# crawler parsing it got a page of markup instead of directives.
+#
+# Everything served from this host is public marketing and legal copy. The
+# product itself lives on app.converse360.in, which is behind a login.
+
+User-agent: *
+Allow: /

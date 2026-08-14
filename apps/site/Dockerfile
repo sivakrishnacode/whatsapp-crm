@@ -31,6 +31,11 @@ COPY apps/site/index.html /usr/share/nginx/html/index.html
 COPY apps/site/privacy.html /usr/share/nginx/html/privacy.html
 COPY apps/site/terms.html /usr/share/nginx/html/terms.html
 
+# Must be a real file for the same reason as the legal pages: the catch-all
+# below used to answer /robots.txt with the homepage and a 200, so crawlers
+# received HTML where directives were expected.
+COPY apps/site/robots.txt /usr/share/nginx/html/robots.txt
+
 # Written here rather than as a mounted config file to keep the image
 # self-contained.
 RUN printf '%s\n' \
@@ -50,9 +55,12 @@ RUN printf '%s\n' \
   '    access_log off;' \
   '  }' \
   '  # $uri.html is what makes /privacy and /terms work without the extension.' \
-  '  # It has to come before the /index.html fallback, otherwise the bundle' \
-  '  # would swallow both URLs and every legal page would render the homepage.' \
-  '  location / { try_files $uri $uri.html $uri/ /index.html; }' \
+  '  #' \
+  '  # The fallback is =404, NOT /index.html. This is a static site, not an SPA:' \
+  '  # falling back to the homepage meant every wrong URL answered 200 with the' \
+  '  # marketing page, so nothing here could ever 404 and /robots.txt served' \
+  '  # HTML. "/" itself still resolves via $uri/ plus the index directive.' \
+  '  location / { try_files $uri $uri.html $uri/ =404; }' \
   '}' \
   > /etc/nginx/conf.d/default.conf
 
