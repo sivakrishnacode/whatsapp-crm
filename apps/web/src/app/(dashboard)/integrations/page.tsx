@@ -218,21 +218,21 @@ export default function IntegrationsPage() {
     switch (status) {
       case 'connected':
         return (
-          <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-green-500 text-[10px] font-medium flex items-center gap-1">
+          <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-accent-green text-[10px] font-medium flex items-center gap-1">
             <CheckCircle className="size-3" />
             Connected
           </Badge>
         );
       case 'error':
         return (
-          <Badge variant="outline" className="border-red-500/20 bg-red-500/10 text-red-500 text-[10px] font-medium flex items-center gap-1">
+          <Badge variant="outline" className="border-red-500/20 bg-red-500/10 text-accent-red text-[10px] font-medium flex items-center gap-1">
             <AlertCircle className="size-3" />
             Error
           </Badge>
         );
       default:
         return (
-          <Badge variant="outline" className="border-gray-500/20 bg-gray-500/10 text-gray-500 text-[10px] font-medium flex items-center gap-1">
+          <Badge variant="outline" className="border-gray-500/20 bg-gray-500/10 text-muted-foreground text-[10px] font-medium flex items-center gap-1">
             <XCircle className="size-3" />
             Disconnected
           </Badge>
@@ -341,7 +341,7 @@ export default function IntegrationsPage() {
             name="WooCommerce"
             blurb="Synchronise inventory and dispatch notifications"
             badge={
-              <span className="rounded border border-amber-500/20 bg-amber-500/10 px-1 text-[9px] font-semibold text-amber-600 dark:text-amber-400">
+              <span className="rounded border border-amber-500/20 bg-amber-500/10 px-1 text-[9px] font-semibold text-accent-amber">
                 Beta
               </span>
             }
@@ -529,8 +529,8 @@ export default function IntegrationsPage() {
                             </div>
                             
                             {store.sync_error && (
-                              <div className="mt-1.5 p-3 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 rounded-lg flex gap-2 items-start">
-                                <AlertCircle className="size-4 shrink-0 mt-0.5 text-red-500" />
+                              <div className="mt-1.5 p-3 bg-red-500/10 border border-red-500/20 text-accent-red rounded-lg flex gap-2 items-start">
+                                <AlertCircle className="size-4 shrink-0 mt-0.5 text-accent-red" />
                                 <div className="space-y-1">
                                   <p className="font-semibold">Sync Error</p>
                                   <p className="text-[11px] leading-relaxed opacity-90 break-words max-w-full">

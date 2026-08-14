@@ -135,7 +135,7 @@ export function AdsEvents() {
                     // The honest reading: an installed-but-silent pixel is
                     // the usual cause of a conversion campaign that will not
                     // deliver, and Meta gives no warning about it.
-                    <span className="text-amber-600 dark:text-amber-500">
+                    <span className="text-accent-amber">
                       Never fired — check the install
                     </span>
                   )}

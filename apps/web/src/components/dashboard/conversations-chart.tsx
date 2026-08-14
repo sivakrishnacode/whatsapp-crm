@@ -285,7 +285,7 @@ function LineSvg({
         >
           <div className="font-medium text-popover-foreground">{longDayLabel(hovered.day)}</div>
           <div className="mt-1 flex flex-col gap-0.5">
-            <span className="flex items-center gap-1.5 text-blue-300">
+            <span className="flex items-center gap-1.5 text-accent-blue">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" />
               {hovered.incoming} incoming
             </span>

@@ -33,6 +33,7 @@ import {
 import type { NavIcon } from "@/lib/nav/channels";
 import { Search, ChevronDown, X, Loader2, Globe, Users } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { tint } from "@/lib/tint";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -465,8 +466,8 @@ export function ConversationList({
                   >
                     <span className="flex items-center gap-2">
                       <span
-                        className="h-2 w-2 shrink-0 rounded-full"
-                        style={{ backgroundColor: t.color }}
+                        className="tint-mark h-2 w-2 shrink-0 rounded-full"
+                        style={tint(t.color)}
                       />
                       <span className="truncate">{t.name}</span>
                     </span>
@@ -534,8 +535,8 @@ export function ConversationList({
                   className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-foreground hover:bg-muted/70"
                 >
                   <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: tag?.color ?? "var(--muted-foreground)" }}
+                    className="tint-mark h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={tint(tag?.color)}
                   />
                   <span className="max-w-24 truncate">{tag?.name ?? "Tag"}</span>
                   <X className="h-3 w-3" />

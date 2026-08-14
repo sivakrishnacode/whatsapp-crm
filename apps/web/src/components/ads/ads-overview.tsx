@@ -268,7 +268,7 @@ export function AdsOverview() {
       </header>
 
       {setup?.sandbox ? (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
+        <div className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-accent-amber">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <p>
             Sandbox mode — these campaigns and figures are fixtures, not a real
@@ -682,7 +682,7 @@ function StatusBadge({
 }) {
   const value = effectiveStatus ?? status;
   const tone = isDelivering(effectiveStatus)
-    ? 'bg-emerald-500'
+    ? 'bg-green-500'
     : value === 'DISAPPROVED' || value === 'WITH_ISSUES'
       ? 'bg-red-500'
       : value === 'IN_PROCESS' || value === 'PENDING_REVIEW'

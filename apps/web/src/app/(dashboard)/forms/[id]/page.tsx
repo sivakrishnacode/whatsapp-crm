@@ -168,8 +168,8 @@ export default function FormBuilderPage() {
               className={cn(
                 'text-xs',
                 isPublished
-                  ? 'border-green-300 text-green-700'
-                  : 'border-gray-300 text-gray-500',
+                  ? 'border-green-300 text-accent-green'
+                  : 'border-gray-300 text-muted-foreground',
               )}
             >
               {isPublished ? (
@@ -180,7 +180,7 @@ export default function FormBuilderPage() {
               {isPublished ? 'Published' : 'Draft'}
             </Badge>
             {dirty && (
-              <span className="text-xs text-amber-600">Unsaved changes</span>
+              <span className="text-xs text-accent-amber">Unsaved changes</span>
             )}
           </div>
         </div>

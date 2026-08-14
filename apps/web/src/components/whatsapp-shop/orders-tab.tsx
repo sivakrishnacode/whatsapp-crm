@@ -122,13 +122,13 @@ export function OrdersTab() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'pending':
-        return <Badge className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">Pending</Badge>;
+        return <Badge className="bg-amber-500/10 text-accent-amber border border-amber-500/20">Pending</Badge>;
       case 'confirmed':
-        return <Badge className="bg-blue-500/10 text-blue-500 border border-blue-500/20">Confirmed</Badge>;
+        return <Badge className="bg-blue-500/10 text-accent-blue border border-blue-500/20">Confirmed</Badge>;
       case 'fulfilled':
-        return <Badge className="bg-green-500/10 text-green-500 border border-green-500/20">Fulfilled</Badge>;
+        return <Badge className="bg-green-500/10 text-accent-green border border-green-500/20">Fulfilled</Badge>;
       case 'cancelled':
-        return <Badge className="bg-red-500/10 text-red-500 border border-red-500/20">Cancelled</Badge>;
+        return <Badge className="bg-red-500/10 text-accent-red border border-red-500/20">Cancelled</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }

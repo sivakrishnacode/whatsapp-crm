@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { tint } from '@/lib/tint';
 import { ContactSegment, CustomField, Tag } from '@/types';
 import {
   listSegmentsLight,
@@ -404,8 +405,8 @@ export function Step2SelectAudience({
                     }`}
                   >
                     <span
-                      className="mr-1.5 h-2 w-2 rounded-full"
-                      style={{ backgroundColor: tag.color }}
+                      className="tint-mark mr-1.5 h-2 w-2 rounded-full"
+                      style={tint(tag.color)}
                     />
                     {tag.name}
                   </button>
@@ -443,8 +444,8 @@ export function Step2SelectAudience({
                     }`}
                   >
                     <span
-                      className="mr-1.5 h-2 w-2 rounded-full"
-                      style={{ backgroundColor: segment.color }}
+                      className="tint-mark mr-1.5 h-2 w-2 rounded-full"
+                      style={tint(segment.color)}
                     />
                     {segment.name}
                     {segment.kind === 'dynamic' && (
@@ -511,7 +512,7 @@ export function Step2SelectAudience({
       {/* Exclude list — applies regardless of audience type */}
       <div className="rounded-xl border border-border bg-card/50 p-4">
         <div className="mb-3 flex items-center gap-2">
-          <X className="h-4 w-4 text-red-400" />
+          <X className="h-4 w-4 text-accent-red" />
           <p className="text-sm font-medium text-foreground">
             Exclude contacts with these tags
           </p>
@@ -529,13 +530,13 @@ export function Step2SelectAudience({
                   onClick={() => toggleExcludeTag(tag.id)}
                   className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
                     isExcluded
-                      ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                      ? 'border-red-500/30 bg-red-500/10 text-accent-red'
                       : 'border-border bg-muted text-muted-foreground hover:border-border'
                   }`}
                 >
                   <span
-                    className="mr-1.5 h-2 w-2 rounded-full"
-                    style={{ backgroundColor: tag.color }}
+                    className="tint-mark mr-1.5 h-2 w-2 rounded-full"
+                    style={tint(tag.color)}
                   />
                   {tag.name}
                 </button>
@@ -552,7 +553,7 @@ export function Step2SelectAudience({
       {segments.length > 0 && (
         <div className="rounded-xl border border-border bg-card/50 p-4">
           <div className="mb-3 flex items-center gap-2">
-            <X className="h-4 w-4 text-red-400" />
+            <X className="h-4 w-4 text-accent-red" />
             <p className="text-sm font-medium text-foreground">
               Exclude contacts in these segments
             </p>
@@ -569,13 +570,13 @@ export function Step2SelectAudience({
                   onClick={() => toggleExcludeSegment(segment.id)}
                   className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
                     isExcluded
-                      ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                      ? 'border-red-500/30 bg-red-500/10 text-accent-red'
                       : 'border-border bg-muted text-muted-foreground hover:border-border'
                   }`}
                 >
                   <span
-                    className="mr-1.5 h-2 w-2 rounded-full"
-                    style={{ backgroundColor: segment.color }}
+                    className="tint-mark mr-1.5 h-2 w-2 rounded-full"
+                    style={tint(segment.color)}
                   />
                   {segment.name}
                 </button>

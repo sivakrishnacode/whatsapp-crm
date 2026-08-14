@@ -14,9 +14,9 @@ interface MessagingTierCardProps {
 }
 
 const QUALITY_STYLES: Record<string, { dot: string; label: string; text: string }> = {
-  GREEN: { dot: "bg-emerald-500", label: "Good quality", text: "text-emerald-600 dark:text-emerald-400" },
-  YELLOW: { dot: "bg-amber-500", label: "Medium quality", text: "text-amber-600 dark:text-amber-400" },
-  RED: { dot: "bg-red-500", label: "Low quality", text: "text-red-600 dark:text-red-400" },
+  GREEN: { dot: "bg-green-500", label: "Good quality", text: "text-accent-green" },
+  YELLOW: { dot: "bg-amber-500", label: "Medium quality", text: "text-accent-amber" },
+  RED: { dot: "bg-red-500", label: "Low quality", text: "text-accent-red" },
   // Meta's value for a number it hasn't rated yet — the normal state for
   // a new connection, so it renders neutral rather than as a problem.
   NA: { dot: "bg-muted-foreground/50", label: "Not yet rated", text: "text-muted-foreground" },
@@ -40,7 +40,7 @@ function usageTone(used: number, limit: number): string {
   const pct = (used / limit) * 100;
   if (pct > 90) return "bg-red-500";
   if (pct >= 70) return "bg-amber-500";
-  return "bg-emerald-500";
+  return "bg-green-500";
 }
 
 function Banner({
@@ -53,9 +53,9 @@ function Banner({
   children: React.ReactNode;
 }) {
   const tones = {
-    info: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
-    warn: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-    danger: "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300",
+    info: "border-blue-500/30 bg-blue-500/10 text-accent-blue",
+    warn: "border-amber-500/30 bg-amber-500/10 text-accent-amber",
+    danger: "border-red-500/30 bg-red-500/10 text-accent-red",
   } as const;
 
   return (

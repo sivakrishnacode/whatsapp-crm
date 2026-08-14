@@ -168,7 +168,7 @@ export function ManageBooking({ token }: { token: string }) {
           className={
             cancelled
               ? 'flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground'
-              : 'flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-green-500/10 text-green-600 dark:text-green-400'
+              : 'flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-green-500/10 text-accent-green'
           }
         >
           {cancelled ? (

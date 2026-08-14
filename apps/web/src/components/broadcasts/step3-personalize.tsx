@@ -339,7 +339,7 @@ export function Step3Personalize({
               />
             )}
           {headerMediaError && (
-            <p className="mt-1.5 text-xs text-amber-300">
+            <p className="mt-1.5 text-xs text-accent-amber">
               {headerMediaError === 'missing'
                 ? 'A media URL is required to send this template.'
                 : 'Enter a valid http(s) URL.'}
@@ -430,7 +430,7 @@ export function Step3Personalize({
             className="mt-2 border-border bg-muted text-foreground placeholder:text-muted-foreground"
           />
           {locationIncomplete && (
-            <p className="mt-1.5 text-xs text-amber-300">
+            <p className="mt-1.5 text-xs text-accent-amber">
               All four location fields are required to send this template.
             </p>
           )}
@@ -469,7 +469,7 @@ export function Step3Personalize({
             ))}
           </div>
           {buttonParamsIncomplete && (
-            <p className="mt-1.5 text-xs text-amber-300">
+            <p className="mt-1.5 text-xs text-accent-amber">
               Every button value is required to send this template.
             </p>
           )}
@@ -613,7 +613,7 @@ export function Step3Personalize({
       </div>
 
       {unmappedKeys.length > 0 && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-accent-amber">
           Map every placeholder before continuing — still missing{' '}
           <span className="font-mono font-semibold">
             {unmappedKeys.join(', ')}

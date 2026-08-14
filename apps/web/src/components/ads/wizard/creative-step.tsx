@@ -289,7 +289,7 @@ export function CreativeStep({
             .
           </span>
           {!pixelSelected ? (
-            <span className="mt-1 block text-xs text-amber-600 dark:text-amber-500">
+            <span className="mt-1 block text-xs text-accent-amber">
               No pixel is selected for this workspace, so this goal cannot be
               used. Pick one in Setup, or choose a click-based goal in step 1.
             </span>
@@ -425,7 +425,7 @@ export function CreativeStep({
           </Button>
 
           {state.videoId && !state.videoThumbnailUrl ? (
-            <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-500">
+            <span className="flex items-center gap-1.5 text-xs text-accent-amber">
               <Loader2 className="size-3 animate-spin" />
               Meta is processing the video…
             </span>
@@ -513,7 +513,7 @@ function Counter({
         over
           ? 'text-destructive'
           : warn
-            ? 'text-amber-600 dark:text-amber-500'
+            ? 'text-accent-amber'
             : 'text-muted-foreground',
       )}
     >

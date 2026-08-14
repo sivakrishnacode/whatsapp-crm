@@ -678,7 +678,7 @@ function Stepper({ steps }: { steps: AdsSetupStatus['steps'] }) {
                 {step.label}
               </span>
               {step.blocked ? (
-                <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-500">
+                <p className="mt-0.5 text-xs text-accent-amber">
                   {step.blocked}
                 </p>
               ) : null}
@@ -724,7 +724,7 @@ function Section({
 
 const CALLOUT_TONES = {
   warning:
-    'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200',
+    'border-amber-500/40 bg-amber-500/10 text-accent-amber',
   danger:
     'border-destructive/40 bg-destructive-surface text-destructive',
   success: 'border-primary/40 bg-primary-soft text-foreground',

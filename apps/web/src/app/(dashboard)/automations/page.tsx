@@ -113,7 +113,7 @@ export default function AutomationsPage() {
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-accent-red">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
           Retry
         </Button>
@@ -321,7 +321,7 @@ function AutomationCard({
           {meta.label}
         </span>
         {automation.channels.length > 0 && (
-          <span className="inline-flex items-center rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-0.5 text-[11px] font-medium text-slate-400 capitalize">
+          <span className="inline-flex items-center rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-0.5 text-[11px] font-medium text-muted-foreground capitalize">
             {automation.channels.length === 1
               ? `${automation.channels[0]} only`
               : automation.channels.join(" + ")}

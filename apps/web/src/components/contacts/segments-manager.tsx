@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
+import { tint } from '@/lib/tint';
 import type {
   ContactSegmentWithCount,
   CustomField,
@@ -266,8 +267,8 @@ function SegmentRow({
   return (
     <div className="flex items-start gap-3 rounded-md border border-border bg-muted/10 px-3 py-2.5">
       <span
-        className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
-        style={{ backgroundColor: segment.color }}
+        className="tint-mark mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+        style={tint(segment.color)}
         aria-hidden
       />
       <div className="min-w-0 flex-1">

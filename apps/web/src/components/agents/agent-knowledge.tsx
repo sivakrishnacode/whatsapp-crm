@@ -262,7 +262,7 @@ export function AgentKnowledge({ onChanged }: { onChanged?: () => void }) {
       </div>
 
       {staleCount > 0 && (
-        <p className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 dark:text-amber-400">
+        <p className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-accent-amber">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           {staleCount} document(s) were indexed with a different embeddings model
           and are not being found by meaning. Reindex to fix.
@@ -367,9 +367,9 @@ export function AgentKnowledge({ onChanged }: { onChanged?: () => void }) {
                       variant={status.tone === 'bad' ? 'destructive' : 'outline'}
                       className={cn(
                         status.tone === 'warn' &&
-                          'border-amber-500/40 text-amber-600 dark:text-amber-400',
+                          'border-amber-500/40 text-accent-amber',
                         status.tone === 'ok' &&
-                          'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
+                          'border-green-500/40 text-accent-green',
                       )}
                     >
                       {status.label}
@@ -388,7 +388,7 @@ export function AgentKnowledge({ onChanged }: { onChanged?: () => void }) {
                   </p>
 
                   {doc.error && (
-                    <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                    <p className="mt-1 text-xs text-accent-amber">
                       {doc.error}
                     </p>
                   )}

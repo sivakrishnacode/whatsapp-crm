@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { format, formatDistanceToNow } from 'date-fns';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
+import { tint } from '@/lib/tint';
 import { formatCurrency } from '@/lib/currency';
 import { toE164 } from '@/lib/whatsapp/phone-utils';
 import {
@@ -87,6 +88,26 @@ interface ContactDetailViewProps {
 /** The four columns this panel can write. */
 type EditableField = 'name' | 'phone' | 'email' | 'company';
 
+/**
+ * Drawer width, in pixels, and the bounds a drag is clamped to.
+ *
+ * The default is wide enough for the three-column stat strip and five
+ * tabs to breathe; the floor is where the stat strip starts wrapping.
+ * Whoever is reading contact records all day gets to pick — the choice
+ * is device-scoped in localStorage, like the inbox's contact panel.
+ */
+const WIDTH_KEY = 'converse360:contacts:detail-width';
+const DEFAULT_WIDTH = 680;
+const MIN_WIDTH = 420;
+const MAX_WIDTH = 1100;
+/** Never let the drawer swallow the page it was opened from. */
+const VIEWPORT_MARGIN = 72;
+
+function clampWidth(px: number, viewport: number) {
+  const max = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, viewport - VIEWPORT_MARGIN));
+  return Math.round(Math.min(Math.max(px, MIN_WIDTH), max));
+}
+
 /** Just enough of a conversation to link to it and date it. */
 interface ConversationSummary {
   id: string;
@@ -121,6 +142,74 @@ export function ContactDetailView({
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
+
+  /**
+   * Drawer width. Server-renders at the default and reconciles to the
+   * stored value after mount — reading localStorage in the initialiser
+   * would render one width on the server and another on the client.
+   */
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [resizing, setResizing] = useState(false);
+  const widthRef = useRef(DEFAULT_WIDTH);
+
+  useEffect(() => {
+    try {
+      const stored = Number(localStorage.getItem(WIDTH_KEY));
+      if (Number.isFinite(stored) && stored > 0) {
+        const next = clampWidth(stored, window.innerWidth);
+        widthRef.current = next;
+        setWidth(next);
+      }
+    } catch {
+      // localStorage throws in private-browsing / sandboxed contexts.
+    }
+  }, []);
+
+  const applyWidth = useCallback((px: number) => {
+    const next = clampWidth(px, window.innerWidth);
+    widthRef.current = next;
+    setWidth(next);
+  }, []);
+
+  function persistWidth() {
+    try {
+      localStorage.setItem(WIDTH_KEY, String(widthRef.current));
+    } catch {
+      // Persistence is best-effort.
+    }
+  }
+
+  // Pointer events rather than mouse: one code path covers a trackpad,
+  // a stylus and a touch drag, and pointer capture keeps the drag alive
+  // when the cursor outruns the 6px handle.
+  function startResize(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setResizing(true);
+  }
+
+  function onResizeMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!resizing) return;
+    // Anchored right, so the width is whatever is left of the pointer.
+    applyWidth(window.innerWidth - e.clientX);
+  }
+
+  function endResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (!resizing) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setResizing(false);
+    persistWidth();
+  }
+
+  function onResizeKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const step = e.shiftKey ? 80 : 24;
+    if (e.key === 'ArrowLeft') applyWidth(widthRef.current + step);
+    else if (e.key === 'ArrowRight') applyWidth(widthRef.current - step);
+    else if (e.key === 'Home' || e.key === 'Enter') applyWidth(DEFAULT_WIDTH);
+    else return;
+    e.preventDefault();
+    persistWidth();
+  }
 
   // The contact's most recent conversation, if any. Two jobs: the
   // "Open chat" action in the header, and the "Last message" stat —
@@ -542,8 +631,51 @@ export function ContactDetailView({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
           side="right"
-          className="bg-popover border-border text-popover-foreground sm:max-w-xl w-full p-0"
+          // Width is inline because the primitive caps a right-side
+          // sheet at `sm:max-w-sm` through an attribute selector, which
+          // outranks any utility class we could add here.
+          style={{ width: `${width}px`, maxWidth: '100vw' }}
+          className={cn(
+            'bg-popover border-border text-popover-foreground w-full p-0',
+            // A drag must not select the text it passes over.
+            resizing && 'select-none',
+          )}
         >
+          {/* Resize handle. `touch-none` stops a touch drag scrolling
+              the panel instead of resizing it. */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize panel. Arrow keys adjust, Home resets."
+            aria-valuenow={width}
+            aria-valuemin={MIN_WIDTH}
+            aria-valuemax={MAX_WIDTH}
+            tabIndex={0}
+            onPointerDown={startResize}
+            onPointerMove={onResizeMove}
+            onPointerUp={endResize}
+            onPointerCancel={endResize}
+            onKeyDown={onResizeKeyDown}
+            onDoubleClick={() => {
+              applyWidth(DEFAULT_WIDTH);
+              persistWidth();
+            }}
+            className={cn(
+              'group absolute inset-y-0 left-0 z-50 hidden w-1.5 cursor-col-resize touch-none sm:block',
+              'before:absolute before:inset-y-0 before:-left-1 before:w-3.5 before:content-[""]',
+              'focus-visible:outline-none',
+            )}
+          >
+            <span
+              aria-hidden
+              className={cn(
+                'absolute inset-y-0 left-0 w-0.5 bg-primary transition-opacity',
+                resizing
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-60 group-focus-visible:opacity-100',
+              )}
+            />
+          </div>
           {loading || !contact ? (
             <div className="flex items-center justify-center h-full">
               <Loader2 className="size-6 animate-spin text-primary" />
@@ -1030,11 +1162,8 @@ export function ContactDetailView({
                             </p>
                             {deal.stage && (
                               <span
-                                className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                                style={{
-                                  backgroundColor: `${deal.stage.color}20`,
-                                  color: deal.stage.color,
-                                }}
+                                className="tint-chip shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                                style={tint(deal.stage.color)}
                               >
                                 {deal.stage.name}
                               </span>
@@ -1429,14 +1558,10 @@ function ChipToggle({
         'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-all',
         locked ? 'cursor-not-allowed' : 'cursor-pointer hover:border-solid',
         selected
-          ? 'border-transparent'
+          ? 'tint-chip'
           : 'border-dashed border-border text-muted-foreground hover:text-foreground',
       )}
-      style={
-        selected
-          ? { backgroundColor: `${color}24`, color, borderColor: `${color}66` }
-          : undefined
-      }
+      style={tint(color)}
     >
       {busy ? (
         <Loader2 className="size-3 shrink-0 animate-spin" />
@@ -1445,10 +1570,7 @@ function ChipToggle({
       ) : selected ? (
         <Check className="size-3 shrink-0" />
       ) : (
-        <span
-          className="size-2 shrink-0 rounded-full"
-          style={{ backgroundColor: color }}
-        />
+        <span className="tint-mark size-2 shrink-0 rounded-full" />
       )}
       {label}
     </button>

@@ -166,7 +166,7 @@ export function AgentStudio() {
         </TabsList>
 
         {!studio.configured && tab !== 'provider' && (
-          <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-600 dark:text-amber-400">
+          <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-accent-amber">
             This workspace has no AI provider key yet, so nothing here is live.
             Add one on the Provider tab — Converse360 calls the provider with
             your key, so there are no per-seat AI fees.
@@ -287,13 +287,13 @@ function resolveStatus(studio: {
       label: 'Test mode',
       hint: `Answering automatically, but only your ${count} test number${count === 1 ? '' : 's'}. Everyone else is left for your team.`,
       variant: 'outline',
-      className: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
+      className: 'border-amber-500/40 text-accent-amber',
     };
   }
   return {
     label: 'Live',
     hint: 'Answering inbound messages automatically on every connected channel.',
     variant: 'default',
-    className: 'bg-emerald-600 text-white',
+    className: 'bg-green-600 text-white',
   };
 }

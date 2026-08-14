@@ -630,7 +630,7 @@ function NodeEditSheet({
             <SheetTitle className="flex items-center gap-2 text-[11px] font-semibold tracking-wider uppercase">
               <span style={{ color: c.text }}>{meta.label}</span>
               {isEntry && (
-                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-emerald-300 uppercase">
+                <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-accent-green uppercase">
                   Entry
                 </span>
               )}
@@ -665,7 +665,7 @@ function NodeEditSheet({
             variant="ghost"
             size="sm"
             onClick={onDelete}
-            className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            className="text-accent-red hover:bg-red-500/10 hover:text-accent-red"
           >
             <Trash2 className="h-3.5 w-3.5" />
             Delete node

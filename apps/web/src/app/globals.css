@@ -48,6 +48,45 @@
   --color-info: var(--info);
   --color-info-surface: var(--info-surface);
   --color-destructive-surface: var(--destructive-surface);
+  /* Categorical hue palette — the same accent/surface shape as the
+   * status tokens above, but for identity rather than meaning: an
+   * automation trigger, a flow node kind, a channel. Ten hues, each
+   * mode-tuned, so ONE class list is correct in both modes.
+   *
+   * These exist because the raw Tailwind ramp cannot be: a pill written
+   * `bg-purple-500/10 text-purple-300` is legible on a dark card and
+   * ~2:1 on a white one, and `dark:` cannot fix it here — this app
+   * switches on `html[data-mode]` and never sets a `.dark` class, so
+   * every `dark:` utility in the tree is dead code.
+   *
+   * Hue angles are Tailwind's own 500 stops, so a pill keeps the colour
+   * people already associate with it. Ink sits at L 0.82 on dark and
+   * L 0.45–0.48 on light (the green-blue hues carry more luminance at a
+   * given L, so they sit lower); every ink/surface pair, and every ink
+   * against card / background / muted, measures ≥5.1:1. Retune with the
+   * same maths — do not eyeball a replacement. */
+  --color-accent-red: var(--accent-red);
+  --color-accent-red-surface: var(--accent-red-surface);
+  --color-accent-orange: var(--accent-orange);
+  --color-accent-orange-surface: var(--accent-orange-surface);
+  --color-accent-amber: var(--accent-amber);
+  --color-accent-amber-surface: var(--accent-amber-surface);
+  --color-accent-green: var(--accent-green);
+  --color-accent-green-surface: var(--accent-green-surface);
+  --color-accent-teal: var(--accent-teal);
+  --color-accent-teal-surface: var(--accent-teal-surface);
+  --color-accent-cyan: var(--accent-cyan);
+  --color-accent-cyan-surface: var(--accent-cyan-surface);
+  --color-accent-blue: var(--accent-blue);
+  --color-accent-blue-surface: var(--accent-blue-surface);
+  --color-accent-violet: var(--accent-violet);
+  --color-accent-violet-surface: var(--accent-violet-surface);
+  --color-accent-purple: var(--accent-purple);
+  --color-accent-purple-surface: var(--accent-purple-surface);
+  --color-accent-pink: var(--accent-pink);
+  --color-accent-pink-surface: var(--accent-pink-surface);
+  --color-accent-slate: var(--accent-slate);
+  --color-accent-slate-surface: var(--accent-slate-surface);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -139,6 +178,30 @@ html[data-mode="dark"] {
   --warning-surface: oklch(0.27 0.05 78);
   --info: oklch(0.72 0.13 250);
   --info-surface: oklch(0.27 0.05 250);
+  /* Categorical hues (see the @theme block). Same shape as the four
+   * status pairs above: light ink, dark wash of the same hue. */
+  --accent-red: oklch(0.82 0.13 25.3);
+  --accent-red-surface: oklch(0.28 0.045 25.3);
+  --accent-orange: oklch(0.82 0.13 47.6);
+  --accent-orange-surface: oklch(0.28 0.045 47.6);
+  --accent-amber: oklch(0.82 0.13 70.1);
+  --accent-amber-surface: oklch(0.28 0.045 70.1);
+  --accent-green: oklch(0.82 0.13 149.6);
+  --accent-green-surface: oklch(0.28 0.045 149.6);
+  --accent-teal: oklch(0.82 0.13 182.5);
+  --accent-teal-surface: oklch(0.28 0.045 182.5);
+  --accent-cyan: oklch(0.82 0.13 215.2);
+  --accent-cyan-surface: oklch(0.28 0.045 215.2);
+  --accent-blue: oklch(0.82 0.13 259.8);
+  --accent-blue-surface: oklch(0.28 0.045 259.8);
+  --accent-violet: oklch(0.82 0.13 292.7);
+  --accent-violet-surface: oklch(0.28 0.045 292.7);
+  --accent-purple: oklch(0.82 0.13 303.9);
+  --accent-purple-surface: oklch(0.28 0.045 303.9);
+  --accent-pink: oklch(0.82 0.13 354.3);
+  --accent-pink-surface: oklch(0.28 0.045 354.3);
+  --accent-slate: oklch(0.82 0.02 260);
+  --accent-slate-surface: oklch(0.28 0.008 260);
   --border: oklch(0.28 0.01 260);
   --input: oklch(0.28 0.01 260);
   --chart-2: oklch(0.556 0 0);
@@ -195,6 +258,31 @@ html[data-mode="light"] {
   --warning-surface: oklch(0.955 0.045 78);
   --info: oklch(0.5 0.15 250);
   --info-surface: oklch(0.955 0.03 250);
+  /* Categorical hues, mirror image of the dark block: dark ink on a
+   * pale wash. Green through cyan sit lower than the rest because those
+   * hues carry more luminance at the same L. */
+  --accent-red: oklch(0.48 0.16 25.3);
+  --accent-red-surface: oklch(0.945 0.032 25.3);
+  --accent-orange: oklch(0.48 0.16 47.6);
+  --accent-orange-surface: oklch(0.945 0.032 47.6);
+  --accent-amber: oklch(0.47 0.16 70.1);
+  --accent-amber-surface: oklch(0.945 0.032 70.1);
+  --accent-green: oklch(0.46 0.16 149.6);
+  --accent-green-surface: oklch(0.945 0.032 149.6);
+  --accent-teal: oklch(0.45 0.16 182.5);
+  --accent-teal-surface: oklch(0.945 0.032 182.5);
+  --accent-cyan: oklch(0.46 0.16 215.2);
+  --accent-cyan-surface: oklch(0.945 0.032 215.2);
+  --accent-blue: oklch(0.48 0.16 259.8);
+  --accent-blue-surface: oklch(0.945 0.032 259.8);
+  --accent-violet: oklch(0.48 0.16 292.7);
+  --accent-violet-surface: oklch(0.945 0.032 292.7);
+  --accent-purple: oklch(0.48 0.16 303.9);
+  --accent-purple-surface: oklch(0.945 0.032 303.9);
+  --accent-pink: oklch(0.48 0.16 354.3);
+  --accent-pink-surface: oklch(0.945 0.032 354.3);
+  --accent-slate: oklch(0.48 0.02 260);
+  --accent-slate-surface: oklch(0.945 0.008 260);
   --border: oklch(0.9 0.006 260);
   --input: oklch(0.9 0.006 260);
   --chart-2: oklch(0.6 0.1 260);
@@ -342,5 +430,80 @@ html[data-theme="rose"] {
    * arrows at each end are the most dated part of the native bar. */
   ::-webkit-scrollbar-button {
     display: none;
+  }
+}
+/* ============================================================
+ * TINTS — chips coloured by a hex the USER picked
+ *
+ * Tags, segments and pipeline stages store a colour in the
+ * database, so their hue cannot come from a token. The pattern
+ * these replace — `backgroundColor: color + '20', color: color` —
+ * is legible only on dark: a stored `#F472B6` as ink on its own
+ * 12% wash measures about 2:1 on a white card, and there is no
+ * `dark:` escape hatch in this app (mode is `html[data-mode]`,
+ * never a `.dark` class, so `dark:` never fires).
+ *
+ * So the hue arrives as `--tint` and the STYLESHEET decides how to
+ * render it per mode: the wash is mixed into the card rather than
+ * alpha-composited (an alpha of a light hue lightens a dark card,
+ * which is the wrong direction), and the ink's lightness is
+ * clamped — capped on light, floored on dark — which keeps the
+ * hue's identity where mixing toward black or white muddies it.
+ *
+ * `oklch(from …)` is relative colour syntax (Chrome 119+, Safari
+ * 16.4+, Firefox 128+). Anywhere it is not understood the whole
+ * declaration is dropped at parse time and the `color` above it
+ * stands, which is why that fallback is the foreground token and
+ * not `var(--tint)`: worst case a chip loses its hue, never its
+ * legibility.
+ * ============================================================ */
+
+@layer components {
+  /* The unsupported path, stated explicitly. Shadowing a declaration
+   * with a later one is the usual way to write a CSS fallback, but it
+   * does not survive this build: Lightning CSS treats the modern
+   * declaration as valid, drops the one it shadows, and invents its own
+   * `background-color: var(--tint)` fallback — a solid saturated fill
+   * under hue-coloured text. So the tint lives inside @supports and a
+   * browser that cannot do the maths gets a plain neutral chip, which
+   * is legible in both modes and merely colourless. */
+  .tint-chip {
+    background-color: var(--muted);
+    border-color: var(--border);
+    color: var(--card-foreground);
+  }
+
+  @supports (color: color-mix(in oklab, red, red)) and
+    (color: oklch(from red l c h)) {
+    .tint-chip {
+      background-color: color-mix(in oklab, var(--tint) 16%, var(--card));
+      border-color: color-mix(in oklab, var(--tint) 38%, var(--card));
+      color: oklch(from var(--tint) max(l, 0.78) c h);
+    }
+
+    html[data-mode='light'] .tint-chip {
+      background-color: color-mix(in oklab, var(--tint) 13%, var(--card));
+      border-color: color-mix(in oklab, var(--tint) 30%, var(--card));
+      color: oklch(from var(--tint) min(l, 0.47) c h);
+    }
+  }
+
+  /* The same clamp for a bare swatch of the hue — the dot that stands
+   * in for a chip in a dense list, a pipeline stage's rail. A pastel
+   * dot on white is a smudge; a near-black one on a dark row is a
+   * hole. Here the raw hue IS an honest fallback: nothing has to be
+   * read against it. */
+  .tint-mark {
+    background-color: var(--tint);
+  }
+
+  @supports (color: oklch(from red l c h)) {
+    .tint-mark {
+      background-color: oklch(from var(--tint) max(l, 0.62) c h);
+    }
+
+    html[data-mode='light'] .tint-mark {
+      background-color: oklch(from var(--tint) min(l, 0.62) c h);
+    }
   }
 }

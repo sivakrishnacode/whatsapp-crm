@@ -27,11 +27,11 @@ import type { WizardState } from './wizard-state';
 
 /** Category → chip colour, matching the reference's colour-coded chips. */
 const CATEGORY_TONE: Record<string, string> = {
-  interests: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  interests: 'border-amber-500/40 bg-amber-500/10 text-accent-amber',
   demographics:
-    'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300',
+    'border-violet-500/40 bg-violet-500/10 text-accent-violet',
   behaviors:
-    'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+    'border-green-500/40 bg-green-500/10 text-accent-green',
 };
 
 /**
@@ -181,7 +181,7 @@ export function TargetingStep({
             ) : null}
           </div>
           {savedLocked ? (
-            <span className="mt-1.5 block text-xs text-amber-600 dark:text-amber-500">
+            <span className="mt-1.5 block text-xs text-accent-amber">
               A saved audience already contains its own locations, ages and
               interests, so those fields are disabled below. Meta rejects the
               two together.
@@ -676,7 +676,7 @@ function PlacementGroup({
             })}
           </div>
           {selected.length === 0 ? (
-            <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-500">
+            <p className="mt-1.5 text-xs text-accent-amber">
               With no placement selected Meta chooses for you.
             </p>
           ) : null}
@@ -751,7 +751,7 @@ function InterestPicker({
                     ? 'bg-amber-500'
                     : key === 'demographics'
                       ? 'bg-violet-500'
-                      : 'bg-emerald-500',
+                      : 'bg-green-500',
                 )}
               />
               {key === 'behaviors' ? 'behaviours' : key}

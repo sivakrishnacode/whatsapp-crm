@@ -286,7 +286,7 @@ export function AgentActions({ onChanged }: { onChanged?: () => void }) {
                       Last call failed: {action.last_error}
                     </p>
                   ) : action.last_used_at ? (
-                    <p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                    <p className="mt-2 flex items-center gap-1.5 text-xs text-accent-green">
                       <CheckCircle2 className="size-3.5" />
                       Last call succeeded
                       {action.last_status ? ` (HTTP ${action.last_status})` : ''}
@@ -418,7 +418,7 @@ function ActionTester({
             className={cn(
               'text-xs font-medium',
               result.ok
-                ? 'text-emerald-600 dark:text-emerald-400'
+                ? 'text-accent-green'
                 : 'text-destructive',
             )}
           >

@@ -67,7 +67,7 @@ function TaskRowItem({ row, depth }: { row: TaskRow; depth: number }) {
             className={cn(
               "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium",
               row.status === "needs_input"
-                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                ? "bg-amber-500/10 text-accent-amber"
                 : "text-muted-foreground",
             )}
           >
@@ -91,8 +91,8 @@ function StatusIcon({ status }: { status: TaskStatus }) {
   if (status === "running")
     return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
   if (status === "needs_input")
-    return <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+    return <AlertTriangle className="h-3.5 w-3.5 text-accent-amber" />
   if (status === "failed")
-    return <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
-  return <Check className="h-3.5 w-3.5 text-emerald-500" />
+    return <AlertTriangle className="h-3.5 w-3.5 text-accent-red" />
+  return <Check className="h-3.5 w-3.5 text-accent-green" />
 }

@@ -173,7 +173,7 @@ export function TemplateBodyEditor({
 
       <p
         className={`text-right text-[11px] ${
-          overCap ? 'text-amber-400' : 'text-muted-foreground'
+          overCap ? 'text-accent-amber' : 'text-muted-foreground'
         }`}
       >
         {value.length} / {maxLength} characters

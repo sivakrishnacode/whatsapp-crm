@@ -58,7 +58,7 @@ export default function AutomationLogsPage({
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-3">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-accent-red">{error}</p>
         <Button variant="outline" onClick={() => router.push("/automations")}>
           Back
         </Button>
@@ -122,7 +122,7 @@ export default function AutomationLogsPage({
                     <div className="flex items-center gap-2 truncate text-sm font-medium text-foreground">
                       {log.contact?.name ?? log.contact?.ig_username ?? log.contact?.phone ?? "Unknown contact"}
                       {log.channel && (
-                        <span className="inline-flex items-center rounded-full border border-slate-500/20 bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium capitalize text-slate-400">
+                        <span className="inline-flex items-center rounded-full border border-slate-500/20 bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium capitalize text-muted-foreground">
                           {log.channel}
                         </span>
                       )}
@@ -139,7 +139,7 @@ export default function AutomationLogsPage({
                 {isOpen && (
                   <div className="border-t border-border px-4 py-3">
                     {log.error_message && (
-                      <p className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                      <p className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-accent-red">
                         {log.error_message}
                       </p>
                     )}
@@ -167,8 +167,8 @@ function StatusBadge({ status }: { status: AutomationLog["status"] }) {
     status === "success"
       ? "border-primary/30 bg-primary/10 text-primary"
       : status === "partial"
-      ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
-      : "border-red-500/30 bg-red-500/10 text-red-300"
+      ? "border-amber-500/30 bg-amber-500/10 text-accent-amber"
+      : "border-red-500/30 bg-red-500/10 text-accent-red"
   return (
     <span
       className={cn(
@@ -198,7 +198,7 @@ function StepRow({ result }: { result: AutomationLogStepResult }) {
             ? "bg-primary/20 text-primary"
             : skipped
               ? "bg-warning-surface text-warning"
-              : "bg-red-500/20 text-red-400",
+              : "bg-red-500/20 text-accent-red",
         )}
         aria-hidden
       >

@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
+import { tint } from '@/lib/tint';
 import { collectTemplateSlots } from '@/lib/whatsapp/template-slots';
 import type { TokenGroup } from '@/lib/automations/tokens';
 import type { AutomationStepType, MessageTemplate } from '@/types';
@@ -594,8 +595,8 @@ function TagFields({ config, onChange }: StepFieldsProps) {
       ) : (
         <div className="flex items-center gap-2">
           <span
-            className="border-border h-3 w-3 shrink-0 rounded-full border"
-            style={{ backgroundColor: selected?.color ?? 'transparent' }}
+            className="tint-mark border-border h-3 w-3 shrink-0 rounded-full border"
+            style={tint(selected?.color)}
             aria-hidden
           />
           <select

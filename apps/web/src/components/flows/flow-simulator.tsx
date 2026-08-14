@@ -357,7 +357,7 @@ export function FlowSimulator({ open, onClose }: { open: boolean; onClose: () =>
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") submitInput(); }}
                 placeholder="Type a reply…"
-                className="flex-1 rounded-full bg-white px-4 py-2 text-[13px] text-gray-800 outline-none shadow-sm placeholder:text-gray-400"
+                className="flex-1 rounded-full bg-white px-4 py-2 text-[13px] text-foreground outline-none shadow-sm placeholder:text-muted-foreground"
               />
               <button
                 type="button"
@@ -384,15 +384,15 @@ export function FlowSimulator({ open, onClose }: { open: boolean; onClose: () =>
           />
           <div className="relative z-10 w-[360px] max-h-[70vh] overflow-y-auto rounded-t-2xl bg-white pb-safe">
             <div className="sticky top-0 flex items-center justify-between bg-white px-4 py-4 border-b border-gray-100">
-              <span className="text-[15px] font-semibold text-gray-800">Select an option</span>
-              <button type="button" onClick={() => setListOpen(false)} className="text-gray-400 hover:text-gray-600">
+              <span className="text-[15px] font-semibold text-foreground">Select an option</span>
+              <button type="button" onClick={() => setListOpen(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="h-5 w-5" />
               </button>
             </div>
             {status.sections.map((sec, si) => (
               <div key={si}>
                 {sec.title && (
-                  <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">{sec.title}</p>
+                  <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{sec.title}</p>
                 )}
                 {sec.rows.map((row) => (
                   <button
@@ -401,9 +401,9 @@ export function FlowSimulator({ open, onClose }: { open: boolean; onClose: () =>
                     onClick={() => tapListRow(row)}
                     className="flex w-full flex-col items-start px-4 py-3 text-left hover:bg-gray-50 active:bg-gray-100 border-b border-gray-50"
                   >
-                    <span className="text-[14px] font-medium text-gray-800">{row.title}</span>
+                    <span className="text-[14px] font-medium text-foreground">{row.title}</span>
                     {row.description && (
-                      <span className="text-[12px] text-gray-500 mt-0.5">{row.description}</span>
+                      <span className="text-[12px] text-muted-foreground mt-0.5">{row.description}</span>
                     )}
                   </button>
                 ))}
@@ -423,8 +423,8 @@ function MsgBubble({ m }: { m: Msg }) {
     return (
       <div className="flex max-w-[80%] flex-col items-start">
         <div className="rounded-[4px_16px_16px_16px] bg-white px-3.5 py-2 shadow-sm">
-          <p className="text-[13.5px] leading-relaxed text-gray-800 whitespace-pre-wrap">{m.text}</p>
-          <p className="mt-0.5 text-right text-[10px] text-gray-400">now</p>
+          <p className="text-[13.5px] leading-relaxed text-foreground whitespace-pre-wrap">{m.text}</p>
+          <p className="mt-0.5 text-right text-[10px] text-muted-foreground">now</p>
         </div>
       </div>
     );
@@ -454,8 +454,8 @@ function MsgBubble({ m }: { m: Msg }) {
               />
               {/* Fallback shown only if img fails */}
               <div className="hidden items-center justify-center gap-2 bg-gray-100 px-4 py-8">
-                <ImageIcon className="h-8 w-8 text-gray-400" />
-                <span className="text-[12px] text-gray-500">Image preview unavailable</span>
+                <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                <span className="text-[12px] text-muted-foreground">Image preview unavailable</span>
               </div>
             </div>
           )}
@@ -463,22 +463,22 @@ function MsgBubble({ m }: { m: Msg }) {
           {/* No URL set */}
           {isImage && !m.url && (
             <div className="flex items-center justify-center gap-2 bg-gray-100 px-4 py-8">
-              <ImageIcon className="h-8 w-8 text-gray-400" />
-              <span className="text-[12px] text-gray-500">No image URL set</span>
+              <ImageIcon className="h-8 w-8 text-muted-foreground" />
+              <span className="text-[12px] text-muted-foreground">No image URL set</span>
             </div>
           )}
 
           {/* Video / document: show icon + name/url */}
           {!isImage && (
             <div className="flex items-center gap-3 bg-gray-100 px-4 py-4">
-              <Icon className="h-9 w-9 shrink-0 text-gray-400" />
+              <Icon className="h-9 w-9 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
-                <p className="text-[12px] font-semibold text-gray-700 capitalize">{m.mediaType}</p>
+                <p className="text-[12px] font-semibold text-foreground capitalize">{m.mediaType}</p>
                 {m.filename
-                  ? <p className="truncate text-[11px] text-gray-500">{m.filename}</p>
+                  ? <p className="truncate text-[11px] text-muted-foreground">{m.filename}</p>
                   : m.url
-                    ? <p className="truncate text-[11px] text-gray-500">{m.url.split("/").pop()}</p>
-                    : <p className="text-[11px] text-gray-400 italic">No file set</p>
+                    ? <p className="truncate text-[11px] text-muted-foreground">{m.url.split("/").pop()}</p>
+                    : <p className="text-[11px] text-muted-foreground italic">No file set</p>
                 }
               </div>
             </div>
@@ -487,10 +487,10 @@ function MsgBubble({ m }: { m: Msg }) {
           {/* Caption */}
           {m.caption && (
             <div className="px-3.5 py-2">
-              <p className="text-[13px] text-gray-700">{m.caption}</p>
+              <p className="text-[13px] text-foreground">{m.caption}</p>
             </div>
           )}
-          <p className="px-3.5 pb-2 text-right text-[10px] text-gray-400">now</p>
+          <p className="px-3.5 pb-2 text-right text-[10px] text-muted-foreground">now</p>
         </div>
       </div>
     );
@@ -499,7 +499,7 @@ function MsgBubble({ m }: { m: Msg }) {
   if (m.from === "bot" && m.kind === "info") {
     return (
       <div className="flex justify-center">
-        <span className="rounded-full bg-black/10 px-3 py-1 text-[11px] text-gray-500 italic">{m.text}</span>
+        <span className="rounded-full bg-black/10 px-3 py-1 text-[11px] text-muted-foreground italic">{m.text}</span>
       </div>
     );
   }
@@ -508,8 +508,8 @@ function MsgBubble({ m }: { m: Msg }) {
     return (
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-[16px_4px_16px_16px] px-3.5 py-2 shadow-sm" style={{ background: "#dcf8c6" }}>
-          <p className="text-[13.5px] leading-relaxed text-gray-800 whitespace-pre-wrap">{m.text}</p>
-          <p className="mt-0.5 text-right text-[10px] text-gray-500">now ✓✓</p>
+          <p className="text-[13.5px] leading-relaxed text-foreground whitespace-pre-wrap">{m.text}</p>
+          <p className="mt-0.5 text-right text-[10px] text-muted-foreground">now ✓✓</p>
         </div>
       </div>
     );
@@ -521,7 +521,7 @@ function MsgBubble({ m }: { m: Msg }) {
       <div className="flex justify-center">
         <div className={cn(
           "rounded-xl px-4 py-3 text-center text-[12px] shadow-sm max-w-[85%]",
-          isHandoff ? "bg-amber-50 text-amber-800 border border-amber-200" : "bg-gray-100 text-gray-600",
+          isHandoff ? "bg-amber-50 text-accent-amber border border-amber-200" : "bg-gray-100 text-foreground",
         )}>
           <p className="font-semibold">{isHandoff ? "🤝 Handoff" : "🏁 Ended"}</p>
           <p className="mt-0.5 whitespace-pre-wrap opacity-80">{m.text}</p>
@@ -533,7 +533,7 @@ function MsgBubble({ m }: { m: Msg }) {
   if (m.from === "system" && m.kind === "error") {
     return (
       <div className="flex justify-center">
-        <span className="rounded-lg bg-red-50 px-3 py-1.5 text-[12px] text-red-600 border border-red-200">{m.text}</span>
+        <span className="rounded-lg bg-red-50 px-3 py-1.5 text-[12px] text-accent-red border border-red-200">{m.text}</span>
       </div>
     );
   }

@@ -515,7 +515,7 @@ function Notice({
     <div
       className={
         tone === 'warn'
-          ? 'flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-2.5 text-[11px] text-amber-700 dark:text-amber-400'
+          ? 'flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-2.5 text-[11px] text-accent-amber'
           : 'text-muted-foreground border-border bg-muted/40 flex items-start gap-2 rounded-lg border p-2.5 text-[11px]'
       }
     >

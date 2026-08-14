@@ -24,6 +24,7 @@ import {
 } from '@/lib/contacts/resolve-import-tags';
 import { toE164 } from '@/lib/whatsapp/phone-utils';
 import { cn } from '@/lib/utils';
+import { tint } from '@/lib/tint';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -98,17 +99,18 @@ function ImportPreviewTags({
         return (
           <span
             key={name}
-            className="inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[10px] leading-none font-medium"
-            style={{
-              backgroundColor: `${color}18`,
-              color,
-              border: `1px solid ${color}${isKnown ? '55' : '30'}`,
-            }}
+            className={cn(
+              'tint-chip inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] leading-none font-medium',
+              // A tag that doesn't exist yet is drawn dashed — it's about
+              // to be created, not matched.
+              isKnown ? 'border-solid' : 'border-dashed',
+            )}
+            style={tint(color)}
             title={isKnown ? name : `${name} (will be created on import)`}
           >
             <span
-              className="size-1.5 shrink-0 rounded-full"
-              style={{ backgroundColor: color }}
+              className="tint-mark size-1.5 shrink-0 rounded-full"
+              style={tint(color)}
             />
             <span className="truncate">{name}</span>
           </span>
@@ -718,26 +720,26 @@ export function ImportModal({
                   </div>
                 )}
                 {result.tagsAssigned > 0 && (
-                  <div className="flex items-center gap-1.5 text-sm text-cyan-400">
+                  <div className="flex items-center gap-1.5 text-sm text-accent-cyan">
                     <CheckCircle className="size-4 shrink-0" />
                     {result.tagsAssigned} tag
                     {result.tagsAssigned !== 1 ? 's' : ''} assigned
                   </div>
                 )}
                 {result.segmentAdded > 0 && (
-                  <div className="flex items-center gap-1.5 text-sm text-cyan-400">
+                  <div className="flex items-center gap-1.5 text-sm text-accent-cyan">
                     <CheckCircle className="size-4 shrink-0" />
                     {result.segmentAdded} added to segment
                   </div>
                 )}
                 {result.skipped > 0 && (
-                  <div className="flex items-center gap-1.5 text-sm text-amber-400">
+                  <div className="flex items-center gap-1.5 text-sm text-accent-amber">
                     <AlertTriangle className="size-4 shrink-0" />
                     {result.skipped} skipped
                   </div>
                 )}
                 {result.failed > 0 && (
-                  <div className="flex items-center gap-1.5 text-sm text-red-400">
+                  <div className="flex items-center gap-1.5 text-sm text-accent-red">
                     <XCircle className="size-4 shrink-0" />
                     {result.failed} failed
                   </div>

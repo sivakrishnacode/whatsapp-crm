@@ -189,12 +189,12 @@ export function funnelStateLabel(state: IgFunnelRunState): string {
  */
 export function handleTint(handle: string | null): string {
   const palette = [
-    'bg-rose-500/15 text-rose-600 dark:text-rose-400',
-    'bg-amber-500/15 text-amber-600 dark:text-amber-400',
-    'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
-    'bg-sky-500/15 text-sky-600 dark:text-sky-400',
-    'bg-violet-500/15 text-violet-600 dark:text-violet-400',
-    'bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400',
+    'bg-red-500/15 text-accent-red',
+    'bg-amber-500/15 text-accent-amber',
+    'bg-green-500/15 text-accent-green',
+    'bg-cyan-500/15 text-accent-cyan',
+    'bg-violet-500/15 text-accent-violet',
+    'bg-purple-500/15 text-accent-purple',
   ];
   if (!handle) return palette[0];
   let hash = 0;

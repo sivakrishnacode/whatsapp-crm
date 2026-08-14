@@ -170,9 +170,9 @@ export default function FormSubmissionsPage() {
                       variant="outline"
                       className={
                         sub.status === 'new'
-                          ? 'border-blue-300 text-blue-700 text-xs'
+                          ? 'border-blue-300 text-accent-blue text-xs'
                           : sub.status === 'spam'
-                            ? 'border-red-300 text-red-700 text-xs'
+                            ? 'border-red-300 text-accent-red text-xs'
                             : 'text-xs'
                       }
                     >

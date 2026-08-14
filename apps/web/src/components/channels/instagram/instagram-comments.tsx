@@ -467,7 +467,7 @@ export function InstagramComments() {
             <span
               className={cn(
                 'size-2 rounded-full',
-                live ? 'animate-pulse bg-emerald-500' : 'bg-muted-foreground/40'
+                live ? 'animate-pulse bg-green-500' : 'bg-muted-foreground/40'
               )}
             />
             Live

@@ -313,7 +313,7 @@ export default function BroadcastDetailPage() {
   if (error || !broadcast) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error ?? 'Broadcast not found'}</p>
+        <p className="text-sm text-accent-red">{error ?? 'Broadcast not found'}</p>
         <Button variant="outline" onClick={() => router.push('/channels/whatsapp/broadcasts')}>
           Back to Broadcasts
         </Button>
@@ -368,7 +368,7 @@ export default function BroadcastDetailPage() {
             funnel inconsistent. */}
         {confirmDelete ? (
           <div className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-sm">
-            <span className="text-red-300">Delete this broadcast?</span>
+            <span className="text-accent-red">Delete this broadcast?</span>
             <Button
               variant="outline"
               size="sm"
@@ -400,7 +400,7 @@ export default function BroadcastDetailPage() {
                 ? 'Cannot delete while a broadcast is queued or sending'
                 : 'Delete this broadcast'
             }
-            className="border-red-500/30 bg-transparent text-red-400 hover:bg-red-500/10 disabled:opacity-40"
+            className="border-red-500/30 bg-transparent text-accent-red hover:bg-red-500/10 disabled:opacity-40"
           >
             <Trash2 className="h-3.5 w-3.5" />
             Delete
@@ -429,28 +429,28 @@ export default function BroadcastDetailPage() {
           value={broadcast.delivered_count}
           total={broadcast.total_recipients}
           icon={<CheckCheck className="h-4 w-4" />}
-          color="bg-teal-500/10 text-teal-400"
+          color="bg-teal-500/10 text-accent-teal"
         />
         <StatCard
           label="Read"
           value={broadcast.read_count}
           total={broadcast.total_recipients}
           icon={<Eye className="h-4 w-4" />}
-          color="bg-blue-500/10 text-blue-400"
+          color="bg-blue-500/10 text-accent-blue"
         />
         <StatCard
           label="Replied"
           value={broadcast.replied_count}
           total={broadcast.total_recipients}
           icon={<MessageCircle className="h-4 w-4" />}
-          color="bg-indigo-500/10 text-indigo-400"
+          color="bg-indigo-500/10 text-accent-blue"
         />
         <StatCard
           label="Failed"
           value={broadcast.failed_count}
           total={broadcast.total_recipients}
           icon={<AlertCircle className="h-4 w-4" />}
-          color="bg-red-500/10 text-red-400"
+          color="bg-red-500/10 text-accent-red"
         />
       </div>
 
@@ -585,7 +585,7 @@ export default function BroadcastDetailPage() {
                           ? new Date(recipient.read_at).toLocaleString()
                           : '-'}
                       </TableCell>
-                      <TableCell className="max-w-xs truncate text-xs text-red-400">
+                      <TableCell className="max-w-xs truncate text-xs text-accent-red">
                         {recipient.error_message ?? '-'}
                       </TableCell>
                     </TableRow>

@@ -201,7 +201,7 @@ export default function CampaignSchedulesPage() {
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-accent-red">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
           Retry
         </Button>
@@ -320,12 +320,12 @@ export default function CampaignSchedulesPage() {
                     <span
                       className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
                         schedule.status === 'running'
-                          ? 'border-green-500/20 bg-green-500/10 text-green-500'
+                          ? 'border-green-500/20 bg-green-500/10 text-accent-green'
                           : schedule.status === 'pending'
-                          ? 'border-blue-500/20 bg-blue-500/10 text-blue-500'
+                          ? 'border-blue-500/20 bg-blue-500/10 text-accent-blue'
                           : schedule.status === 'completed'
-                          ? 'border-gray-500/20 bg-gray-500/10 text-gray-500'
-                          : 'border-red-500/20 bg-red-500/10 text-red-500'
+                          ? 'border-gray-500/20 bg-gray-500/10 text-muted-foreground'
+                          : 'border-red-500/20 bg-red-500/10 text-accent-red'
                       }`}
                     >
                       {schedule.status}

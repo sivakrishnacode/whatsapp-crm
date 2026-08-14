@@ -226,7 +226,7 @@ export default function FormsPage() {
       {showTemplates && (
         <section className="flex flex-col gap-3">
           <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-violet-500" />
+            <Sparkles className="h-4 w-4 text-accent-violet" />
             <h2 className="text-sm font-semibold text-muted-foreground">
               Quick-start templates
             </h2>
@@ -243,7 +243,7 @@ export default function FormsPage() {
                   onClick={() => startFromTemplateDirectly(slug)}
                   className="group flex flex-col items-start rounded-xl border bg-card p-4 text-left shadow-xs transition-all hover:border-violet-400 hover:shadow-sm"
                 >
-                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 transition-colors group-hover:bg-violet-500/20">
+                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/10 text-accent-violet transition-colors group-hover:bg-violet-500/20">
                     <IconComponent className="h-5 w-5" />
                   </div>
                   <div className="text-sm font-semibold text-foreground">
@@ -252,7 +252,7 @@ export default function FormsPage() {
                   <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
                     {tmpl.description}
                   </p>
-                  <span className="mt-3 text-xs font-medium text-violet-600 opacity-0 transition-opacity group-hover:opacity-100">
+                  <span className="mt-3 text-xs font-medium text-accent-violet opacity-0 transition-opacity group-hover:opacity-100">
                     Use template →
                   </span>
                 </button>
@@ -265,7 +265,7 @@ export default function FormsPage() {
       {/* Empty state */}
       {forms.length === 0 ? (
         <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed py-16 text-center bg-card/40">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-500/10 text-accent-violet">
             <FileText className="h-6 w-6" />
           </div>
           <div>
@@ -292,7 +292,7 @@ export default function FormsPage() {
                   variant="outline"
                   className={cn(
                     'text-xs',
-                    form.kind === 'booking' && 'border-violet-300 text-violet-600',
+                    form.kind === 'booking' && 'border-violet-300 text-accent-violet',
                   )}
                 >
                   {form.kind === 'booking' ? 'Booking form' : 'Form'}
@@ -302,8 +302,8 @@ export default function FormsPage() {
                   className={cn(
                     'text-xs',
                     form.status === 'published'
-                      ? 'border-green-300 text-green-700'
-                      : 'border-gray-300 text-gray-500',
+                      ? 'border-green-300 text-accent-green'
+                      : 'border-gray-300 text-muted-foreground',
                   )}
                 >
                   {form.status === 'published' ? (
@@ -468,7 +468,7 @@ export default function FormsPage() {
                     >
                       <div
                         className={cn(
-                          'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-violet-600',
+                          'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-accent-violet',
                           isSelected ? 'bg-violet-500/20' : 'bg-violet-500/10',
                         )}
                       >

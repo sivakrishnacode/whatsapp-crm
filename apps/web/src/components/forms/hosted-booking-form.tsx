@@ -137,7 +137,7 @@ function Confirmation({ booking }: { booking: BookingConfirmation }) {
 
   return (
     <div className="flex flex-col items-center gap-4 py-10 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500/10 text-green-600 dark:text-green-400">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500/10 text-accent-green">
         <CalendarCheck className="h-9 w-9" />
       </div>
       <div>

@@ -34,16 +34,16 @@ export const broadcastStatusConfig: Record<BroadcastStatus, StatusDisplay> = {
     // start moving. The distinct label is what tells support the
     // difference between "waiting for a worker" and "actively sending".
     label: "Queued",
-    classes: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    classes: "bg-amber-500/10 text-accent-amber border-amber-500/20",
     pulse: true,
   },
   scheduled: {
     label: "Scheduled",
-    classes: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    classes: "bg-blue-500/10 text-accent-blue border-blue-500/20",
   },
   sending: {
     label: "Sending",
-    classes: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+    classes: "bg-amber-500/10 text-accent-amber border-amber-500/20",
     pulse: true,
   },
   sent: {
@@ -52,7 +52,7 @@ export const broadcastStatusConfig: Record<BroadcastStatus, StatusDisplay> = {
   },
   failed: {
     label: "Failed",
-    classes: "bg-red-500/10 text-red-400 border-red-500/20",
+    classes: "bg-red-500/10 text-accent-red border-red-500/20",
   },
 };
 
@@ -63,7 +63,7 @@ export const recipientStatusConfig: Record<RecipientStatus, StatusDisplay> = {
   },
   sent: {
     label: "Sent",
-    classes: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    classes: "bg-blue-500/10 text-accent-blue border-blue-500/20",
   },
   delivered: {
     label: "Delivered",
@@ -75,11 +75,11 @@ export const recipientStatusConfig: Record<RecipientStatus, StatusDisplay> = {
   },
   replied: {
     label: "Replied",
-    classes: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+    classes: "bg-purple-500/10 text-accent-purple border-purple-500/20",
   },
   failed: {
     label: "Failed",
-    classes: "bg-red-500/10 text-red-400 border-red-500/20",
+    classes: "bg-red-500/10 text-accent-red border-red-500/20",
   },
 };
 

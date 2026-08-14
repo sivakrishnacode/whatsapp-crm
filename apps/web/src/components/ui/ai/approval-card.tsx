@@ -80,7 +80,7 @@ export function OpenQuestions({
         className,
       )}
     >
-      <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+      <p className="text-xs font-medium text-accent-amber">
         {title}
       </p>
       <ul className="mt-1.5 space-y-1">

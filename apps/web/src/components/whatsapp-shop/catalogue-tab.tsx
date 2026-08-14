@@ -350,7 +350,7 @@ export function CatalogueTab() {
           </Button>
         </div>
         {!savedCatalogId && (
-          <p className="mt-2 text-xs text-amber-500">
+          <p className="mt-2 text-xs text-accent-amber">
             No Catalog ID set yet — product messages will be rejected by Meta
             until you add one.
           </p>
@@ -519,7 +519,7 @@ export function CatalogueTab() {
                   </p>
                 )}
                 <div className="flex items-center justify-between pt-2 border-t border-border/40">
-                  <div className="flex items-center gap-1.5 text-[11px] text-green-500 font-medium">
+                  <div className="flex items-center gap-1.5 text-[11px] text-accent-green font-medium">
                     <CheckCircle className="h-3 w-3" />
                     Synced to Meta
                   </div>
@@ -573,7 +573,7 @@ export function CatalogueTab() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <span className="inline-flex items-center gap-1 text-xs text-green-500 font-medium">
+                    <span className="inline-flex items-center gap-1 text-xs text-accent-green font-medium">
                       <CheckCircle className="h-3 w-3" />
                       Synced
                     </span>

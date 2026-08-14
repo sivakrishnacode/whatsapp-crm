@@ -165,7 +165,7 @@ export function AiAutomationBuilder() {
       {phase === "error" && (
         <div className="space-y-3">
           <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3">
-            <p className="text-sm font-medium text-red-500">
+            <p className="text-sm font-medium text-accent-red">
               That did not work
             </p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">

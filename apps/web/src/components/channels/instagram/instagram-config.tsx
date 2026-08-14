@@ -373,7 +373,7 @@ function CopyRow({ label, value }: { label: string; value: string | null }) {
       >
         <span className="min-w-0 flex-1 break-all">{value}</span>
         {copied ? (
-          <CheckCircle2 className="size-3 shrink-0 text-emerald-600" />
+          <CheckCircle2 className="size-3 shrink-0 text-accent-green" />
         ) : (
           <Copy className="size-3 shrink-0" />
         )}
@@ -410,7 +410,7 @@ function AccountCard({ status }: { status: InstagramStatus }) {
             {status.ig_username ? `@${status.ig_username}` : status.ig_user_id}
           </p>
           {status.connected && (
-            <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+            <CheckCircle2 className="size-4 shrink-0 text-accent-green" />
           )}
         </div>
         <p className="text-xs text-muted-foreground">
@@ -422,7 +422,7 @@ function AccountCard({ status }: { status: InstagramStatus }) {
           <p
             className={cn(
               'text-xs',
-              expiring ? 'text-amber-600' : 'text-muted-foreground',
+              expiring ? 'text-accent-amber' : 'text-muted-foreground',
             )}
           >
             {status.token_expires_in_days < 0
@@ -465,7 +465,7 @@ function SubscribedEvents({ subscribed }: { subscribed: string[] }) {
                 aria-hidden="true"
                 className={cn(
                   'size-1.5 rounded-full',
-                  on ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+                  on ? 'bg-green-500' : 'bg-muted-foreground/40',
                 )}
               />
               <span className={on ? 'text-foreground' : 'text-muted-foreground'}>
@@ -543,7 +543,7 @@ function Banner({
         'rounded-xl border p-4 text-sm',
         tone === 'error'
           ? 'border-destructive/30 bg-destructive-surface text-destructive'
-          : 'border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400',
+          : 'border-amber-500/30 bg-amber-500/5 text-accent-amber',
       )}
     >
       <div className="flex items-start gap-2">

@@ -120,7 +120,7 @@ export function DestinationStep({
                 {/* Never a bare "unavailable" — the reason is the only
                     actionable part. */}
                 {type.unavailableReason ? (
-                  <span className="mt-1.5 block text-xs text-amber-600 dark:text-amber-500">
+                  <span className="mt-1.5 block text-xs text-accent-amber">
                     {type.unavailableReason}
                   </span>
                 ) : null}

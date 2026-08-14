@@ -276,7 +276,7 @@ export function InstagramCommentCard({
                   className={cn(
                     'inline-flex items-center gap-1',
                     comment.funnel_run.state === 'delivered'
-                      ? 'text-emerald-600 dark:text-emerald-400'
+                      ? 'text-accent-green'
                       : comment.funnel_run.state === 'failed'
                         ? 'text-destructive'
                         : 'text-muted-foreground'

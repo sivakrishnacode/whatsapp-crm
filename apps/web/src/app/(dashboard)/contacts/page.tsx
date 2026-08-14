@@ -58,6 +58,7 @@ import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager
 import { SegmentsManager } from '@/components/contacts/segments-manager';
 import { SegmentPicker } from '@/components/contacts/segment-picker';
 import { listSegmentsLight, segmentsForContacts } from '@/lib/segments/api';
+import { tint } from '@/lib/tint';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -538,8 +539,8 @@ export default function ContactsPage() {
                         aria-label={`Filter by ${tag.name}`}
                       />
                       <span
-                        className="size-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: tag.color }}
+                        className="tint-mark size-2.5 shrink-0 rounded-full"
+                        style={tint(tag.color)}
                       />
                       <span className="text-sm text-popover-foreground truncate">
                         {tag.name}
@@ -599,8 +600,8 @@ export default function ContactsPage() {
                         aria-label={`Filter by ${segment.name}`}
                       />
                       <span
-                        className="size-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: segment.color }}
+                        className="tint-mark size-2.5 shrink-0 rounded-full"
+                        style={tint(segment.color)}
                       />
                       <span className="text-sm text-popover-foreground truncate">
                         {segment.name}
@@ -628,11 +629,8 @@ export default function ContactsPage() {
               return (
                 <span
                   key={id}
-                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                  style={{
-                    backgroundColor: segment.color + '20',
-                    color: segment.color,
-                  }}
+                  className="tint-chip inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                  style={tint(segment.color)}
                 >
                   <Layers className="size-3" />
                   {segment.name}
@@ -664,11 +662,8 @@ export default function ContactsPage() {
               return (
                 <span
                   key={id}
-                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                  style={{
-                    backgroundColor: tag.color + '20',
-                    color: tag.color,
-                  }}
+                  className="tint-chip inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                  style={tint(tag.color)}
                 >
                   {tag.name}
                   <button
@@ -827,11 +822,8 @@ export default function ContactsPage() {
                         contact.tags.slice(0, 3).map((tag) => (
                           <span
                             key={tag.id}
-                            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
-                            style={{
-                              backgroundColor: tag.color + '20',
-                              color: tag.color,
-                            }}
+                            className="tint-chip inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                            style={tint(tag.color)}
                           >
                             {tag.name}
                           </span>

@@ -73,7 +73,7 @@ import { TemplateSourceChooser } from './template-source-chooser';
 const CATEGORIES = ['Marketing', 'Utility', 'Authentication'] as const;
 
 const categoryColors: Record<string, string> = {
-  Marketing: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
+  Marketing: 'bg-purple-600/20 text-accent-purple border-purple-600/30',
   Utility: 'bg-info-surface text-info border-info/30',
   Authentication: 'bg-warning-surface text-warning border-warning/30',
 };

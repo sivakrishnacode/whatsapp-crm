@@ -46,7 +46,7 @@ export default function FormSharePanel({ form }: FormSharePanelProps) {
   return (
     <div className="max-w-xl">
       {!isPublished && (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-accent-amber">
           Publish this form before sharing — a draft URL is not accessible to visitors.
         </div>
       )}
@@ -87,7 +87,7 @@ export default function FormSharePanel({ form }: FormSharePanelProps) {
                 onClick={() => copy(form.public_url, 'link')}
               >
                 {copied === 'link' ? (
-                  <Check className="h-4 w-4 text-green-500" />
+                  <Check className="h-4 w-4 text-accent-green" />
                 ) : (
                   <Copy className="h-4 w-4" />
                 )}
@@ -129,7 +129,7 @@ export default function FormSharePanel({ form }: FormSharePanelProps) {
               onClick={() => copy(embedSnippet, 'embed')}
             >
               {copied === 'embed' ? (
-                <Check className="mr-1 h-3 w-3 text-green-500" />
+                <Check className="mr-1 h-3 w-3 text-accent-green" />
               ) : (
                 <Copy className="mr-1 h-3 w-3" />
               )}

@@ -186,7 +186,7 @@ export function InstagramDmAgents() {
                     {a.execution_count} time{a.execution_count === 1 ? '' : 's'}
                   </p>
                 </div>
-                <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+                <CheckCircle2 className="size-4 shrink-0 text-accent-green" />
               </li>
             ))}
           </ul>
@@ -228,7 +228,7 @@ function PrecedenceRow({
               className={cn(
                 'rounded-full px-2 py-0.5 text-[10px] font-medium',
                 live
-                  ? 'bg-emerald-500/10 text-emerald-600'
+                  ? 'bg-green-500/10 text-accent-green'
                   : 'bg-muted text-muted-foreground',
               )}
             >
@@ -260,7 +260,7 @@ function InstagramCaveats() {
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
       <div className="flex items-start gap-2">
-        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-accent-amber" />
         <div>
           <h2 className="text-sm font-semibold text-foreground">
             How agents behave differently on Instagram

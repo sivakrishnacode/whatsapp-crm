@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
+import { tint } from '@/lib/tint';
 import type { ContactSegment, SegmentMemberSource } from '@/types';
 import {
   addContactsToSegment,
@@ -157,8 +158,8 @@ export function SegmentPicker({
                   className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-muted disabled:opacity-60"
                 >
                   <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: segment.color }}
+                    className="tint-mark h-2 w-2 shrink-0 rounded-full"
+                    style={tint(segment.color)}
                     aria-hidden
                   />
                   <span className="min-w-0 flex-1 truncate">{segment.name}</span>

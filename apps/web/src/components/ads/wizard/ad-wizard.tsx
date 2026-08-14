@@ -330,7 +330,7 @@ export function AdWizard() {
                       {errors.map((error) => (
                         <li
                           key={error}
-                          className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-500"
+                          className="flex items-start gap-1.5 text-xs text-accent-amber"
                         >
                           <AlertTriangle className="mt-0.5 size-3 shrink-0" />
                           {error}

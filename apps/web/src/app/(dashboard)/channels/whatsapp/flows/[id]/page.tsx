@@ -56,10 +56,10 @@ interface FlowDetails {
 
 const STATUS_COLORS: Record<string, string> = {
   DRAFT: "border-border bg-muted text-muted-foreground",
-  PUBLISHED: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
+  PUBLISHED: "border-green-600/40 bg-green-500/10 text-accent-green",
   DEPRECATED: "border-border bg-muted/50 text-muted-foreground",
-  BLOCKED: "border-red-600/40 bg-red-500/10 text-red-300",
-  THROTTLED: "border-amber-600/40 bg-amber-500/10 text-amber-300",
+  BLOCKED: "border-red-600/40 bg-red-500/10 text-accent-red",
+  THROTTLED: "border-amber-600/40 bg-amber-500/10 text-accent-amber",
 };
 
 export default function WhatsAppFlowEditorPage() {
@@ -314,7 +314,7 @@ export default function WhatsAppFlowEditorPage() {
               variant="ghost"
               disabled={busy}
               onClick={handleDelete}
-              className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+              className="text-accent-red hover:bg-red-500/10 hover:text-accent-red"
             >
               <Trash2 className="h-4 w-4" />
               Delete
@@ -408,14 +408,14 @@ export default function WhatsAppFlowEditorPage() {
 
             {errors.length > 0 && (
               <div className="space-y-1.5 rounded-md border border-amber-600/40 bg-amber-500/10 p-3">
-                <p className="text-xs font-semibold text-amber-300">
+                <p className="text-xs font-semibold text-accent-amber">
                   {errors.length} validation {errors.length === 1 ? "error" : "errors"}
                 </p>
                 <ul className="space-y-1">
                   {errors.map((e, i) => (
-                    <li key={i} className="text-[11px] text-amber-200/90">
+                    <li key={i} className="text-[11px] text-accent-amber">
                       {e.line_start != null && (
-                        <span className="text-amber-400">
+                        <span className="text-accent-amber">
                           L{e.line_start}
                           {e.column_start != null ? `:${e.column_start}` : ""}{" "}
                         </span>

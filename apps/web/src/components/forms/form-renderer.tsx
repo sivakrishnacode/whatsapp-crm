@@ -221,7 +221,7 @@ export default function FormRenderer({
   if (submitted) {
     return (
       <div className="flex flex-col items-center gap-4 py-12 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500/10 text-green-600 dark:text-green-400">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500/10 text-accent-green">
           <CheckCircle2 className="h-10 w-10" />
         </div>
         <p className="text-xl font-semibold text-foreground">
@@ -418,7 +418,7 @@ function FieldInput({
                   value={o.value}
                   checked={isSelected}
                   onChange={() => onChange(o.value)}
-                  className="h-4 w-4 accent-violet-600 text-violet-600 focus:ring-violet-500"
+                  className="h-4 w-4 accent-violet-600 text-accent-violet focus:ring-violet-500"
                 />
                 <span className="flex-1 text-foreground">{o.label}</span>
               </label>
@@ -453,7 +453,7 @@ function FieldInput({
                       : checked.filter((v) => v !== o.value);
                     onChange(next);
                   }}
-                  className="h-4 w-4 rounded-sm accent-violet-600 text-violet-600 focus:ring-violet-500"
+                  className="h-4 w-4 rounded-sm accent-violet-600 text-accent-violet focus:ring-violet-500"
                 />
                 <span className="flex-1 text-foreground">{o.label}</span>
               </label>
@@ -513,8 +513,8 @@ function FieldInput({
                   className={cn(
                     'h-7 w-7 transition-colors',
                     active
-                      ? 'fill-amber-400 text-amber-400'
-                      : 'fill-muted/40 text-muted-foreground/40 hover:text-amber-300',
+                      ? 'fill-accent-amber text-accent-amber'
+                      : 'fill-muted/40 text-muted-foreground/40 hover:text-accent-amber',
                   )}
                 />
               </button>
@@ -532,7 +532,7 @@ function FieldInput({
             type="checkbox"
             checked={Boolean(value)}
             onChange={(e) => onChange(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded-sm accent-violet-600 text-violet-600 focus:ring-violet-500"
+            className="mt-0.5 h-4 w-4 rounded-sm accent-violet-600 text-accent-violet focus:ring-violet-500"
           />
           <span className={cn('flex-1 text-sm text-foreground leading-snug', error && 'text-destructive font-medium')}>
             {field.label}
@@ -555,7 +555,7 @@ function FieldInput({
           accept={field.accept?.join(',')}
           onChange={(e) => onChange(e.target.files?.[0] ?? null)}
           className={cn(
-            'h-10 bg-background text-foreground border-input rounded-lg file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-violet-500/10 file:text-violet-600 hover:file:bg-violet-500/20 cursor-pointer',
+            'h-10 bg-background text-foreground border-input rounded-lg file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-violet-500/10 file:text-accent-violet hover:file:bg-violet-500/20 cursor-pointer',
             error && 'border-destructive',
           )}
         />

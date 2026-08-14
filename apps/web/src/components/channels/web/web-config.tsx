@@ -305,7 +305,7 @@ function SetupProgress({ status }: { status: WebStatus }) {
               className={cn(
                 'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border text-[10px]',
                 step.done
-                  ? 'border-transparent bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                  ? 'border-transparent bg-green-500/15 text-accent-green'
                   : 'border-border text-muted-foreground',
               )}
             >
@@ -387,7 +387,7 @@ function OriginList({
       </div>
 
       {origins.length === 0 ? (
-        <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+        <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-accent-amber">
           No domains allowed yet, so the widget will not load anywhere.
         </p>
       ) : (
@@ -552,7 +552,7 @@ function Banner({
         'rounded-xl border p-4 text-sm',
         tone === 'error'
           ? 'border-destructive/30 bg-destructive-surface text-destructive'
-          : 'border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400',
+          : 'border-amber-500/30 bg-amber-500/5 text-accent-amber',
       )}
     >
       <div className="flex items-start gap-2">

@@ -57,10 +57,10 @@ interface FlowTemplate {
 
 const STATUS_COLORS: Record<string, string> = {
   DRAFT: "border-border bg-muted text-muted-foreground",
-  PUBLISHED: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
+  PUBLISHED: "border-green-600/40 bg-green-500/10 text-accent-green",
   DEPRECATED: "border-border bg-muted/50 text-muted-foreground",
-  BLOCKED: "border-red-600/40 bg-red-500/10 text-red-300",
-  THROTTLED: "border-amber-600/40 bg-amber-500/10 text-amber-300",
+  BLOCKED: "border-red-600/40 bg-red-500/10 text-accent-red",
+  THROTTLED: "border-amber-600/40 bg-amber-500/10 text-accent-amber",
 };
 
 export default function WhatsAppFlowsPage() {
@@ -381,12 +381,12 @@ function FlowCard({
 
       <div className="mt-4 flex items-center gap-1.5 text-[11px]">
         {errorCount > 0 ? (
-          <span className="inline-flex items-center gap-1 text-amber-400">
+          <span className="inline-flex items-center gap-1 text-accent-amber">
             <FileWarning className="h-3 w-3" />
             {errorCount} validation {errorCount === 1 ? "error" : "errors"}
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1 text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-accent-green">
             <CheckCircle2 className="h-3 w-3" />
             No validation errors
           </span>
@@ -403,7 +403,7 @@ function FlowCard({
             variant="ghost"
             size="sm"
             onClick={onDelete}
-            className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            className="text-accent-red hover:bg-red-500/10 hover:text-accent-red"
           >
             <Trash2 className="h-3.5 w-3.5" />
             Delete

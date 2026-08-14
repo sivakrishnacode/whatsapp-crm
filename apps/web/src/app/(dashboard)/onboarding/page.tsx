@@ -65,7 +65,7 @@ export default function OnboardingPage() {
               <StatusIcon
                 className={cn(
                   'size-5 shrink-0',
-                  connected ? 'text-emerald-500' : 'text-muted-foreground',
+                  connected ? 'text-accent-green' : 'text-muted-foreground',
                   loading && 'animate-pulse',
                 )}
               />

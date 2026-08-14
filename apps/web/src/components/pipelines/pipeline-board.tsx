@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { tint } from "@/lib/tint";
 import {
   DndContext,
   DragOverlay,
@@ -194,8 +195,8 @@ function StageColumn({
     <div className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-xl border border-border bg-card/60 p-4 lg:w-auto lg:max-w-none lg:flex-1 lg:basis-[260px] lg:shrink lg:snap-none">
       {/* 3px colored top border — sits above the column's padding */}
       <div
-        className="-mx-4 -mt-4 h-[3px] rounded-t-xl"
-        style={{ backgroundColor: stage.color }}
+        className="tint-mark -mx-4 -mt-4 h-[3px] rounded-t-xl"
+        style={tint(stage.color)}
       />
       <div className="flex items-center justify-between pt-3">
         <h3 className="truncate text-sm font-semibold text-foreground">

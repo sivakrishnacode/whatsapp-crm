@@ -207,9 +207,9 @@ export function PipelineSettings({
         {showDeleteConfirm ? (
           <div className="py-4">
             <div className="flex items-center gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4">
-              <AlertTriangle className="h-5 w-5 shrink-0 text-red-400" />
+              <AlertTriangle className="h-5 w-5 shrink-0 text-accent-red" />
               <div>
-                <p className="text-sm font-medium text-red-400">
+                <p className="text-sm font-medium text-accent-red">
                   Delete Pipeline
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -410,7 +410,7 @@ function SortableStageRow({
         variant="ghost"
         size="icon-xs"
         onClick={onRemove}
-        className="text-muted-foreground hover:text-red-400"
+        className="text-muted-foreground hover:text-accent-red"
       >
         <Trash2 className="h-3 w-3" />
       </Button>

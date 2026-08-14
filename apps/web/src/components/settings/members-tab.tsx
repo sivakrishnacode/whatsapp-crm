@@ -458,7 +458,7 @@ export function MembersTab() {
                         size="sm"
                         onClick={() => setRemovingMember(member)}
                         disabled={isBusy}
-                        className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
+                        className="border-red-500/40 bg-red-500/10 text-accent-red hover:bg-red-500/20 hover:border-red-500/60 hover:text-accent-red"
                       >
                         <Trash2 className="size-4" />
                       </Button>
@@ -546,7 +546,7 @@ export function MembersTab() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleRevoke(inv)}
-                        className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
+                        className="border-red-500/40 bg-red-500/10 text-accent-red hover:bg-red-500/20 hover:border-red-500/60 hover:text-accent-red"
                       >
                         <MailX className="size-4" />
                         Revoke
@@ -576,7 +576,7 @@ export function MembersTab() {
         <DialogContent className="bg-popover border-border sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-popover-foreground">
-              <AlertTriangle className="size-4 text-amber-400" />
+              <AlertTriangle className="size-4 text-accent-amber" />
               Remove member
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">

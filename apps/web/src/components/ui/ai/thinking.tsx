@@ -98,9 +98,9 @@ export function Thinking({
 function TraceIcon({ state }: { state: TraceState }) {
   const base = "mt-0.5 h-3.5 w-3.5 shrink-0"
   if (state === "done")
-    return <Check className={cn(base, "text-emerald-500")} aria-label="done" />
+    return <Check className={cn(base, "text-accent-green")} aria-label="done" />
   if (state === "failed")
-    return <X className={cn(base, "text-red-500")} aria-label="failed" />
+    return <X className={cn(base, "text-accent-red")} aria-label="failed" />
   if (state === "active")
     return (
       <Loader2

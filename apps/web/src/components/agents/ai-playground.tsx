@@ -170,7 +170,7 @@ export function AiPlayground({
                 {turn.role === 'assistant' && turn.handoff && (
                   <p
                     className={cn(
-                      'flex items-center gap-1 text-xs text-amber-500',
+                      'flex items-center gap-1 text-xs text-accent-amber',
                       turn.content && 'mt-1.5 border-t border-border/50 pt-1.5',
                     )}
                   >
@@ -271,7 +271,7 @@ function TurnEvidence({ turn }: { turn: Turn }) {
                 <span
                   className={cn(
                     call.ok
-                      ? 'text-emerald-600 dark:text-emerald-400'
+                      ? 'text-accent-green'
                       : 'text-destructive',
                   )}
                 >

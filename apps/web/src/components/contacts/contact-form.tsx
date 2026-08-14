@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
+import { tint } from '@/lib/tint';
 import type { Contact, Tag, ContactTag } from '@/types';
 import {
   findExistingContact,
@@ -277,7 +278,7 @@ export function ContactForm({
 
           <div className="space-y-2">
             <Label htmlFor="cf-phone" className="text-muted-foreground">
-              Phone <span className="text-red-400">*</span>
+              Phone <span className="text-accent-red">*</span>
             </Label>
             <Input
               id="cf-phone"
@@ -294,8 +295,8 @@ export function ContactForm({
               <div
                 className={`flex items-start gap-2 rounded-md border px-2.5 py-2 text-xs ${
                   dupMatch.exact
-                    ? 'border-red-500/40 bg-red-500/10 text-red-300'
-                    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                    ? 'border-red-500/40 bg-red-500/10 text-accent-red'
+                    : 'border-amber-500/40 bg-amber-500/10 text-accent-amber'
                 }`}
               >
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
@@ -379,16 +380,12 @@ export function ContactForm({
                       key={tag.id}
                       type="button"
                       onClick={() => toggleTag(tag.id)}
-                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors cursor-pointer ${
+                      className={`tint-chip inline-flex cursor-pointer items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-all ${
                         selected
                           ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                          : 'opacity-60 hover:opacity-100'
+                          : 'opacity-70 hover:opacity-100'
                       }`}
-                      style={{
-                        backgroundColor: tag.color + '20',
-                        color: tag.color,
-                        borderColor: tag.color,
-                      }}
+                      style={tint(tag.color)}
                     >
                       {tag.name}
                     </button>

@@ -759,7 +759,7 @@ function Callout({
       className={cn(
         'flex items-start gap-2 rounded-lg border p-3 text-xs',
         tone === 'warning'
-          ? 'border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+          ? 'border-amber-500/30 bg-amber-500/10 text-accent-amber'
           : 'border-border bg-muted/40 text-muted-foreground'
       )}
     >

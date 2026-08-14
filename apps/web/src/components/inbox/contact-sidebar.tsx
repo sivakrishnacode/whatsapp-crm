@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import type { Contact, ContactSegment, Deal, ContactNote, Tag } from "@/types";
 import { listSegmentsLight, segmentsForContacts } from "@/lib/segments/api";
 import { SegmentPicker } from "@/components/contacts/segment-picker";
+import { tint } from "@/lib/tint";
 import {
   contactDisplayName,
   contactHandle,
@@ -234,11 +235,8 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 tags.map((tag) => (
                   <span
                     key={tag.contact_tag_id}
-                    className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                    style={{
-                      backgroundColor: `${tag.color}20`,
-                      color: tag.color,
-                    }}
+                    className="tint-chip rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                    style={tint(tag.color)}
                   >
                     {tag.name}
                   </span>
@@ -286,11 +284,8 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                   return (
                     <span
                       key={id}
-                      className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                      style={{
-                        backgroundColor: `${segment.color}20`,
-                        color: segment.color,
-                      }}
+                      className="tint-chip rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                      style={tint(segment.color)}
                     >
                       {segment.name}
                     </span>
@@ -328,11 +323,8 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                       </span>
                       {deal.stage && (
                         <span
-                          className="rounded-full px-1.5 py-0.5 text-[10px]"
-                          style={{
-                            backgroundColor: `${deal.stage.color}20`,
-                            color: deal.stage.color,
-                          }}
+                          className="tint-chip rounded-full border px-1.5 py-0.5 text-[10px]"
+                          style={tint(deal.stage.color)}
                         >
                           {deal.stage.name}
                         </span>

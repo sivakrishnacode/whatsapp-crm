@@ -349,9 +349,9 @@ function RequirementBadge({ resolved }: { resolved: ResolvedRequirement }) {
 
   const tone =
     state === "ready"
-      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+      ? "border-green-500/30 bg-green-500/10 text-accent-green"
       : state === "missing"
-        ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+        ? "border-amber-500/30 bg-amber-500/10 text-accent-amber"
         : "border-border bg-muted/50 text-muted-foreground"
 
   return (

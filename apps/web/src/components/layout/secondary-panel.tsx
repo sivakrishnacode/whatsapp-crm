@@ -38,11 +38,11 @@ function StatusChip({
   const meta: Record<string, { label: string; className: string }> = {
     connected: {
       label: 'Connected',
-      className: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600',
+      className: 'border-green-500/40 bg-green-500/10 text-accent-green',
     },
     not_connected: {
       label: 'Not connected',
-      className: 'border-red-500/40 bg-red-500/10 text-red-600',
+      className: 'border-red-500/40 bg-red-500/10 text-accent-red',
     },
     unavailable: {
       label: 'Coming soon',

@@ -3,7 +3,7 @@
 //
 // The Tremor charts source uses these helpers to map a category
 // name to a stable Tailwind color class (`bg-violet-500`,
-// `fill-blue-500`, …). Tremor's "Raw" distribution is copy-paste
+// `fill-accent-blue`, …). Tremor's "Raw" distribution is copy-paste
 // — there is no `@tremor/raw` npm package — so the canonical
 // approach is to vendor the file unchanged and customise locally.
 //
@@ -16,27 +16,27 @@ export type ColorUtility = "bg" | "stroke" | "fill" | "text"
 export const chartColors = {
   blue: {
     bg: "bg-blue-500",
-    stroke: "stroke-blue-500",
-    fill: "fill-blue-500",
-    text: "text-blue-500",
+    stroke: "stroke-accent-blue",
+    fill: "fill-accent-blue",
+    text: "text-accent-blue",
   },
   emerald: {
-    bg: "bg-emerald-500",
-    stroke: "stroke-emerald-500",
-    fill: "fill-emerald-500",
-    text: "text-emerald-500",
+    bg: "bg-green-500",
+    stroke: "stroke-accent-green",
+    fill: "fill-accent-green",
+    text: "text-accent-green",
   },
   violet: {
     bg: "bg-violet-500",
-    stroke: "stroke-violet-500",
-    fill: "fill-violet-500",
-    text: "text-violet-500",
+    stroke: "stroke-accent-violet",
+    fill: "fill-accent-violet",
+    text: "text-accent-violet",
   },
   amber: {
     bg: "bg-amber-500",
-    stroke: "stroke-amber-500",
-    fill: "fill-amber-500",
-    text: "text-amber-500",
+    stroke: "stroke-accent-amber",
+    fill: "fill-accent-amber",
+    text: "text-accent-amber",
   },
   gray: {
     bg: "bg-muted",
@@ -46,27 +46,27 @@ export const chartColors = {
   },
   cyan: {
     bg: "bg-cyan-500",
-    stroke: "stroke-cyan-500",
-    fill: "fill-cyan-500",
-    text: "text-cyan-500",
+    stroke: "stroke-accent-cyan",
+    fill: "fill-accent-cyan",
+    text: "text-accent-cyan",
   },
   pink: {
     bg: "bg-pink-500",
-    stroke: "stroke-pink-500",
-    fill: "fill-pink-500",
-    text: "text-pink-500",
+    stroke: "stroke-accent-pink",
+    fill: "fill-accent-pink",
+    text: "text-accent-pink",
   },
   lime: {
-    bg: "bg-lime-500",
-    stroke: "stroke-lime-500",
-    fill: "fill-lime-500",
-    text: "text-lime-500",
+    bg: "bg-green-500",
+    stroke: "stroke-accent-green",
+    fill: "fill-accent-green",
+    text: "text-accent-green",
   },
   fuchsia: {
-    bg: "bg-fuchsia-500",
-    stroke: "stroke-fuchsia-500",
-    fill: "fill-fuchsia-500",
-    text: "text-fuchsia-500",
+    bg: "bg-purple-500",
+    stroke: "stroke-accent-purple",
+    fill: "fill-accent-purple",
+    text: "text-accent-purple",
   },
 } as const satisfies {
   [color: string]: {

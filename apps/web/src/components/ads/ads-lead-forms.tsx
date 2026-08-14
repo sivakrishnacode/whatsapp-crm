@@ -283,7 +283,7 @@ export function AdsLeadForms() {
                 </div>
                 <div className="flex items-center gap-4 text-xs">
                   {!form.questions.some((q) => q.type === 'PHONE') ? (
-                    <span className="flex items-center gap-1 text-amber-600 dark:text-amber-500">
+                    <span className="flex items-center gap-1 text-accent-amber">
                       <AlertTriangle className="size-3" />
                       No phone question — leads cannot be saved
                     </span>

@@ -188,7 +188,7 @@ export function BudgetStep({
           <span className="mb-1.5 block text-xs font-medium text-foreground">
             End date{' '}
             {state.budgetMode === 'lifetime' ? (
-              <span className="text-amber-600 dark:text-amber-500">
+              <span className="text-accent-amber">
                 (required)
               </span>
             ) : (

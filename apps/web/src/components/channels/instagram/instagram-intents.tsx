@@ -171,7 +171,7 @@ function IntentCard({ intent }: { intent: Automation }) {
               className={cn(
                 'rounded-full px-2 py-0.5 text-[10px] font-medium',
                 intent.is_active
-                  ? 'bg-emerald-500/10 text-emerald-600'
+                  ? 'bg-green-500/10 text-accent-green'
                   : 'bg-muted text-muted-foreground'
               )}
             >
@@ -210,7 +210,7 @@ function IntentCard({ intent }: { intent: Automation }) {
             // A keyword rule with no keywords matches nothing and will
             // never fire — worth saying, since the row otherwise looks
             // perfectly healthy.
-            <p className="mt-2 text-xs text-amber-600">
+            <p className="mt-2 text-xs text-accent-amber">
               No keywords configured — this intent can never match.
             </p>
           )}

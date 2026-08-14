@@ -203,7 +203,7 @@ export function AiCreditsSheet({
               </span>
             </p>
           ) : credits?.low ? (
-            <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+            <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-accent-amber">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               <span>
                 Running low. At zero, the AI stops drafting and the auto-reply

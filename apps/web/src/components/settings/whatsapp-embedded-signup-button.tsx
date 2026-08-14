@@ -256,7 +256,7 @@ export function WhatsAppEmbeddedSignupButton({
       </Button>
 
       {status === 'error' && errorMessage && (
-        <p className="text-xs text-red-400">{errorMessage}</p>
+        <p className="text-xs text-accent-red">{errorMessage}</p>
       )}
       {status === 'cancelled' && (
         <p className="text-xs text-muted-foreground">Setup was cancelled.</p>

@@ -34,7 +34,7 @@ const STATUS_STYLES: Record<
   connected: {
     icon: CheckCircle,
     className:
-      'border-green-500/20 bg-green-500/10 text-green-600 dark:text-green-400',
+      'border-green-500/20 bg-green-500/10 text-accent-green',
   },
   // Amber, not red. A connection that needs re-authorising is a chore,
   // not an outage, and red here would sit next to genuinely broken
@@ -42,7 +42,7 @@ const STATUS_STYLES: Record<
   attention: {
     icon: AlertCircle,
     className:
-      'border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+      'border-amber-500/20 bg-amber-500/10 text-accent-amber',
   },
   off: {
     icon: XCircle,
@@ -156,7 +156,7 @@ export function IntegrationRow({
             className={cn(
               'truncate text-[10px]',
               tone === 'attention'
-                ? 'text-amber-600 dark:text-amber-400'
+                ? 'text-accent-amber'
                 : 'text-muted-foreground',
             )}
           >

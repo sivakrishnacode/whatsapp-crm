@@ -178,7 +178,7 @@ export function ZapierIntegrationConfig() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <div className="flex size-10 items-center justify-center rounded-full bg-orange-500/10 text-orange-500">
+        <div className="flex size-10 items-center justify-center rounded-full bg-orange-500/10 text-accent-orange">
           <Webhook className="size-5" />
         </div>
         <div>
@@ -217,7 +217,7 @@ export function ZapierIntegrationConfig() {
       {newSecret && (
         <Card className="border-amber-500/20 bg-amber-500/10">
           <CardContent className="p-4 space-y-2 text-xs">
-            <p className="font-semibold text-amber-700 dark:text-amber-400">
+            <p className="font-semibold text-accent-amber">
               Signing secret (shown once)
             </p>
             <p className="text-muted-foreground leading-relaxed">
@@ -241,7 +241,7 @@ export function ZapierIntegrationConfig() {
       {endpoints.length === 0 && !showAddForm && (
         <Card className="border-border bg-card/50 shadow-md">
           <CardContent className="flex flex-col items-center justify-center px-6 py-12 text-center">
-            <div className="flex size-16 items-center justify-center rounded-2xl bg-orange-500/10 text-orange-500 mb-6">
+            <div className="flex size-16 items-center justify-center rounded-2xl bg-orange-500/10 text-accent-orange mb-6">
               <Webhook className="size-8" />
             </div>
             <h2 className="text-xl font-semibold tracking-tight text-foreground">
@@ -279,7 +279,7 @@ export function ZapierIntegrationConfig() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {endpoint.is_active ? (
-                      <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-green-600 dark:text-green-400 text-[10px] font-medium flex items-center gap-1">
+                      <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-accent-green text-[10px] font-medium flex items-center gap-1">
                         <CheckCircle className="size-3" />
                         Active
                       </Badge>
@@ -301,7 +301,7 @@ export function ZapierIntegrationConfig() {
                 </div>
 
                 {endpoint.failure_count > 0 && (
-                  <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-2.5 text-[11px] text-red-600 dark:text-red-400">
+                  <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-2.5 text-[11px] text-accent-red">
                     <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
                     <span>
                       {endpoint.failure_count} consecutive delivery failure

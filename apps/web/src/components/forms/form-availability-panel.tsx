@@ -243,7 +243,7 @@ export default function FormAvailabilityPanel({
             </p>
 
             {draft.windows.length === 0 && (
-              <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+              <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-accent-amber">
                 No hours set, so no times will be offered.
               </p>
             )}
