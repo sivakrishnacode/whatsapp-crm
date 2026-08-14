@@ -36,7 +36,7 @@ export class ConnectionsOAuthController {
     // query string. This URL round-trips through accounts.google.com, so
     // a free-form redirect target would be an open redirect wearing a
     // Google referrer.
-    const base = process.env.APP_URL ?? 'http://localhost:3000';
+    const base = appOrigin();
     const landing = `${base}/integrations`;
 
     const fail = (reason: string) =>
@@ -93,4 +93,42 @@ export class ConnectionsOAuthController {
 /** Same shape as the web app's `sanitizeNextPath`: our own paths only. */
 function safeReturnPath(path: string | undefined): path is string {
   return Boolean(path) && /^\/[^/\\]/.test(path!);
+}
+
+/**
+ * Where to send the browser once the callback is done.
+ *
+ * ⚠️ DERIVED FROM THE REDIRECT URI FIRST, AND THAT IS THE POINT.
+ *   This shipped reading `APP_URL`, which is set nowhere, so production
+ *   silently fell back to `http://localhost:3000` — a successful Google
+ *   connection redirected the user to their own machine. It passed every
+ *   test and every health check, because nothing exercises a redirect
+ *   target.
+ *
+ *   `GOOGLE_OAUTH_REDIRECT_URI` cannot drift the same way: it is
+ *   REQUIRED for the flow to work at all, it must match the Google
+ *   console exactly, and it is by definition the origin the browser is
+ *   on right now — Google just sent them there. Deriving from it means
+ *   there is no second value to forget.
+ *
+ *   `NEXT_PUBLIC_APP_URL` stays as an explicit override for the case
+ *   where the API and the dashboard are on different origins (the
+ *   callback registered on api.*, the dashboard on app.*). It is the
+ *   same variable `src/ads/controllers/*` reads, so there is one
+ *   convention rather than two.
+ */
+function appOrigin(): string {
+  const explicit = process.env.NEXT_PUBLIC_APP_URL;
+  if (explicit) return explicit.replace(/\/$/, '');
+
+  const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+  if (redirectUri) {
+    try {
+      return new URL(redirectUri).origin;
+    } catch {
+      // Malformed config; fall through rather than throw — the user is
+      // mid-flow and a stack trace helps nobody.
+    }
+  }
+  return 'http://localhost:3000';
 }
