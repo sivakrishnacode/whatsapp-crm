@@ -181,6 +181,29 @@ export class AdsConfigService {
     };
   }
 
+  /**
+   * The connection that owns a given Facebook Page, or null.
+   *
+   * The one lookup that starts from a Page rather than an account:
+   * `/webhooks/facebook-leads` is an unauthenticated callback from Meta
+   * whose only tenant hint is `page_id`, so the Page IS the tenant
+   * resolution. It lives here rather than in the webhook because this
+   * service is the single place an ads token is decrypted, and a lead
+   * fetch needs the page token.
+   *
+   * `page_id` carries no unique constraint — Meta would have to let two
+   * workspaces connect the same Page for that to matter, which it does
+   * not, but `findFirst` is the honest read either way.
+   */
+  async findConnectionByPageId(pageId: string): Promise<AdsConnection | null> {
+    const row = await this.prisma.meta_ads_config.findFirst({
+      where: { page_id: pageId },
+      select: { account_id: true },
+    });
+    if (!row) return null;
+    return this.findConnection(row.account_id);
+  }
+
   /** As `findConnection`, but 400s with an actionable message instead of null. */
   async requireConnection(accountId: string): Promise<AdsConnection> {
     const connection = await this.findConnection(accountId);

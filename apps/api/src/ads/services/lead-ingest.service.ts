@@ -3,91 +3,100 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
 import { toE164 } from '../../common/phone/phone.util';
 import { resolveAccountCountry } from '../../common/phone/account-country.util';
+import { AdsConfigService } from './ads-config.service';
 
 /**
- * Turns one Facebook Lead Ads notification into a contact, a deal, a
+ * Turns one Meta lead-form submission into a contact, a deal, a
  * conversation and a first message.
  *
- * Moved out of `FacebookLeadsWebhookController` when lead processing
- * moved onto a queue. Meta wants a 200 from a webhook within seconds
- * and retries when it does not get one, so this work could never
- * happen inline — but the `void this.processLead(...).catch(log)` that
- * kept the handler fast also meant a failed Graph call lost the lead
- * outright, with nothing anywhere recording that one had arrived.
+ * WHY THIS LIVES IN THE ADS MODULE
+ *   It began as `FacebookLeadService` in IntegrationsModule, serving the
+ *   "Facebook Leads" integration where a user connected their personal
+ *   Facebook account and toggled lead sync per Page. That integration is
+ *   gone (migration 081 dropped `facebook_connections` and
+ *   `facebook_pages`), but the ingestion path is not dead: the Ads
+ *   Manager's lead-form ad type publishes Meta lead forms whose
+ *   submissions arrive on exactly this webhook. So the code moved to the
+ *   module that now owns its only caller.
  *
- * The webhook now acknowledges immediately and this runs on the
- * lead-fetch queue, where a Graph blip is a retry rather than a lost
- * customer.
+ *   What changed in the move is the tenant resolution. It used to read a
+ *   `facebook_pages` row (Page → user → Profile → account, three hops
+ *   and a table that no longer exists) and gate on that row's
+ *   `is_syncing` flag. It now reads `meta_ads_config`, which carries
+ *   `account_id` and `user_id` directly and whose connected Page IS the
+ *   consent to receive that Page's leads.
+ *
+ * WHY IT RUNS ON A QUEUE
+ *   Meta wants a 200 from a webhook within seconds and retries when it
+ *   does not get one, so this work could never happen inline — but the
+ *   `void this.processLead(...).catch(log)` that once kept the handler
+ *   fast also meant a failed Graph call lost the lead outright, with
+ *   nothing anywhere recording that one had arrived.
  */
 @Injectable()
-export class FacebookLeadService {
-  private readonly logger = new Logger(FacebookLeadService.name);
+export class LeadIngestService {
+  private readonly logger = new Logger(LeadIngestService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly webhookDeliver: WebhookDeliverService,
+    private readonly adsConfig: AdsConfigService,
   ) {}
 
   async processLead(leadgenId: string, pageId: string): Promise<void> {
-    const page = await this.prisma.facebook_pages.findFirst({
-      where: { page_id: pageId },
-      select: { user_id: true, page_access_token: true, is_syncing: true },
-    });
+    // The Page is the only tenant hint an unauthenticated Meta callback
+    // carries, so this lookup is the account scoping — everything below
+    // is written against the account it resolves.
+    const connection = await this.adsConfig.findConnectionByPageId(pageId);
 
-    if (!page?.is_syncing) return;
-
-    // Resolve tenant account_id
-    const profile = await this.prisma.profile.findFirst({
-      where: { userId: page.user_id },
-      select: { accountId: true },
-    });
-
-    if (!profile) {
+    if (!connection) {
       this.logger.warn(
-        `No Profile/Account found for Facebook Page user: ${page.user_id}`,
+        `Lead ${leadgenId} arrived for page ${pageId}, which no workspace has connected — ignoring.`,
       );
       return;
     }
 
-    const accountId = profile.accountId;
+    if (!connection.pageAccessToken) {
+      this.logger.warn(
+        `Lead ${leadgenId} for page ${pageId}: no usable page token ` +
+          `(account ${connection.accountId}). The workspace must reconnect its Page.`,
+      );
+      return;
+    }
+
+    const { accountId, userId } = connection;
 
     let name = '';
     let email = '';
     let phone = '';
     let company = '';
 
-    const isMock = pageId.startsWith('page_mock');
-    if (isMock) {
-      name = 'Test Lead Ads User';
-      email = 'test.lead@example.com';
-      phone = '+919999988888';
-      company = 'Meta Sandbox LLC';
-    } else {
-      const leadRes = await fetch(
-        `https://graph.facebook.com/v20.0/${leadgenId}?access_token=${page.page_access_token}`,
+    const leadRes = await fetch(
+      `https://graph.facebook.com/v20.0/${leadgenId}?access_token=${connection.pageAccessToken}`,
+    );
+    const leadData = (await leadRes.json()) as {
+      field_data?: Array<{ name: string; values?: string[] }>;
+      error?: unknown;
+    };
+
+    if (!leadRes.ok || leadData.error) {
+      // Thrown, not returned: the processor retries a Graph blip, and a
+      // returned undefined would mark the job complete and lose the lead.
+      this.logger.error(
+        `Meta Graph API error for lead ${leadgenId}`,
+        leadData.error,
       );
-      const leadData = (await leadRes.json()) as {
-        field_data?: Array<{ name: string; values?: string[] }>;
-        error?: unknown;
-      };
+      throw new Error(`Graph API rejected lead fetch for ${leadgenId}`);
+    }
 
-      if (!leadRes.ok || leadData.error) {
-        this.logger.error(
-          `Meta Graph API error for lead ${leadgenId}`,
-          leadData.error,
-        );
-        return;
-      }
-
-      for (const field of leadData.field_data ?? []) {
-        const val = field.values?.[0] ?? '';
-        if (field.name === 'full_name' || field.name === 'name') name = val;
-        else if (field.name === 'email') email = val;
-        else if (field.name === 'phone_number' || field.name === 'phone')
-          phone = val;
-        else if (field.name === 'company' || field.name === 'company_name')
-          company = val;
-      }
+    for (const field of leadData.field_data ?? []) {
+      const val = field.values?.[0] ?? '';
+      if (field.name === 'full_name' || field.name === 'name') name = val;
+      else if (field.name === 'email') email = val;
+      else if (field.name === 'phone_number' || field.name === 'phone')
+        phone = val;
+      else if (field.name === 'company' || field.name === 'company_name')
+        company = val;
     }
 
     // Lead-gen forms let the advertiser choose which fields to ask
@@ -103,7 +112,7 @@ export class FacebookLeadService {
     );
     if (!canonicalPhone) {
       this.logger.warn(
-        `Facebook lead ${leadgenId} has no usable phone number — skipping. ` +
+        `Meta lead ${leadgenId} has no usable phone number — skipping. ` +
           'Add a phone field to the lead form to capture these.',
       );
       return;
@@ -118,7 +127,7 @@ export class FacebookLeadService {
       contact = await this.prisma.contacts.create({
         data: {
           account_id: accountId,
-          user_id: page.user_id,
+          user_id: userId,
           phone: canonicalPhone,
           name: name || 'Facebook Lead',
           email: email || null,
@@ -126,9 +135,7 @@ export class FacebookLeadService {
           source: 'facebook_lead',
         },
       });
-      this.logger.log(
-        `Created contact ${contact.id} from FB lead ${leadgenId}`,
-      );
+      this.logger.log(`Created contact ${contact.id} from lead ${leadgenId}`);
 
       await this.webhookDeliver.dispatchWebhookEvent(
         accountId,
@@ -168,7 +175,7 @@ export class FacebookLeadService {
         await this.prisma.deals.create({
           data: {
             account_id: accountId,
-            user_id: page.user_id,
+            user_id: userId,
             pipeline_id: pipeline.id,
             stage_id: stage.id,
             contact_id: contact.id,
@@ -200,7 +207,7 @@ export class FacebookLeadService {
       conversation = await this.prisma.conversations.create({
         data: {
           account_id: accountId,
-          user_id: page.user_id,
+          user_id: userId,
           contact_id: contact.id,
           channel: 'whatsapp',
           status: 'open',

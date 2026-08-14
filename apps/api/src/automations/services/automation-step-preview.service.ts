@@ -1,10 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AutomationStepExecutorService } from './automation-step-executor.service';
 import {
-  AutomationStepExecutorService,
-} from './automation-step-executor.service';
-import { interpolate, interpolateDeep, resolveValue } from './automation-interpolation.util';
+  interpolate,
+  interpolateDeep,
+  resolveValue,
+} from './automation-interpolation.util';
 import { redactUrl } from './automation-http.util';
+import { interpolateAppActionInput } from './automation-app-action.util';
+import { ConnectorRegistryService } from '../../connections/services/connector-registry.service';
 import type {
   AutomationContext,
   AutomationStepType,
@@ -36,6 +40,8 @@ export class AutomationStepPreviewService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly executor: AutomationStepExecutorService,
+    /** `app_action` previews resolve inputs against the action's FieldSpec. */
+    private readonly connectors: ConnectorRegistryService,
   ) {}
 
   /**
@@ -50,7 +56,11 @@ export class AutomationStepPreviewService {
     accountId: string,
     automationId: string | undefined,
     contactId?: string,
-  ): Promise<{ context: AutomationContext; contactId: string | null; note?: string }> {
+  ): Promise<{
+    context: AutomationContext;
+    contactId: string | null;
+    note?: string;
+  }> {
     const contact = contactId
       ? await this.prisma.contacts.findFirst({
           where: { id: contactId, account_id: accountId },
@@ -96,7 +106,8 @@ export class AutomationStepPreviewService {
         },
         message_text: lastInbound?.content_text ?? '',
         conversation_id: conversation?.id,
-        channel: (conversation?.channel as AutomationContext['channel']) ?? undefined,
+        channel:
+          (conversation?.channel as AutomationContext['channel']) ?? undefined,
         steps: automationId
           ? await this.lastRunOutputs(accountId, automationId)
           : {},
@@ -182,10 +193,57 @@ export class AutomationStepPreviewService {
         };
       }
 
+      /**
+       * A connected-app action.
+       *
+       * The preview shows the RESOLVED INPUT, not a request. There is no
+       * useful "what would be sent" here: the request shape is the
+       * connector's business and changes with the provider's API, while
+       * what the author actually needs to check is whether
+       * `{{ contact.email }}` came out as an address.
+       *
+       * Note this deliberately does not reach the provider. Google has
+       * no dry-run, so anything that talked to it would not be a
+       * preview — that is what the Test tab's confirmed run is for.
+       */
+      case 'app_action': {
+        const app = String(config.app ?? '');
+        const actionId = String(config.action ?? '');
+        const connector = this.connectors.find(app);
+        const action = connector?.actions.find((a) => a.id === actionId);
+
+        const input = action
+          ? interpolateAppActionInput(
+              action.inputs,
+              config.input as Record<string, unknown> | undefined,
+              context,
+            )
+          : interpolateDeep(config.input ?? {}, context);
+
+        return {
+          summary: connector
+            ? `${connector.name}: ${action?.label ?? (actionId || '(no action)')}`
+            : `(unknown app "${app}")`,
+          payload: {
+            app: connector?.name ?? app,
+            action: action?.label ?? actionId,
+            // Flagged rather than hidden: an author testing a send needs
+            // to know it will really send before they press the button.
+            sends_for_real: action?.irreversible ?? false,
+            input,
+          },
+          unresolved,
+        };
+      }
+
       case 'send_message':
       case 'add_note': {
         const text = interpolate(String(config.text ?? ''), context);
-        return { summary: text || '(empty message)', payload: { text }, unresolved };
+        return {
+          summary: text || '(empty message)',
+          payload: { text },
+          unresolved,
+        };
       }
 
       case 'send_media':
@@ -320,10 +378,7 @@ export class AutomationStepPreviewService {
  * resolves an unknown token to an empty string and sends the message
  * anyway.
  */
-function findUnresolved(
-  config: unknown,
-  context: AutomationContext,
-): string[] {
+function findUnresolved(config: unknown, context: AutomationContext): string[] {
   const out = new Set<string>();
   const walk = (value: unknown) => {
     if (typeof value === 'string') {

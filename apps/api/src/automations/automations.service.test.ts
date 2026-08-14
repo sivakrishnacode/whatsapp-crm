@@ -65,6 +65,11 @@ describe('AutomationsService', () => {
     service = new AutomationsService(
       prisma as unknown as PrismaService,
       stepsTree as unknown as AutomationStepsTreeService,
+      // The connector registry is only consulted for `app_action` steps,
+      // which none of these fixtures use. The real one is a pure
+      // in-memory lookup, so this could equally be the genuine article —
+      // a stub keeps the failure obvious if a fixture ever grows one.
+      { find: () => undefined } as never,
     );
   });
 

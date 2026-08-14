@@ -34,6 +34,7 @@ import {
   ListChecks,
   MessageSquare,
   PencilLine,
+  Plug,
   Repeat2,
   Shuffle,
   SquareStack,
@@ -170,6 +171,15 @@ export interface StepMeta {
   outputs?: { path: string; label: string }[];
   /** Hidden from the add menu — kept only so old automations still open. */
   deprecated?: boolean;
+  /**
+   * Hidden from the add menu because it is offered a BETTER way.
+   *
+   * Distinct from `deprecated`, which means "do not use this any more".
+   * `app_action` is hidden because the dialog lists connected apps and
+   * their individual actions instead — the step type is current, it just
+   * has no useful generic entry.
+   */
+  hidden?: boolean;
 }
 
 export const STEP_META: Record<AutomationStepType, StepMeta> = {
@@ -370,6 +380,33 @@ export const STEP_META: Record<AutomationStepType, StepMeta> = {
       { path: 'body', label: 'Response body' },
     ],
   },
+  /**
+   * A connected-app action.
+   *
+   * ⚠️ THIS ENTRY IS A FALLBACK, NOT WHAT USERS NORMALLY SEE.
+   *   One step type covers every app and every action, so a static label
+   *   here would put "App action" on a card that is really "Google
+   *   Sheets: Append row". `appActionLabel()` below resolves the real
+   *   one from the catalogue plus the step's own config; the node card
+   *   and the inspector both call it. These values only show while the
+   *   catalogue is still loading, or for an app that has since been
+   *   removed.
+   *
+   *   It is also absent from ADDABLE_STEPS (via `hidden`): the add
+   *   dialog lists connected apps and their actions individually, which
+   *   is the discoverable form. A generic "App action" entry alongside
+   *   them would be a second, worse route to the same thing.
+   */
+  app_action: {
+    label: 'App action',
+    icon: Plug,
+    category: 'data',
+    blurb: 'Runs an action on a connected app',
+    hidden: true,
+    // Real outputs are per action and come from the catalogue —
+    // `outputsForStep()` merges them in for the token picker.
+    outputs: [],
+  },
   set_variable: {
     label: 'Set variable',
     icon: Braces,
@@ -401,14 +438,40 @@ export const STEP_META: Record<AutomationStepType, StepMeta> = {
 };
 
 /** Types offered in the add menu, in category order. Deprecated types
- *  are readable but not offerable — see STEP_META.deprecated. */
+ *  are readable but not offerable — see STEP_META.deprecated. `hidden`
+ *  ones are current but offered a better way (see `app_action`). */
 export const ADDABLE_STEPS: AutomationStepType[] = STEP_CATEGORIES.flatMap(
   (category) =>
     (Object.keys(STEP_META) as AutomationStepType[]).filter(
       (type) =>
-        STEP_META[type].category === category.id && !STEP_META[type].deprecated,
+        STEP_META[type].category === category.id &&
+        !STEP_META[type].deprecated &&
+        !STEP_META[type].hidden,
     ),
 );
+
+/**
+ * What a step is actually called, for `app_action` steps.
+ *
+ * The card, the inspector header and the diagnostics list all show a
+ * step's name, and for an app action that name lives in the catalogue
+ * rather than in STEP_META. Falling back to the app id (then to the
+ * generic label) means a catalogue that has not loaded yet, or an app
+ * that has been withdrawn, still renders something a human can place —
+ * "google_sheets: append_row" beats "App action".
+ */
+export function appActionLabel(
+  config: { app?: string; action?: string } | undefined,
+  apps: { app: string; name: string; actions: { id: string; label: string }[] }[],
+): string {
+  const appId = config?.app;
+  const actionId = config?.action;
+  if (!appId || !actionId) return STEP_META.app_action.label;
+
+  const app = apps.find((a) => a.app === appId);
+  const action = app?.actions.find((a) => a.id === actionId);
+  return `${app?.name ?? appId}: ${action?.label ?? actionId}`;
+}
 
 export function groupStepsByCategory(types: AutomationStepType[]): {
   id: StepCategory;

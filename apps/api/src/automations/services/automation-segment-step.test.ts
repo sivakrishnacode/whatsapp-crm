@@ -66,6 +66,9 @@ function makeService(segments: ReturnType<typeof makeSegmentsMock>) {
     segments as unknown as SegmentMembershipService,
     // start_flow only; a segment step never reaches it.
     { startForContact: vi.fn() } as never,
+    // app_action only; likewise unreachable from a segment step.
+    { requireAction: vi.fn(), require: vi.fn() } as never,
+    { run: vi.fn() } as never,
     { add: vi.fn() } as never,
   );
   // runStep is private by design — it is an interpreter step, not an

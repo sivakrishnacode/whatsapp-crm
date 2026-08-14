@@ -1,19 +1,31 @@
 /**
  * Third-party apps in the step picker.
  *
+ * ⚠️ NOT EVERY APP IS A PRESET ANY MORE — READ THIS BEFORE ADDING ONE.
+ *   Google Sheets, Gmail, Google Calendar and Google Meet GRADUATED to
+ *   real OAuth connectors (`src/connections` in the API, the `app_action`
+ *   step type, docs/app-connections.md). They have stored connections,
+ *   refreshable tokens and typed action catalogues. Do not add a preset
+ *   for any of them: two Google Sheets entries in one picker — one real,
+ *   one asking for an Apps Script URL — is worse than either alone.
+ *
+ *   The step picker shows connected apps FIRST and these second, under
+ *   "Other services", so the difference is visible rather than implied.
+ *
  * WHAT THESE ARE, HONESTLY
  *   Each one is an `http_request` step with the service's URL shape,
  *   method, headers and body pre-filled. There is no OAuth, no stored
  *   connection and no per-app action catalogue — you paste your own
  *   webhook URL or API key into the step.
  *
- * WHY THAT IS THE RIGHT TRADE HERE
- *   A real connector per app is a product in itself: an OAuth flow, token
- *   refresh, scope handling and a typed action list for each service, all
- *   of which break independently when the vendor changes something.
- *   Presets get somebody from "I want to post to Slack" to a working step
- *   in one click, work with any service on the internet rather than a
- *   list of twelve, and cannot silently expire at 3am.
+ * WHY PRESETS STILL EXIST ALONGSIDE REAL CONNECTORS
+ *   A connector per app is a product in itself: an OAuth flow, token
+ *   refresh, scope handling, a typed action list, and — for Google — an
+ *   app-verification review. That is worth paying for the handful of
+ *   services most customers use every day, and not worth it for the long
+ *   tail. Presets get somebody from "I want to post to Slack" to a
+ *   working step in one click, work with ANY service on the internet
+ *   rather than a fixed list, and cannot silently expire at 3am.
  *
  * WHAT WE MUST NOT DO
  *   Imply a connection exists. Every preset says what it needs in
@@ -71,22 +83,6 @@ export const APP_PRESETS: AppPreset[] = [
     stepType: 'http_request',
     config: jsonPost('https://hooks.slack.com/services/REPLACE/ME', {
       text: 'New enquiry from {{ contact.name }} ({{ contact.phone }})',
-    }),
-  },
-  {
-    id: 'google_sheets',
-    name: 'Google Sheets',
-    blurb: 'Append a row via a Sheets-connected endpoint',
-    credentialHint:
-      'Needs an Apps Script web-app URL, or a Sheets API token in Authentication',
-    monogram: 'GS',
-    hue: 'oklch(0.62 0.15 150)',
-    stepType: 'http_request',
-    config: jsonPost('https://script.google.com/macros/s/REPLACE/exec', {
-      name: '{{ contact.name }}',
-      phone: '{{ contact.phone }}',
-      message: '{{ message.text }}',
-      received_at: '{{ now.iso }}',
     }),
   },
   {

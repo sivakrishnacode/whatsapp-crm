@@ -36,6 +36,10 @@ import { STEP_META } from '@/lib/automations/step-meta';
 import { stepAvailability, type Availability } from '@/lib/automations/availability';
 import { validateStep } from '@/lib/automations/validate';
 import { declaredVariables, precedingSteps } from '@/lib/automations/tokens';
+import type {
+  AppConnection,
+  CatalogApp,
+} from '@/lib/automations/connectors';
 import type { AutomationStepType, AutomationTriggerType } from '@/types';
 
 export type DiagnosticLevel = 'error' | 'warning' | 'info';
@@ -58,6 +62,9 @@ export interface DiagnosticsInput {
   segments?: { id: string; name: string; kind?: string }[];
   flows?: { id: string; name: string; status?: string }[];
   automations?: { id: string; name: string; is_active?: boolean }[];
+  /** Connected-app catalogue + this workspace's connections. */
+  apps?: CatalogApp[];
+  connections?: AppConnection[];
   currentAutomationId?: string;
 }
 
@@ -451,6 +458,106 @@ function checkStepSpecifics(
           detail:
             'Its members are worked out from its rules, so nothing can be added to or removed from it. This step fails every time it runs.',
         });
+      }
+      break;
+    }
+
+    /**
+     * A connected-app action.
+     *
+     * These checks MIRROR the server's, which is the rule for this whole
+     * file: `validateAppConnections` in AutomationsService refuses to
+     * activate for the same three reasons. The difference is timing —
+     * here it is visible while editing, there it is the actual gate.
+     *
+     * They matter more than most because run-time failure is silent by
+     * design: a revoked Google connection turns "email the customer"
+     * into "quietly do nothing", and the first anybody hears is a
+     * customer who never got a reply.
+     */
+    case 'app_action': {
+      // Degrade silently when the catalogue has not loaded — a check
+      // that fires because a fetch is in flight is noise.
+      if (!input.apps?.length) break;
+
+      const app = input.apps.find((a) => a.app === cfg.app);
+      if (!app) {
+        out.push({
+          level: 'error',
+          stepKey: step.key,
+          title: 'This app is no longer available',
+          detail: `The step is set to “${String(cfg.app ?? 'an unknown app')}”, which this workspace can no longer use. Pick another app or delete the step.`,
+        });
+        break;
+      }
+
+      const action = app.actions.find((a) => a.id === cfg.action);
+      if (!action) {
+        out.push({
+          level: 'error',
+          stepKey: step.key,
+          title: `${app.name} has no “${String(cfg.action ?? '')}” action`,
+          detail:
+            'It was probably renamed or withdrawn. Choose an action from the list.',
+        });
+        break;
+      }
+
+      const connection = input.connections?.find(
+        (c) => c.id === cfg.connection_id,
+      );
+      if (!cfg.connection_id || !connection) {
+        out.push({
+          level: 'error',
+          stepKey: step.key,
+          title: `No ${app.name} account on this step`,
+          detail: `Connect a ${app.name} account and choose it here, or this step fails every time it runs.`,
+        });
+        break;
+      }
+
+      if (connection.status !== 'active') {
+        out.push({
+          level: 'error',
+          stepKey: step.key,
+          title: `${connection.displayName ?? app.name} needs reconnecting`,
+          detail:
+            'Google has stopped accepting the stored credentials — usually because access was revoked, or a password changed. Reconnect it from Integrations.',
+        });
+        break;
+      }
+
+      if (action.scopes.some((scope) => !connection.scopes.includes(scope))) {
+        out.push({
+          level: 'error',
+          stepKey: step.key,
+          title: `${connection.displayName ?? 'This account'} has not approved ${app.name}`,
+          detail: `The account is connected but was never given ${app.name} access. Reconnect it and approve ${app.name}.`,
+        });
+        break;
+      }
+
+      for (const spec of action.inputs) {
+        if (!spec.required) continue;
+        const value = (cfg.input as Record<string, unknown> | undefined)?.[
+          spec.key
+        ];
+        const empty =
+          value === undefined ||
+          value === null ||
+          (typeof value === 'string' && value.trim() === '') ||
+          (Array.isArray(value) && value.length === 0) ||
+          (spec.kind === 'key_values' &&
+            typeof value === 'object' &&
+            Object.keys(value as object).length === 0);
+        if (empty) {
+          out.push({
+            level: 'error',
+            stepKey: step.key,
+            title: `“${spec.label}” is empty`,
+            detail: `${app.name}: ${action.label} cannot run without it.`,
+          });
+        }
       }
       break;
     }

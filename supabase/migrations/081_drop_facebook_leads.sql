@@ -1,0 +1,63 @@
+-- ============================================================
+-- 081_drop_facebook_leads.sql — remove the Facebook Leads integration.
+--
+-- WHAT IS BEING REMOVED
+--
+--   The "Facebook Leads" integration: a Facebook-JS-SDK connect flow in
+--   the browser, a long-lived user token stored IN PLAINTEXT in
+--   `facebook_connections.access_token`, one row per Page in
+--   `facebook_pages` (also a plaintext token), and a per-Page
+--   `is_syncing` toggle that subscribed the Page to Meta's `leads`
+--   webhook field.
+--
+-- WHY
+--
+--   Three reasons, in order of weight.
+--
+--   1. It duplicates the Ads Manager. `meta_ads_config` (migration 068)
+--      already stores a connected Page and an ENCRYPTED page token,
+--      obtained through a server-side OAuth redirect rather than a token
+--      minted in page JavaScript. Two tables holding two tokens for the
+--      same Page, with different security properties, is a liability
+--      that grows quietly.
+--
+--   2. Those plaintext tokens. `facebook_connections` predates
+--      `common/security/encryption.util.ts` being applied consistently
+--      and was a documented outstanding fix. Deleting the table closes
+--      it permanently, which is better than encrypting a column nobody
+--      should be writing to any more.
+--
+--   3. The integration was keyed by USER, not account. `facebook_pages`
+--      is unique on (user_id, page_id) and the lead ingest resolved a
+--      tenant by Page -> user -> Profile -> account. An invited teammate
+--      connecting their own Facebook account produced a second, parallel
+--      connection for the same workspace.
+--
+-- WHAT IS NOT BEING REMOVED — READ THIS BEFORE "FINISHING THE JOB"
+--
+--   `/webhooks/facebook-leads` STAYS, and so does everything behind it.
+--   The Ads Manager's lead-form ad type publishes Meta lead forms whose
+--   submissions arrive on that exact endpoint; it is the only consumer
+--   now, so the controller, the ingest service and the lead-fetch queue
+--   processor moved from `src/integrations` into `src/ads` in the same
+--   change. The endpoint path is unchanged because it is registered in
+--   the Meta app dashboard — renaming it drops every lead in flight.
+--
+--   Tenant resolution moved with it: the ingest reads `meta_ads_config`
+--   by `page_id` (which carries account_id and user_id directly, and an
+--   encrypted page token) instead of the three-hop lookup through the
+--   tables this migration drops.
+--
+--   `ctwa_campaigns` / `ctwa_clicks` are unrelated and untouched.
+--
+-- IRREVERSIBLE, AND DELIBERATELY SO
+--
+--   Dropping these tables discards the stored tokens. That is the point:
+--   a token nobody can reach is a token nobody can leak. Any workspace
+--   still relying on lead sync reconnects its Page through Ads Manager,
+--   which is where Page connection belongs.
+-- ============================================================
+
+-- Order matters: facebook_pages FKs facebook_connections.
+drop table if exists public.facebook_pages;
+drop table if exists public.facebook_connections;

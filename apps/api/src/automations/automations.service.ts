@@ -12,6 +12,7 @@ import {
   type BuilderStepNode,
 } from './services/automation-steps-tree.service';
 import { getTemplate } from './services/automation-templates';
+import { ConnectorRegistryService } from '../connections/services/connector-registry.service';
 import {
   validateStepsForActivation,
   validateTriggerForActivation,
@@ -39,6 +40,8 @@ export class AutomationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stepsTree: AutomationStepsTreeService,
+    /** `app_action` activation checks — see validateAppConnections. */
+    private readonly connectors: ConnectorRegistryService,
   ) {}
 
   async list(accountId: string): Promise<AutomationJson[]> {
@@ -83,14 +86,14 @@ export class AutomationsService {
     // (is_active=false) are allowed to be incomplete so users can save
     // progress mid-build.
     if (body.is_active) {
+      const steps = (effectiveSteps ?? []) as unknown as {
+        step_type: string;
+        step_config: Record<string, unknown>;
+      }[];
       const issues = [
         ...validateTriggerForActivation(triggerType, triggerConfig ?? {}),
-        ...validateStepsForActivation(
-          (effectiveSteps ?? []) as unknown as {
-            step_type: string;
-            step_config: Record<string, unknown>;
-          }[],
-        ),
+        ...validateStepsForActivation(steps),
+        ...(await this.validateAppConnections(accountId, steps)),
       ];
       if (issues.length > 0) {
         throw new BadRequestException({
@@ -144,6 +147,10 @@ export class AutomationsService {
       where: { id },
       select: {
         userId: true,
+        // Needed to scope the app-connection check below: a step's
+        // connection_id is author-supplied and must be verified against
+        // the automation's OWN account, never taken on trust.
+        accountId: true,
         isActive: true,
         triggerType: true,
         triggerConfig: true,
@@ -188,6 +195,7 @@ export class AutomationsService {
       const issues = [
         ...validateTriggerForActivation(mergedTriggerType, mergedTriggerConfig),
         ...validateStepsForActivation(mergedSteps),
+        ...(await this.validateAppConnections(existing.accountId, mergedSteps)),
       ];
       if (issues.length > 0) {
         throw new BadRequestException({
@@ -307,6 +315,140 @@ export class AutomationsService {
           }
         : null,
     }));
+  }
+
+  /**
+   * The half of `app_action` validation that needs the database.
+   *
+   * `validateStepsForActivation` is pure and synchronous — it checks the
+   * step's shape. This checks the world: that the app and action still
+   * exist in the registry, that the connection is real, still authorised
+   * and IN THIS WORKSPACE, and that it has granted the scopes the action
+   * needs.
+   *
+   * WHY THIS BLOCKS ACTIVATION RATHER THAN FAILING AT RUN TIME
+   *   Everything that goes wrong during an automation run is silent by
+   *   design: an unsupported step is skipped, an unknown token is empty.
+   *   A revoked Google connection would therefore turn "email the
+   *   customer" into "quietly do nothing", and the first anyone hears of
+   *   it is a customer who never got a reply. Activation is the last
+   *   moment somebody is actually looking at the automation.
+   *
+   * ⚠️ The `account_id` filter is the tenant boundary. A connection id
+   *   arrives in author-editable config and Prisma bypasses RLS, so a
+   *   pasted id from another workspace must read as "not found" here —
+   *   which it does, because the query never widens beyond this account.
+   */
+  private async validateAppConnections(
+    accountId: string,
+    steps: { step_type: string; step_config: Record<string, unknown> }[],
+  ): Promise<{ path: string; message: string }[]> {
+    const issues: { path: string; message: string }[] = [];
+
+    const appSteps = steps
+      .map((step, index) => ({ step, index }))
+      .filter(({ step }) => step.step_type === 'app_action');
+    if (appSteps.length === 0) return issues;
+
+    const ids = Array.from(
+      new Set(
+        appSteps
+          .map(({ step }) => String(step.step_config?.connection_id ?? ''))
+          .filter(Boolean),
+      ),
+    );
+
+    const rows = ids.length
+      ? await this.prisma.app_connections.findMany({
+          where: { id: { in: ids }, account_id: accountId },
+          select: {
+            id: true,
+            scopes: true,
+            status: true,
+            displayName: true,
+          },
+        })
+      : [];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    for (const { step, index } of appSteps) {
+      const path = `steps.${index}`;
+      const cfg = step.step_config ?? {};
+      const app = String(cfg.app ?? '');
+      const actionId = String(cfg.action ?? '');
+      const connectionId = String(cfg.connection_id ?? '');
+
+      // Shape problems are already reported by validateStepsForActivation;
+      // reporting them twice would show the author the same issue in two
+      // places.
+      if (!app || !actionId || !connectionId) continue;
+
+      const connector = this.connectors.find(app);
+      if (!connector) {
+        issues.push({ path: `${path}.app`, message: `unknown app "${app}"` });
+        continue;
+      }
+      const action = connector.actions.find((a) => a.id === actionId);
+      if (!action) {
+        issues.push({
+          path: `${path}.action`,
+          message: `${connector.name} has no "${actionId}" action`,
+        });
+        continue;
+      }
+
+      const connection = byId.get(connectionId);
+      if (!connection) {
+        issues.push({
+          path: `${path}.connection_id`,
+          message: `the ${connector.name} account for this step is no longer connected`,
+        });
+        continue;
+      }
+      if (connection.status !== 'active') {
+        issues.push({
+          path: `${path}.connection_id`,
+          message: `${connection.displayName ?? connector.name} needs to be reconnected`,
+        });
+        continue;
+      }
+
+      const missing = action.scopes.filter(
+        (scope) => !connection.scopes.includes(scope),
+      );
+      if (missing.length > 0) {
+        issues.push({
+          path: `${path}.connection_id`,
+          message: `${connection.displayName ?? 'this account'} has not granted access to ${connector.name} — reconnect it and approve ${connector.name}`,
+        });
+      }
+
+      // Required inputs are checked against the action's own FieldSpec,
+      // so the registry stays the single authority on what a field is
+      // called and whether it is needed.
+      for (const spec of action.inputs) {
+        if (!spec.required) continue;
+        const value = (cfg.input as Record<string, unknown> | undefined)?.[
+          spec.key
+        ];
+        const empty =
+          value === undefined ||
+          value === null ||
+          (typeof value === 'string' && value.trim() === '') ||
+          (Array.isArray(value) && value.length === 0) ||
+          (spec.kind === 'key_values' &&
+            typeof value === 'object' &&
+            Object.keys(value).length === 0);
+        if (empty) {
+          issues.push({
+            path: `${path}.input.${spec.key}`,
+            message: `"${spec.label}" is required`,
+          });
+        }
+      }
+    }
+
+    return issues;
   }
 
   private toAutomationJson(row: Automation): AutomationJson {

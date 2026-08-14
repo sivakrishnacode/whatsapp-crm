@@ -61,7 +61,14 @@ const CAPABILITIES: Record<Channel, Capabilities> = {
   },
 };
 
-/** Which capability a step needs, if any. */
+/**
+ * Which capability a step needs, if any.
+ *
+ * `app_action` is deliberately absent, as are `http_request` and the
+ * data steps: they send nothing through a channel, so no channel can
+ * fail to support them. A Google Sheets row is appended identically
+ * whether the trigger came from WhatsApp, Instagram or a form.
+ */
 const STEP_REQUIRES: Partial<Record<AutomationStepType, keyof Capabilities>> = {
   send_template: 'templates',
   send_buttons: 'buttons',

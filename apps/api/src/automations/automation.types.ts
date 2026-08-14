@@ -134,6 +134,29 @@ export type AutomationStepType =
    * ancestor so every automation written before this keeps working.
    */
   | 'http_request'
+  /**
+   * Run a named action on a connected third-party app — "Google Sheets:
+   * Append row", "Gmail: Send email".
+   *
+   * ONE STEP TYPE FOR EVERY APP AND EVERY ACTION, ON PURPOSE.
+   *   The app and the action are DATA in `step_config`, resolved through
+   *   the connector registry in `src/connections`. The alternative —
+   *   `google_sheets_append_row`, `gmail_send_email`, … as union members
+   *   — puts every new action into this union, the executor switch, the
+   *   validator, the DTO, the web registry and the field renderer: five
+   *   files per action, forever. The picker still shows each action as a
+   *   first-class entry because it reads the same registry.
+   *
+   *   The cost of this choice is that the type system cannot check an
+   *   action's inputs. `FieldSpec` does it instead, at run time, from
+   *   the one definition the editor also renders from.
+   *
+   * Unlike `http_request`, the credential is NOT in the config: it is a
+   * connection id pointing at an encrypted, refreshable token that no
+   * automation author can read. That is the whole difference between
+   * this and pasting an API key into a webhook step.
+   */
+  | 'app_action'
   | 'send_webhook'
   | 'close_conversation'
   /** Set the conversation to open / pending / closed. */
@@ -452,6 +475,34 @@ export interface SendWebhookStepConfig extends CommonStepOptions {
   ignore_http_errors?: boolean;
 }
 
+/**
+ * A connected-app action.
+ *
+ * ⚠️ `connection_id` IS AUTHOR-SUPPLIED DATA, NOT AUTHORITY.
+ *   It arrives in a config blob that anyone who can edit the automation
+ *   controls, and Prisma bypasses RLS. Every read of it must be filtered
+ *   by the running automation's `account_id` — the same trap as
+ *   `segment_id` in SegmentStepConfig, with a bigger prize: a Google
+ *   refresh token rather than a contact list.
+ *
+ * `app` is stored alongside `action` even though the registry could
+ * derive it, because an action id is only unique within its app —
+ * `create_event` could plausibly exist on two of them.
+ */
+export interface AppActionStepConfig extends CommonStepOptions {
+  connection_id: string;
+  /** Connector id, e.g. `google_sheets`. */
+  app: string;
+  /** Action id within that connector, e.g. `append_row`. */
+  action: string;
+  /**
+   * Field values keyed by `FieldSpec.key`. Every string is interpolated
+   * before the call when the spec says `tokens: true`, and validated
+   * against the spec either way.
+   */
+  input?: Record<string, unknown>;
+}
+
 export interface SetVariableStepConfig extends CommonStepOptions {
   /** Variable name, addressed later as `{{ vars.<name> }}`. */
   name: string;
@@ -557,6 +608,7 @@ export type AutomationStepConfig =
   | WaitStepConfig
   | ConditionStepConfig
   | SendWebhookStepConfig
+  | AppActionStepConfig
   | SendFormStepConfig
   | SendBookingLinkStepConfig
   | Record<string, never>

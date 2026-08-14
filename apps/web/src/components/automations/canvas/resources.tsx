@@ -24,6 +24,10 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import type { SampleData } from '@/lib/automations/tokens';
 import type {
+  AppConnection,
+  CatalogApp,
+} from '@/lib/automations/connectors';
+import type {
   AccountMember,
   Automation,
   ContactSegment,
@@ -54,6 +58,15 @@ interface PipelineStageOption {
 
 export interface AutomationResources {
   tags: TagRecord[];
+  /**
+   * Connected-app catalogue and the workspace's connections.
+   *
+   * Both FETCHED, never hard-coded: the API validates against the same
+   * field specs it serves here, so one authority means a field cannot
+   * render without validating. See lib/automations/connectors.ts.
+   */
+  apps: CatalogApp[];
+  connections: AppConnection[];
   segments: ContactSegment[];
   members: AccountMember[];
   templates: MessageTemplate[];
@@ -71,6 +84,8 @@ export interface AutomationResources {
 
 const EMPTY: AutomationResources = {
   tags: [],
+  apps: [],
+  connections: [],
   segments: [],
   members: [],
   templates: [],
@@ -204,6 +219,31 @@ export function AutomationResourcesProvider({
       } catch {
         // Optional — only "run automation" and the keyword-conflict
         // warning need it.
+      }
+    })();
+
+    // The connected-app catalogue and this workspace's connections. Two
+    // requests rather than one because the catalogue is static per
+    // deploy while connections change whenever somebody connects an
+    // account — and only the second needs re-fetching after an OAuth
+    // round trip.
+    void (async () => {
+      try {
+        const [catalogRes, connectionsRes] = await Promise.all([
+          fetch('/api/connections/catalog', { cache: 'no-store' }),
+          fetch('/api/connections', { cache: 'no-store' }),
+        ]);
+        const apps = catalogRes.ok
+          ? ((await catalogRes.json()) as { apps?: CatalogApp[] }).apps ?? []
+          : [];
+        const connections = connectionsRes.ok
+          ? ((await connectionsRes.json()) as { connections?: AppConnection[] })
+              .connections ?? []
+          : [];
+        if (!cancelled) setState((s) => ({ ...s, apps, connections }));
+      } catch {
+        // Optional — only `app_action` steps need it, and the inspector
+        // says so plainly when the list is empty.
       }
     })();
 

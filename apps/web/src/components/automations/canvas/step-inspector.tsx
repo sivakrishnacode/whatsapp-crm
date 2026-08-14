@@ -19,6 +19,7 @@ import { Ban, Copy, TriangleAlert, X } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StepTestPanel } from './step-test-panel';
 import { AddStepDialog } from './add-step-dialog';
+import { useAutomationResources } from './resources';
 import { STEP_CATEGORIES } from '@/lib/automations/step-meta';
 import type { AutomationStepType } from '@/types';
 import { toast } from 'sonner';
@@ -35,7 +36,12 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { STEP_META, StepIconChip, stepColors } from '@/lib/automations/step-meta';
+import {
+  STEP_META,
+  appActionLabel,
+  StepIconChip,
+  stepColors,
+} from '@/lib/automations/step-meta';
 import type { Availability } from '@/lib/automations/availability';
 import type { BuilderStep } from '@/lib/automations/graph';
 import type { TokenGroup } from '@/lib/automations/tokens';
@@ -70,7 +76,18 @@ export function StepInspector({
   onDelete: () => void;
   onClose: () => void;
 }) {
+  const { apps } = useAutomationResources();
   const meta = STEP_META[step.step_type];
+  // Same reason as the node card: an app action's name comes from the
+  // catalogue, so the inspector header says which app and action rather
+  // than the generic type label.
+  const headerLabel =
+    step.step_type === 'app_action'
+      ? appActionLabel(
+          step.step_config as { app?: string; action?: string },
+          apps,
+        )
+      : (meta?.label ?? step.step_type);
   const c = stepColors(step.step_type);
   const cfg = step.step_config;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -84,7 +101,7 @@ export function StepInspector({
   return (
     <aside
       id="step-inspector"
-      aria-label={`${meta?.label ?? 'Step'} settings`}
+      aria-label={`${headerLabel} settings`}
       style={{ '--nc-text': c.text } as React.CSSProperties}
       className="border-border bg-popover flex h-full min-h-0 w-full flex-col border-l"
     >
@@ -100,7 +117,7 @@ export function StepInspector({
               {meta?.category ?? 'step'}
             </div>
             <h2 className="text-foreground truncate text-sm font-semibold">
-              {meta?.label ?? step.step_type}
+              {headerLabel}
             </h2>
           </div>
           <label className="flex shrink-0 flex-col items-center gap-1">
@@ -166,7 +183,7 @@ export function StepInspector({
             >
               <StepIconChip type={step.step_type} size={22} iconSize={12} className="rounded-md" />
               <span className="text-foreground text-[12.5px]">
-                {meta?.label ?? step.step_type}
+                {headerLabel}
               </span>
               <span className="text-muted-foreground ml-auto text-[11px]">
                 Change
@@ -390,6 +407,23 @@ export function StepInspector({
         open={changingType}
         onOpenChange={setChangingType}
         onPickStep={(type) => onChangeType(type)}
+        onPickAction={(app, action) => {
+          // Changing an existing step INTO an app action. The connection
+          // is left unset deliberately — this path has no way to know
+          // which account was meant, and guessing one would silently
+          // decide whose mailbox an email goes out from.
+          onChangeType('app_action');
+          onChangeConfig({
+            app: app.app,
+            action: action.id,
+            connection_id: '',
+            input: Object.fromEntries(
+              action.inputs
+                .filter((spec) => spec.default !== undefined)
+                .map((spec) => [spec.key, spec.default]),
+            ),
+          });
+        }}
         onPickApp={(preset) => {
           onChangeType(preset.stepType);
           onChangeConfig(preset.config);

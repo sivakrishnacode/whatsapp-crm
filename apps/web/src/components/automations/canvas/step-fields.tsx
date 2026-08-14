@@ -28,6 +28,7 @@ import {
   TokenInput,
 } from './token-field';
 import { useAutomationResources } from './resources';
+import { AppActionFields } from './app-action-fields';
 
 const SELECT_CLASS =
   'border-border bg-muted text-foreground focus:border-primary h-8 w-full rounded-lg border px-2 py-1 text-sm focus:outline-none';
@@ -122,6 +123,10 @@ export function StepFields(props: StepFieldsProps) {
       return <ConditionFields {...props} />;
     case 'random_split':
       return <RandomSplitFields {...props} />;
+    case 'app_action':
+      // Rendered entirely from the action's FieldSpec list — see
+      // app-action-fields.tsx. No per-app form exists or should.
+      return <AppActionFields {...props} />;
     case 'http_request':
     case 'send_webhook':
       return <HttpRequestFields {...props} />;

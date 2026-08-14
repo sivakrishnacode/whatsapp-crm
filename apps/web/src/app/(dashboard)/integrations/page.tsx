@@ -40,6 +40,7 @@ import {
 } from 'lucide-react';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
+import { ConnectedApps } from '@/components/integrations/connected-apps';
 import type { EcommerceIntegration } from '@/types';
 
 export default function IntegrationsPage() {
@@ -47,8 +48,6 @@ export default function IntegrationsPage() {
   const canCreate = useCan('edit-settings');
 
   const [loading, setLoading] = useState(true);
-  const [fbConnected, setFbConnected] = useState(false);
-  const [fbName, setFbName] = useState<string | null>(null);
   const [zapierCount, setZapierCount] = useState(0);
 
   // E-commerce state
@@ -70,19 +69,6 @@ export default function IntegrationsPage() {
   const fetchStatuses = async () => {
     try {
       setLoading(true);
-      // Check Facebook connection
-      const { data: fb } = await supabase
-        .from('facebook_connections')
-        .select('fb_user_name')
-        .maybeSingle();
-
-      if (fb) {
-        setFbConnected(true);
-        setFbName(fb.fb_user_name);
-      } else {
-        setFbConnected(false);
-        setFbName(null);
-      }
 
       // Fetch E-commerce integrations
       const res = await fetch('/api/ecommerce/integrations');
@@ -270,60 +256,25 @@ export default function IntegrationsPage() {
         </p>
       </div>
 
+      {/* Connected apps first: they are the ones that need no key, and
+          they are what the automations editor points people at. */}
+      <ConnectedApps />
+
+      <div>
+        <h2 className="text-foreground text-sm font-semibold">
+          Stores &amp; webhooks
+        </h2>
+        <p className="text-muted-foreground mt-1 text-xs">
+          These use API keys you generate in the other service.
+        </p>
+      </div>
+
       {loading ? (
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="size-8 animate-spin text-primary" />
         </div>
       ) : (
         <div className="flex flex-wrap gap-6">
-          <Card className="border-border bg-card/45 shadow-sm hover:shadow-md transition-shadow flex flex-col w-full max-w-[350px]">
-            <CardHeader className="pb-4">
-              <div className="flex items-start justify-between">
-                <div className="flex size-11 items-center justify-center rounded-xl bg-transparent">
-                  <img src="/icons/facebook.png" alt="Facebook" className="size-11 object-contain" />
-                </div>
-                {fbConnected ? (
-                  <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-green-600 dark:text-green-400 text-[10px] font-medium flex items-center gap-1">
-                    <CheckCircle className="size-3" />
-                    Connected
-                  </Badge>
-                ) : (
-                  <Badge variant="secondary" className="text-muted-foreground text-[10px] font-medium flex items-center gap-1">
-                    <XCircle className="size-3" />
-                    Not Configured
-                  </Badge>
-                )}
-              </div>
-              <CardTitle className="text-base mt-4 font-semibold text-foreground flex items-center gap-2">
-                Facebook Leads
-                <Badge variant="outline" className="border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] py-0 px-1.5 h-4.5 font-semibold">
-                  Beta
-                </Badge>
-              </CardTitle>
-              <CardDescription className="text-xs mt-1.5 leading-relaxed">
-                Sync leads from Facebook & Instagram Ad Forms to CRM contacts & pipeline deals.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1 py-0 pb-4">
-              {fbName && (
-                <div className="text-[11px] text-muted-foreground bg-muted/40 rounded px-2.5 py-1.5 font-mono truncate">
-                  User: {fbName}
-                </div>
-              )}
-            </CardContent>
-            <CardFooter className="pt-2 border-t border-border">
-              <Link href="/integrations/facebook" className="w-full">
-                <Button
-                  variant={fbConnected ? "outline" : "default"}
-                  className="w-full text-xs h-9 justify-between font-medium"
-                >
-                  {fbConnected ? 'Manage Integration' : 'Connect Account'}
-                  <ArrowRight className="size-3.5" />
-                </Button>
-              </Link>
-            </CardFooter>
-          </Card>
-
           {/* Shopify Integration Card */}
           <Card className="border-border bg-card/45 shadow-sm hover:shadow-md transition-shadow flex flex-col w-full max-w-[350px]">
             <CardHeader className="pb-4">

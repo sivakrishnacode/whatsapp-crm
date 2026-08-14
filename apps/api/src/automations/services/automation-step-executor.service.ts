@@ -12,6 +12,9 @@ import {
 import { SegmentMembershipService } from '../../common/segments/segment-membership.service';
 import { FlowDispatchService } from '../../flows/services/flow-dispatch.service';
 import { AutomationConditionService } from './automation-condition.service';
+import { ConnectorRegistryService } from '../../connections/services/connector-registry.service';
+import { ConnectorExecutionService } from '../../connections/services/connector-execution.service';
+import { interpolateAppActionInput } from './automation-app-action.util';
 import { interpolate, resolveValue } from './automation-interpolation.util';
 import {
   HttpStepError,
@@ -21,6 +24,7 @@ import {
 } from './automation-http.util';
 import type {
   AddNoteStepConfig,
+  AppActionStepConfig,
   AssignConversationStepConfig,
   AutomationContext,
   AutomationLogStepResult,
@@ -98,7 +102,8 @@ function truncateOutput(output: unknown): unknown {
     return {
       _truncated: true,
       _bytes: json.length,
-      _note: 'Too large to keep in the log. The full value was available to later steps at run time.',
+      _note:
+        'Too large to keep in the log. The full value was available to later steps at run time.',
     };
   } catch {
     // Circular or otherwise unserialisable — the run does not care, but
@@ -126,6 +131,9 @@ export class AutomationStepExecutorService {
      *  both sit at the same layer and each can now reach the other. */
     @Inject(forwardRef(() => FlowDispatchService))
     private readonly flows: FlowDispatchService,
+    /** `app_action` — the connected-app catalogue and its executor. */
+    private readonly connectors: ConnectorRegistryService,
+    private readonly connectorExecution: ConnectorExecutionService,
     @InjectQueue(AUTOMATIONS_PENDING_QUEUE) private readonly queue: Queue,
   ) {}
 
@@ -381,6 +389,44 @@ export class AutomationStepExecutorService {
         };
       }
 
+      case 'app_action': {
+        const cfg = step.stepConfig as AppActionStepConfig;
+        if (!cfg.app || !cfg.action) {
+          throw new Error('app_action needs an app and an action');
+        }
+        if (!cfg.connection_id) {
+          throw new Error(
+            `${cfg.app} is not connected — pick a connection on this step`,
+          );
+        }
+
+        const action = this.connectors.requireAction(cfg.app, cfg.action);
+        const input = interpolateAppActionInput(
+          action.inputs,
+          cfg.input,
+          args.context,
+        );
+
+        // ⚠️ accountId comes from the AUTOMATION, never from the step
+        // config. It is what scopes the connection lookup, and it is the
+        // only thing standing between a hand-edited `connection_id` and
+        // another workspace's Google account.
+        const result = await this.connectorExecution.run({
+          accountId: args.automation.accountId,
+          connectionId: cfg.connection_id,
+          app: cfg.app,
+          actionId: cfg.action,
+          input,
+        });
+
+        return {
+          detail:
+            result.detail ??
+            `${this.connectors.require(cfg.app).name}: ${action.label}`,
+          output: result.output,
+        };
+      }
+
       case 'set_variable': {
         const cfg = step.stepConfig as SetVariableStepConfig;
         const name = String(cfg.name ?? '').trim();
@@ -415,7 +461,10 @@ export class AutomationStepExecutorService {
             ? interpolate(cfg.filename, args.context)
             : undefined,
         });
-        return { detail: `${cfg.kind ?? 'image'} sent (${messageId})`, output: { message_id: messageId } };
+        return {
+          detail: `${cfg.kind ?? 'image'} sent (${messageId})`,
+          output: { message_id: messageId },
+        };
       }
 
       case 'send_buttons': {
@@ -449,7 +498,10 @@ export class AutomationStepExecutorService {
         });
         return {
           detail: `${buttons.length} button(s) sent (${messageId})`,
-          output: { message_id: messageId, button_ids: buttons.map((b) => b.id) },
+          output: {
+            message_id: messageId,
+            button_ids: buttons.map((b) => b.id),
+          },
         };
       }
 
@@ -457,7 +509,10 @@ export class AutomationStepExecutorService {
         const cfg = step.stepConfig as SendListStepConfig;
         if (!args.contactId) throw new Error('send_list needs a contact');
         const sections = (cfg.sections ?? []).map((s, si) => ({
-          title: interpolate(String(s.title ?? `Section ${si + 1}`), args.context),
+          title: interpolate(
+            String(s.title ?? `Section ${si + 1}`),
+            args.context,
+          ),
           rows: (s.rows ?? [])
             .map((r, ri) => ({
               id: (r.id?.trim() || `row_${si + 1}_${ri + 1}`).slice(0, 200),
@@ -492,7 +547,10 @@ export class AutomationStepExecutorService {
             ? interpolate(cfg.footer_text, args.context)
             : undefined,
         });
-        return { detail: `list sent (${messageId})`, output: { message_id: messageId } };
+        return {
+          detail: `list sent (${messageId})`,
+          output: { message_id: messageId },
+        };
       }
 
       case 'create_deal': {
@@ -587,7 +645,10 @@ export class AutomationStepExecutorService {
         if (updated.count === 0) {
           throw new Error('deal not found in this workspace');
         }
-        return { detail: `deal ${dealId} updated`, output: { deal_id: dealId } };
+        return {
+          detail: `deal ${dealId} updated`,
+          output: { deal_id: dealId },
+        };
       }
 
       case 'add_note': {
@@ -679,7 +740,8 @@ export class AutomationStepExecutorService {
 
       case 'run_automation': {
         const cfg = step.stepConfig as RunAutomationStepConfig;
-        if (!cfg.automation_id) throw new Error('run_automation needs a target');
+        if (!cfg.automation_id)
+          throw new Error('run_automation needs a target');
         if (cfg.automation_id === args.automation.id) {
           // Direct self-recursion is never what someone meant, and the
           // depth counter would only catch it three runs later.
@@ -699,7 +761,8 @@ export class AutomationStepExecutorService {
           },
           select: { id: true, name: true, isActive: true, userId: true },
         });
-        if (!target) throw new Error('that automation is not in this workspace');
+        if (!target)
+          throw new Error('that automation is not in this workspace');
         if (!target.isActive) {
           return { detail: `"${target.name}" is inactive — not run` };
         }
@@ -1282,7 +1345,10 @@ export class AutomationStepExecutorService {
   ): void {
     if (output === undefined) return;
     if (step.key) {
-      args.context.steps = { ...(args.context.steps ?? {}), [step.key]: output };
+      args.context.steps = {
+        ...(args.context.steps ?? {}),
+        [step.key]: output,
+      };
     }
     const saveAs = (step.stepConfig as CommonStepOptions)?.save_as?.trim();
     if (saveAs) {
@@ -1504,7 +1570,14 @@ export class AutomationStepExecutorService {
 
     const today = parts(now);
     let guess = new Date(
-      Date.UTC(today.year, today.month - 1, today.day + dayOffset, hour, minute, 0),
+      Date.UTC(
+        today.year,
+        today.month - 1,
+        today.day + dayOffset,
+        hour,
+        minute,
+        0,
+      ),
     );
     const atGuess = parts(guess);
     const wantedMinutes = hour * 60 + minute;

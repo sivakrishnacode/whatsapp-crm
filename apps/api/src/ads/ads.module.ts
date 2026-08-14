@@ -10,6 +10,10 @@ import { AdsInsightsController } from './controllers/ads-insights.controller';
 import { AdsPublishController } from './controllers/ads-publish.controller';
 import { AdsAssetsController } from './controllers/ads-assets.controller';
 import { AdsPrivacyController } from './controllers/ads-privacy.controller';
+import { LeadWebhookController } from './controllers/lead-webhook.controller';
+import { LeadIngestService } from './services/lead-ingest.service';
+import { LeadFetchProcessor } from './queues/lead-fetch.processor';
+import { V1Module } from '../v1/v1.module';
 import { ADS_SYNC_QUEUE, AdsSyncProcessor } from './ads-sync.processor';
 import { AdsConfigService } from './services/ads-config.service';
 import { AdsConnectService } from './services/ads-connect.service';
@@ -29,15 +33,19 @@ import { AdsAssetsService } from './services/ads-assets.service';
  * Structured to mirror WebModule and InstagramModule so the modules stay
  * diffable. Two differences worth knowing about:
  *
- *   * No webhook controller. Ads have no inbound events of their own —
- *     lead-form submissions arrive on the EXISTING
- *     `/webhooks/facebook-leads` endpoint in IntegrationsModule, and
- *     Click-to-WhatsApp conversations arrive as ordinary WhatsApp
- *     messages. Adding a second lead webhook here would mean two paths
- *     creating contacts from the same Meta event.
+ *   * One webhook controller, and only one. Lead-form submissions arrive
+ *     on `/webhooks/facebook-leads` (LeadWebhookController), which moved
+ *     here from IntegrationsModule with migration 081 when the Facebook
+ *     Leads integration was removed — this module became its only
+ *     consumer, so it now lives with its caller. Click-to-WhatsApp
+ *     conversations still arrive as ordinary WhatsApp messages; a second
+ *     lead path would mean two routes creating contacts from one Meta
+ *     event.
  *
  *   * Every controller sits behind `AdsEnabledGuard` as well as its auth
- *     guard. This module is unreleased and gated on Meta App Review for
+ *     guard — EXCEPT the privacy and lead webhooks, which Meta calls
+ *     regardless of our flag. See each controller's docblock.
+ *     This module is unreleased and gated on Meta App Review for
  *     `ads_management`; the flag is the release mechanism, not a
  *     convenience.
  *
@@ -54,7 +62,13 @@ import { AdsAssetsService } from './services/ads-assets.service';
  *   no longer has a worker for it.
  */
 @Module({
-  imports: [QueueModule, BullModule.registerQueue({ name: ADS_SYNC_QUEUE })],
+  // V1Module for WebhookDeliverService — a lead becoming a contact fires
+  // the same `contact.created` webhook as any other contact creation.
+  imports: [
+    QueueModule,
+    V1Module,
+    BullModule.registerQueue({ name: ADS_SYNC_QUEUE }),
+  ],
   controllers: [
     AdsConnectController,
     AdsOAuthController,
@@ -65,6 +79,10 @@ import { AdsAssetsService } from './services/ads-assets.service';
     // AdsEnabledGuard — see the controller docblock: a deletion request must
     // still be honoured after the feature is switched off.
     AdsPrivacyController,
+    // Lead-form submissions. Also not behind AdsEnabledGuard, for the
+    // neighbouring reason: Meta delivers to a Page subscription whatever
+    // our flag says, and 404ing makes Meta disable the subscription.
+    LeadWebhookController,
   ],
   providers: [
     AdsConfigService,
@@ -76,6 +94,8 @@ import { AdsAssetsService } from './services/ads-assets.service';
     AdsTargetingService,
     AdsAssetsService,
     AdsSyncProcessor,
+    LeadIngestService,
+    LeadFetchProcessor,
   ],
   exports: [AdsConfigService],
 })

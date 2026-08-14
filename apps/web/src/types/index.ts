@@ -751,6 +751,12 @@ export type AutomationStepType =
   // HTTP request whose response later steps can read. `send_webhook` is
   // its fire-and-forget ancestor, kept so existing automations run.
   | 'http_request'
+  // A named action on a connected app — "Google Sheets: Append row".
+  // ONE step type for every app and every action: the app and action are
+  // data in step_config, resolved through the connector catalogue served
+  // by GET /api/connections/catalog. The picker still lists each action
+  // separately. See docs/app-connections.md.
+  | 'app_action'
   | 'send_webhook'
   | 'close_conversation'
   | 'set_conversation_status'

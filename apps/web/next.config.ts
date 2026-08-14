@@ -167,6 +167,13 @@ const nextConfig: NextConfig = {
         { source: "/api/webhooks/:path*", destination: `${nestApiUrl}/webhooks/:path*` },
         { source: "/api/ecommerce/:path*", destination: `${nestApiUrl}/ecommerce/:path*` },
         { source: "/api/integrations/:path*", destination: `${nestApiUrl}/integrations/:path*` },
+        // OAuth app connections (Google Sheets/Gmail/Calendar/Meet).
+        // Includes /api/connections/oauth/callback: Google is configured
+        // with THIS origin as the redirect URI, so the callback must be
+        // reachable here and not only on the API's own domain. Same
+        // arrangement as the Ads Manager callback above.
+        { source: "/api/connections/:path*", destination: `${nestApiUrl}/connections/:path*` },
+        { source: "/api/connections", destination: `${nestApiUrl}/connections` },
         { source: "/api/internal/:path*", destination: `${nestApiUrl}/internal/:path*` },
         { source: "/api/ai/:path*", destination: `${nestApiUrl}/ai/:path*` },
         { source: "/api/ctwa/:path*", destination: `${nestApiUrl}/ctwa/:path*` },

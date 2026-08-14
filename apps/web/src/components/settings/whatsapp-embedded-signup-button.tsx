@@ -51,8 +51,9 @@ export function WhatsAppEmbeddedSignupButton({
   // to see what the other already captured.
   const sessionRef = useRef<EmbeddedSignupSession | null>(null);
 
-  // Load the Facebook JS SDK once. Same script-injection pattern as
-  // FacebookLeadsConfig (facebook-leads-config.tsx) — a second FB
+  // Load the Facebook JS SDK once. This is now the ONLY place in the app
+  // that loads it — the Facebook Leads integration that used the same
+  // pattern was removed with migration 081. A second FB
   // product on this page reuses the same window.FB instance, so the
   // "if (window.FB) return" guard prevents double-injecting the script
   // when both settings panels are mounted.

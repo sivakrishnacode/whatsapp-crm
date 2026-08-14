@@ -100,7 +100,7 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
 - ⚠️ **Supabase Storage buckets are written from the BROWSER, not the API** (`avatars`, `flow-media` 016/020, `chat-media` 023, `workspace-logos` 071). The bucket's RLS policy is therefore the _only_ gate on those writes — it must carry the authorization itself, including any role check. Account-scoped buckets all use the path convention `account-<account_id>/…` matched on the first folder segment, built in one place by `buildMediaPath()` (`apps/web/src/lib/storage/upload-media.ts`); a hand-rolled path is silently rejected. When such a URL is later persisted to a column, pin it to our own bucket _and_ the caller's own folder server-side (`common/storage/workspace-logo.util.ts`) — a free-text URL that renders in every teammate's browser is a beacon.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `facebook_connections`/`facebook_pages`/`ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
+- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `app_connections` (migration 082 — OAuth app connectors), `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
 
 ## Auth & signup
 
@@ -292,8 +292,14 @@ pending Meta App Review for `ads_management`.
 - **`AdsConfigService` is the only place an ads token is decrypted**, and the only source
   of the ad account / page / pixel ids. **No route accepts an `ad_account_id` as
   authority** — see the tenant-scoping section above; here the cost of forgetting is
-  spending another tenant's money rather than leaking their data. `facebook_connections`
-  stores its token in _plaintext_; do not copy that pattern (fixing it is outstanding).
+  spending another tenant's money rather than leaking their data. (`facebook_connections`
+  used to store its token in _plaintext_ and was the counter-example here; migration 081
+  dropped it with the Facebook Leads integration, which is the permanent fix.)
+- ⚠️ **Lead-form submissions still arrive on `/webhooks/facebook-leads`**, which moved
+  into this module with migration 081 when Facebook Leads was removed from Integrations —
+  Ads Manager became its only consumer. It resolves its tenant from `meta_ads_config` by
+  `page_id` and is deliberately NOT behind `AdsEnabledGuard`: Meta delivers to a Page
+  subscription whatever our flag says, and 404ing makes Meta disable the subscription.
 - **Connect is a server-side OAuth redirect, not the Facebook JS SDK.** An ads token must
   never exist in page JavaScript, and `connect.facebook.net` is absent from the web app's
   CSP `script-src` (Report-Only today, so the existing SDK-based lead-ads screen still
@@ -362,6 +368,51 @@ list becomes sixty entries nobody dares delete.
 - The public API reuses `contacts:read`/`contacts:write` rather than minting a
   segment scope: a new scope is absent from every key already issued, so every
   live integration would 403 the day it shipped.
+
+## App connections — OAuth connectors (migration 082)
+
+Google Sheets, Gmail, Calendar and Meet, connected once per workspace
+through a server-side OAuth redirect. Design: `docs/app-connections.md`.
+Lives in `apps/api/src/connections`, **not** `integrations/` (that module
+is Zapier: pasted webhook URLs, no stored credential).
+
+- ⚠️⚠️ **EVERY SCOPE IS "SENSITIVE", NEVER "RESTRICTED", AND THAT IS THE
+  CENTRAL CONSTRAINT.** A restricted scope commits the product to an
+  annual **paid third-party CASA security assessment**; a sensitive scope
+  needs a one-off verification review. Two counter-intuitive consequences
+  that must not be "simplified" later: **Gmail is send-only and there is
+  no draft action** (`gmail.send` is sensitive, `gmail.compose` is
+  RESTRICTED because it can read drafts), and **nothing lists Drive
+  files** (spreadsheet ids are pasted from the URL; only the TABS inside
+  are listed). Pinned by `connections.test.ts`.
+- ⚠️ **`ConnectionTokenService` is the only place a token is decrypted.**
+  No token in a queue payload, an API response or a log line — Redis
+  stores job data in plaintext and Bull Board renders it. Refresh is
+  serialised per connection (`inFlight`) with a 120s expiry skew; an
+  `invalid_grant` sets `status = 'needs_reauth'` rather than retrying
+  forever, and **a refresh response that omits a refresh token must never
+  overwrite the stored one** or the connection dies days later.
+- ⚠️ **`app_connections` has RLS on with ZERO policies and rights
+  revoked** (like `admin_audit_log`). RLS is row-level: any
+  browser-readable policy hands `refresh_token` to PostgREST. API-only,
+  redacted projection. Add an endpoint, never a policy.
+- **ONE `app_action` step type for every app and every action.** The app
+  and action are data in `step_config`, resolved through
+  `ConnectorRegistryService`; the picker still lists each action
+  separately. Adding an action is a server-side change only — the
+  editor renders from `FieldSpec` served by `GET /connections/catalog`,
+  which is also what the API validates against, so a field cannot render
+  without validating.
+- ⚠️ **`connection_id` in a step config is author-supplied data, not
+  authority.** Every read is filtered by the running automation's
+  `account_id` — same trap as `segment_id`, bigger prize.
+- The OAuth callback (`/connections/oauth/callback`) has **no auth
+  guard**: cross-site GET, authorised by the HMAC-signed `state`, which
+  signs with its own `CONNECTIONS_STATE_SECRET` so a state cannot be
+  replayed into the Instagram or Ads callbacks.
+- `lib/automations/app-presets.ts` (Slack, Notion, Airtable…) still
+  exists for the long tail and is honestly labelled "Other services" —
+  those are pre-filled `http_request` steps where you paste your own key.
 
 ## Automations — canvas editor + step engine
 

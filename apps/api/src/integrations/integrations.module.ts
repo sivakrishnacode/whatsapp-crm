@@ -1,21 +1,28 @@
 import { Module } from '@nestjs/common';
 import { ZapierController } from './controllers/zapier.controller';
-import {
-  FacebookController,
-  FacebookLeadsWebhookController,
-} from './controllers/facebook.controller';
-import { FacebookLeadService } from './services/facebook-lead.service';
-import { LeadFetchProcessor } from './queues/lead-fetch.processor';
-import { V1Module } from '../v1/v1.module';
-import { QueueModule } from '../queue/queue.module';
 
+/**
+ * Third-party integrations that are neither a channel nor an app
+ * connection.
+ *
+ * WHAT LEFT, AND WHERE IT WENT
+ *   Facebook Leads used to live here: a Facebook-JS-SDK connect flow, a
+ *   per-Page lead-sync toggle, and the `/webhooks/facebook-leads`
+ *   endpoint behind them. The integration is gone (migration 081 dropped
+ *   `facebook_connections` and `facebook_pages`) but the webhook is not —
+ *   the Ads Manager's lead-form ad type is now its only consumer, so
+ *   controller, service and processor moved to `src/ads`, resolving their
+ *   tenant through `meta_ads_config` instead.
+ *
+ *   OAuth app connections — Google Sheets, Gmail, Calendar, Meet — are
+ *   NOT here either. They are `src/connections`, which owns token
+ *   storage, refresh and the connector catalogue for every provider.
+ *   See docs/app-connections.md.
+ *
+ * What remains is Zapier: outbound webhook endpoints registered by the
+ * user, with no OAuth and no stored third-party credential.
+ */
 @Module({
-  imports: [V1Module, QueueModule],
-  controllers: [
-    ZapierController,
-    FacebookController,
-    FacebookLeadsWebhookController,
-  ],
-  providers: [FacebookLeadService, LeadFetchProcessor],
+  controllers: [ZapierController],
 })
 export class IntegrationsModule {}

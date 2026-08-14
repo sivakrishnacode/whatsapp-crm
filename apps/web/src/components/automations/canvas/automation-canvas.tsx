@@ -72,6 +72,8 @@ import { StepNodeCard, TriggerNodeCard } from './step-node-card';
 import { StepInspector } from './step-inspector';
 import { TriggerInspector, TRIGGER_OPTIONS } from './trigger-inspector';
 import { AddStepDialog } from './add-step-dialog';
+import { useAutomationResources } from './resources';
+import { connectionsFor } from '@/lib/automations/connectors';
 import type { AppPreset } from '@/lib/automations/app-presets';
 import { Plus } from 'lucide-react';
 
@@ -120,6 +122,8 @@ function CanvasInner({
   const reactFlow = useReactFlow();
   const isNarrow = useIsNarrow();
   const [pickerOpen, setPickerOpen] = useState(false);
+  /** Connected apps, so picking an action can pre-select its account. */
+  const { connections } = useAutomationResources();
 
   const positions = useMemo(() => derivePositions(steps), [steps]);
   const edges = useMemo(() => deriveEdges(steps), [steps]);
@@ -576,6 +580,34 @@ function CanvasInner({
         onPickApp={(preset: AppPreset) =>
           addStep(preset.stepType, { ...preset.config }, preset.id)
         }
+        onPickAction={(app, action) => {
+          // Pre-select the connection when there is exactly ONE usable
+          // account for this app — which is the normal case, and saves a
+          // dropdown that has one entry. With two, choosing for them
+          // would silently pick which mailbox an email is sent from.
+          const usable = connectionsFor(connections, app).filter(
+            (c) => c.status === 'active',
+          );
+          addStep(
+            'app_action',
+            {
+              app: app.app,
+              action: action.id,
+              connection_id: usable.length === 1 ? usable[0].id : '',
+              // Defaults from the spec, so a field with a sensible value
+              // starts holding it rather than being empty and required.
+              input: Object.fromEntries(
+                action.inputs
+                  .filter((spec) => spec.default !== undefined)
+                  .map((spec) => [spec.key, spec.default]),
+              ),
+            },
+            // Names the step after the action, so its output reads
+            // `steps.append_row.row_number` rather than
+            // `steps.app_action_3.row_number`.
+            action.id,
+          );
+        }}
         channels={channels}
         triggerType={triggerType}
       />

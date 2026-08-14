@@ -258,6 +258,35 @@ function validateOne(
       }
       break;
     }
+    /**
+     * Connected-app action.
+     *
+     * Only the SHAPE is checked here, not the app/action/scopes. This
+     * function is pure and synchronous by design — it is called from the
+     * activation path and from tests — while "does this connection still
+     * exist, is it still authorised, does it cover this scope" is three
+     * database reads. Those live in AutomationsService.setActive, which
+     * can await, and are the checks that actually block activation.
+     *
+     * Validating the input fields against the action's FieldSpec is also
+     * deliberately not here: the registry is the authority, and
+     * duplicating its rules in a second place is precisely the drift
+     * this design exists to avoid.
+     */
+    case 'app_action':
+      if (!nonEmpty(c.app)) {
+        issues.push({ path: `${path}.app`, message: 'pick an app' });
+      }
+      if (!nonEmpty(c.action)) {
+        issues.push({ path: `${path}.action`, message: 'pick an action' });
+      }
+      if (!nonEmpty(c.connection_id)) {
+        issues.push({
+          path: `${path}.connection_id`,
+          message: 'connect an account for this app',
+        });
+      }
+      break;
     case 'set_variable':
       if (!nonEmpty(c.name)) {
         issues.push({
@@ -269,13 +298,17 @@ function validateOne(
         // splits the path and the token silently resolves to nothing.
         issues.push({
           path: `${path}.name`,
-          message: 'variable names can use letters, numbers and underscores only',
+          message:
+            'variable names can use letters, numbers and underscores only',
         });
       }
       break;
     case 'send_media':
       if (!nonEmpty(c.link)) {
-        issues.push({ path: `${path}.link`, message: 'a media URL is required' });
+        issues.push({
+          path: `${path}.link`,
+          message: 'a media URL is required',
+        });
       }
       if (!['image', 'video', 'document', 'audio'].includes(String(c.kind))) {
         issues.push({
@@ -363,7 +396,12 @@ function validateOne(
           message: 'a deal id is required when targeting by id',
         });
       }
-      if (!nonEmpty(c.stage_id) && !nonEmpty(c.status) && !nonEmpty(c.value) && !nonEmpty(c.title)) {
+      if (
+        !nonEmpty(c.stage_id) &&
+        !nonEmpty(c.status) &&
+        !nonEmpty(c.value) &&
+        !nonEmpty(c.title)
+      ) {
         issues.push({
           path: `${path}.stage_id`,
           message: 'choose at least one thing to change on the deal',
@@ -380,7 +418,10 @@ function validateOne(
       break;
     case 'start_flow':
       if (!nonEmpty(c.flow_id)) {
-        issues.push({ path: `${path}.flow_id`, message: 'pick a flow to start' });
+        issues.push({
+          path: `${path}.flow_id`,
+          message: 'pick a flow to start',
+        });
       }
       break;
     case 'run_automation':

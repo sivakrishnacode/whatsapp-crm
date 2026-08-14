@@ -76,7 +76,8 @@ function BuilderShell({ initial }: { initial: BuilderInitial }) {
   const [state, setState] = useState<BuilderInitial>(initial);
   const [saving, setSaving] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const { segments, flows, automations } = useAutomationResources();
+  const { segments, flows, automations, apps, connections } =
+    useAutomationResources();
 
   const patch = useCallback(
     <K extends keyof BuilderInitial>(key: K, value: BuilderInitial[K]) => {
@@ -103,9 +104,11 @@ function BuilderShell({ initial }: { initial: BuilderInitial }) {
         segments,
         flows,
         automations,
+        apps,
+        connections,
         currentAutomationId: initial.id,
       }),
-    [state, segments, flows, automations, initial.id],
+    [state, segments, flows, automations, apps, connections, initial.id],
   );
 
   async function save() {

@@ -12,9 +12,19 @@
  *
  * WHAT IT SHOWS, IN ORDER
  *   Search (typing beats browsing once you know the name) → categories →
- *   the steps in that category. "Apps" is a category like any other; its
- *   entries add an HTTP request step pre-filled for that service, and
- *   each one says what credential it will need BEFORE you pick it.
+ *   the steps in that category.
+ *
+ * TWO KINDS OF "APP", AND THE DIFFERENCE IS SHOWN, NOT HIDDEN
+ *   CONNECTED APPS come first: Google Sheets, Gmail, Calendar, Meet.
+ *   Each ACTION is its own entry ("Google Sheets · Append row") because
+ *   that is what somebody is looking for — nobody wants "an app", they
+ *   want to append a row. Picking one adds an `app_action` step whose
+ *   credentials are an OAuth connection nobody has to paste.
+ *
+ *   PRESETS come second and are honestly labelled: they add an HTTP
+ *   request step pre-filled for a service, and each says what key it
+ *   will ask for BEFORE it is picked. Finding that out afterwards feels
+ *   like a bait, which is the whole reason `credentialHint` exists.
  */
 
 import { useMemo, useState } from 'react';
@@ -31,6 +41,12 @@ import {
 } from '@/lib/automations/step-meta';
 import { APP_PRESETS, type AppPreset } from '@/lib/automations/app-presets';
 import { stepAvailability } from '@/lib/automations/availability';
+import {
+  connectionsFor,
+  type CatalogAction,
+  type CatalogApp,
+} from '@/lib/automations/connectors';
+import { useAutomationResources } from './resources';
 import type { AutomationStepType, AutomationTriggerType } from '@/types';
 
 type RailId = StepCategory | 'all' | 'apps';
@@ -42,6 +58,8 @@ export interface AddStepDialogProps {
   onPickStep: (type: AutomationStepType) => void;
   /** An app preset — an HTTP step with its config pre-filled. */
   onPickApp: (preset: AppPreset) => void;
+  /** A real connector action — adds an `app_action` step. */
+  onPickAction: (app: CatalogApp, action: CatalogAction) => void;
   channels: string[];
   triggerType: AutomationTriggerType;
 }
@@ -51,9 +69,11 @@ export function AddStepDialog({
   onOpenChange,
   onPickStep,
   onPickApp,
+  onPickAction,
   channels,
   triggerType,
 }: AddStepDialogProps) {
+  const { apps: catalog, connections } = useAutomationResources();
   const [rail, setRail] = useState<RailId>('all');
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
@@ -75,6 +95,28 @@ export function AddStepDialog({
       return rail === 'all' || meta.category === rail;
     });
   }, [rail, q]);
+
+  /**
+   * Every action of every connected app, flattened.
+   *
+   * Flattened rather than grouped by app because the list is short and
+   * the thing being chosen is an action. Grouping would add a level of
+   * clicking to reach the only leaf anyone wants.
+   */
+  const actions = useMemo(() => {
+    const all = catalog.flatMap((app) =>
+      app.actions.map((action) => ({ app, action })),
+    );
+    if (q) {
+      return all.filter(
+        ({ app, action }) =>
+          app.name.toLowerCase().includes(q) ||
+          action.label.toLowerCase().includes(q) ||
+          action.description.toLowerCase().includes(q),
+      );
+    }
+    return rail === 'all' || rail === 'apps' ? all : [];
+  }, [catalog, rail, q]);
 
   const apps = useMemo(() => {
     if (q) {
@@ -152,7 +194,7 @@ export function AddStepDialog({
           </nav>
 
           <div className="min-w-0 flex-1 overflow-y-auto overscroll-contain p-3">
-            {steps.length === 0 && apps.length === 0 && (
+            {steps.length === 0 && apps.length === 0 && actions.length === 0 && (
               <p className="text-muted-foreground px-3 py-10 text-center text-sm">
                 Nothing called “{query}”.
               </p>
@@ -212,10 +254,67 @@ export function AddStepDialog({
               </>
             )}
 
+            {actions.length > 0 && (
+              <>
+                <SectionLabel>
+                  Connected apps
+                  <span className="text-muted-foreground ml-2 text-[10.5px] normal-case">
+                    sign in once — no keys to paste
+                  </span>
+                </SectionLabel>
+                <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
+                  {actions.map(({ app, action }) => {
+                    const connected = connectionsFor(connections, app).some(
+                      (c) => c.status === 'active',
+                    );
+                    return (
+                      <button
+                        key={`${app.app}:${action.id}`}
+                        type="button"
+                        onClick={() => {
+                          onPickAction(app, action);
+                          close();
+                        }}
+                        className="hover:bg-muted flex items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors"
+                      >
+                        <span
+                          className="mt-0.5 flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
+                          style={{
+                            background: `color-mix(in oklch, ${app.hue} 16%, transparent)`,
+                            color: `color-mix(in oklch, ${app.hue}, var(--foreground) 22%)`,
+                          }}
+                          aria-hidden
+                        >
+                          {app.monogram}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="text-foreground flex items-center gap-1.5 text-[13px] font-medium">
+                            {app.name} · {action.label}
+                            {/* Not connected is shown but never blocks the
+                                pick: adding the step then connecting is a
+                                perfectly reasonable order, and the
+                                inspector offers the Connect button. */}
+                            {!connected && (
+                              <span className="text-muted-foreground text-[9.5px] tracking-wide uppercase">
+                                connect first
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-muted-foreground block text-[11.5px] leading-snug">
+                            {action.description}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
             {apps.length > 0 && (
               <>
                 <SectionLabel>
-                  Apps
+                  Other services
                   <span className="text-muted-foreground ml-2 text-[10.5px] normal-case">
                     each one adds an HTTP request step, pre-filled — you
                     supply the key

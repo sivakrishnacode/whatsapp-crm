@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils';
 import {
   STEP_META,
   StepIconChip,
+  appActionLabel,
   TRIGGER_COLORS,
   stepColors,
   summarizeStep,
@@ -44,6 +45,7 @@ import {
 } from '@/lib/automations/availability';
 import type { BuilderStep } from '@/lib/automations/graph';
 import type { AutomationTriggerType } from '@/types';
+import { useAutomationResources } from './resources';
 
 export interface StepNodeData extends Record<string, unknown> {
   step: BuilderStep;
@@ -169,6 +171,7 @@ export function TriggerNodeCard({ data, selected }: NodeProps) {
 
 export function StepNodeCard({ data, selected }: NodeProps) {
   const { step, invalid, rejoinTarget, availability } = data as StepNodeData;
+  const { apps } = useAutomationResources();
   const meta = STEP_META[step.step_type];
   const c = stepColors(step.step_type);
   const cfg = step.step_config;
@@ -176,6 +179,14 @@ export function StepNodeCard({ data, selected }: NodeProps) {
   const continueOnError = cfg.on_error === 'continue';
   const saveAs = typeof cfg.save_as === 'string' ? cfg.save_as.trim() : '';
   const summary = summarizeStep(step.step_type, cfg);
+  // An app action's real name lives in the connector catalogue, not in
+  // STEP_META — one step type covers every app, so the static label
+  // would put "App action" on a card that is really "Google Sheets:
+  // Append row".
+  const label =
+    step.step_type === 'app_action'
+      ? appActionLabel(cfg as { app?: string; action?: string }, apps)
+      : (meta?.label ?? step.step_type);
   const branching = Boolean(meta?.branching);
   const categoryLabel = meta?.category ?? 'step';
 
@@ -256,7 +267,7 @@ export function StepNodeCard({ data, selected }: NodeProps) {
 
         {/* Row 2 — the step's own name */}
         <div className="text-foreground mt-2 truncate text-[13px] leading-tight font-semibold">
-          {meta?.label ?? step.step_type}
+          {label}
         </div>
 
         {/* Row 3 — omitted entirely when there is nothing to say. A card

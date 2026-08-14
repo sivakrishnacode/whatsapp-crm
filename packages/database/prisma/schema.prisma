@@ -35,6 +35,7 @@ model Account {
   ai_credit_wallets             ai_credit_wallets?
   ai_knowledge_chunks           ai_knowledge_chunks[]
   ai_knowledge_documents        ai_knowledge_documents[]
+  app_connections               app_connections[]
   apiKeys                       ApiKey[]
   automationLogs                AutomationLog[]
   automationPendingExecutions   AutomationPendingExecution[]
@@ -101,6 +102,48 @@ model Profile {
 
   @@index([accountId, accountRole], map: "idx_profiles_account_role")
   @@map("profiles")
+  @@schema("public")
+}
+
+/// OAuth connections to third-party apps (migration 082).
+///
+/// ⚠️ RLS is ON with ZERO policies and rights revoked from anon/authenticated,
+/// because RLS is row-level and cannot hide `refresh_token` from a browser
+/// select. Only apps/api (owner connection) reads this, and it returns a
+/// redacted projection. Never add a policy to make a browser feature easier —
+/// add an endpoint. See docs/app-connections.md.
+///
+/// Both token columns are AES-256-GCM via common/security/encryption.util.ts.
+/// `refresh_token` is nullable because Google returns it on first consent only.
+model app_connections {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id        String    @db.Uuid
+  provider          String
+  /// Provider-side stable id ('sub' for Google) — NOT the email, which
+  /// the user can change out from under us.
+  externalAccountId String    @map("external_account_id")
+  displayName       String?   @map("display_name")
+  /// Grows on incremental consent. Checked against an action's required
+  /// scopes before the call, so a gap is a re-consent prompt rather than
+  /// a 403 from Google mid-automation.
+  scopes            String[]  @default([])
+  accessToken       String    @map("access_token")
+  refreshToken      String?   @map("refresh_token")
+  tokenExpiresAt    DateTime? @map("token_expires_at") @db.Timestamptz(6)
+  /// active | needs_reauth | revoked. Distinct from "has a token": a
+  /// revoked grant still has one, it just no longer works.
+  status            String    @default("active")
+  lastError         String?   @map("last_error")
+  /// Nullable and deliberately not a FK — the connection belongs to the
+  /// workspace and must outlive the teammate who set it up.
+  createdBy         String?   @map("created_by") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  account           Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([account_id, provider, externalAccountId])
+  @@index([account_id], map: "idx_app_connections_account")
+  @@map("app_connections")
   @@schema("public")
 }
 
@@ -586,8 +629,6 @@ model users {
   conversations                                                      conversations[]
   custom_fields                                                      custom_fields[]
   deals                                                              deals[]
-  facebook_connections                                               facebook_connections[]
-  facebook_pages                                                     facebook_pages[]
   flowRuns                                                           FlowRun[]
   flows                                                              Flow[]
   forms                                                              forms[]
@@ -1437,43 +1478,6 @@ model ecommerce_products {
   @@unique([integration_id, external_product_id])
   @@index([external_product_id], map: "idx_ecommerce_products_external")
   @@index([integration_id], map: "idx_ecommerce_products_integration")
-  @@schema("public")
-}
-
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model facebook_connections {
-  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id        String           @db.Uuid
-  fb_user_id     String
-  fb_user_name   String?
-  access_token   String
-  created_at     DateTime?        @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime?        @default(now()) @db.Timestamptz(6)
-  users          users            @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  facebook_pages facebook_pages[]
-
-  @@unique([user_id, fb_user_id])
-  @@index([user_id], map: "idx_facebook_connections_user")
-  @@schema("public")
-}
-
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model facebook_pages {
-  id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  connection_id        String               @db.Uuid
-  user_id              String               @db.Uuid
-  page_id              String
-  page_name            String
-  page_access_token    String
-  is_syncing           Boolean              @default(false)
-  created_at           DateTime?            @default(now()) @db.Timestamptz(6)
-  updated_at           DateTime?            @default(now()) @db.Timestamptz(6)
-  facebook_connections facebook_connections @relation(fields: [connection_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users                users                @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@unique([user_id, page_id])
-  @@index([connection_id], map: "idx_facebook_pages_connection")
-  @@index([user_id], map: "idx_facebook_pages_user")
   @@schema("public")
 }
 

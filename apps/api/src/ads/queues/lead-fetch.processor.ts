@@ -2,7 +2,7 @@ import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Job } from 'bullmq';
 import { LEAD_FETCH_QUEUE } from '../../queue/queue.constants';
-import { FacebookLeadService } from '../services/facebook-lead.service';
+import { LeadIngestService } from '../services/lead-ingest.service';
 
 export interface LeadFetchJobData {
   leadgenId: string;
@@ -10,18 +10,22 @@ export interface LeadFetchJobData {
 }
 
 /**
- * Fetches and files one Facebook lead.
+ * Fetches and files one Meta lead-form submission.
  *
  * Leads arrive in bursts when an ad performs, and each job is a Graph
  * call plus a handful of writes, so concurrency 5 clears a burst
  * quickly without opening a Graph connection per lead.
+ *
+ * The queue NAME is unchanged from when this lived in IntegrationsModule
+ * — `queue.constants.ts` is the single source of it, and renaming would
+ * strand any job already sitting in Redis.
  */
 @Injectable()
 @Processor(LEAD_FETCH_QUEUE, { concurrency: 5 })
 export class LeadFetchProcessor extends WorkerHost {
   private readonly logger = new Logger(LeadFetchProcessor.name);
 
-  constructor(private readonly leads: FacebookLeadService) {
+  constructor(private readonly leads: LeadIngestService) {
     super();
   }
 
@@ -40,7 +44,7 @@ export class LeadFetchProcessor extends WorkerHost {
     const attempts = job.opts.attempts ?? 1;
     if (job.attemptsMade < attempts) return;
     this.logger.error(
-      `[facebook leads] gave up after ${attempts} attempts for leadgen ${job.data.leadgenId} (page ${job.data.pageId}): ${err.message}`,
+      `[meta leads] gave up after ${attempts} attempts for leadgen ${job.data.leadgenId} (page ${job.data.pageId}): ${err.message}`,
     );
   }
 }

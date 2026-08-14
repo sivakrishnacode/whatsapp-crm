@@ -48,8 +48,8 @@ function sign(body: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(body).digest('base64url');
 }
 
-export function encodeSignedState(args: {
-  payload: OAuthStatePayload;
+export function encodeSignedState<P extends OAuthStatePayload>(args: {
+  payload: P;
   secret: string;
 }): string {
   const signed: SignedState = {
@@ -65,11 +65,23 @@ export function encodeSignedState(args: {
  * Returns the payload, or null for anything that fails to verify:
  * malformed, tampered, or expired. Callers must treat null as "abort
  * the connect flow" — never as "proceed with defaults".
+ *
+ * PROVIDER-SPECIFIC FIELDS SURVIVE THE ROUND TRIP. The generic `P` and
+ * the spread below exist because the app-connections flow carries a
+ * `provider` and a PKCE `codeVerifier` in the same blob; an earlier
+ * version rebuilt the return value field-by-field and silently dropped
+ * anything it did not know about, which looks exactly like a tampered
+ * state at the call site. `nonce` and `exp` are stripped — they are
+ * mechanism, not payload.
+ *
+ * ⚠️ A passing HMAC proves WE minted the blob, not that the blob is
+ * complete. Bindings that add fields must check their own for presence,
+ * as this function does for accountId/userId.
  */
-export function decodeSignedState(args: {
+export function decodeSignedState<P extends OAuthStatePayload>(args: {
   state: string;
   secret: string;
-}): OAuthStatePayload | null {
+}): P | null {
   const { state, secret } = args;
   const dot = state.lastIndexOf('.');
   if (dot <= 0) return null;
@@ -89,14 +101,14 @@ export function decodeSignedState(args: {
   if (a.length !== b.length) return null;
   if (!crypto.timingSafeEqual(a, b)) return null;
 
-  let parsed: Partial<SignedState>;
+  let parsed: Partial<SignedState> & Record<string, unknown>;
   try {
     // Cast, not trust: this is attacker-reachable input that merely
     // passed an HMAC check. The field checks below are what actually
     // validate it — `Partial` keeps the compiler honest about that.
     parsed = JSON.parse(
       Buffer.from(body, 'base64url').toString('utf8'),
-    ) as Partial<SignedState>;
+    ) as Partial<SignedState> & Record<string, unknown>;
   } catch {
     return null;
   }
@@ -104,9 +116,11 @@ export function decodeSignedState(args: {
   if (typeof parsed.exp !== 'number' || parsed.exp < Date.now()) return null;
   if (!parsed.accountId || !parsed.userId) return null;
 
+  const { nonce: _nonce, exp: _exp, ...payload } = parsed;
   return {
+    ...payload,
     accountId: parsed.accountId,
     userId: parsed.userId,
     returnTo: parsed.returnTo,
-  };
+  } as P;
 }
