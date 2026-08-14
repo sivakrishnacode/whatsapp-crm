@@ -294,25 +294,30 @@
   <tr><th>Google service</th><th>Data accessed</th><th>Purpose</th></tr>
   <tr>
     <td><strong>Gmail</strong></td>
-    <td>Send and receive emails on behalf of the connected account; read email threads relevant to a conversation.</td>
-    <td>To bring email conversations into the Converse360 inbox alongside other channels, so teams can respond without leaving the platform.</td>
+    <td><code>gmail.send</code> — send an email as the connected account. <strong>Converse360 cannot read, search, label or delete mail</strong>, and does not request any scope that would allow it. Your mailbox is never downloaded or stored.</td>
+    <td>To send follow-ups, confirmations and reminders from the business's own address as part of a workflow the business built.</td>
   </tr>
   <tr>
     <td><strong>Google Calendar</strong></td>
-    <td>Read and write calendar events; check availability.</td>
-    <td>To schedule appointments with customers and team members directly from a conversation.</td>
+    <td><code>calendar.events</code>, <code>calendar.freebusy</code> — create, update, delete and search calendar events, and read free/busy times.</td>
+    <td>To book appointments with customers from a conversation and to check whether a slot is free before offering it.</td>
   </tr>
   <tr>
     <td><strong>Google Sheets</strong></td>
-    <td>Read from and write to spreadsheets the user selects.</td>
-    <td>To import leads or contact lists from a spreadsheet, or to export conversation and CRM data for reporting.</td>
+    <td><code>spreadsheets</code> — append, find and update rows in a spreadsheet the business supplies the link to, and create a new spreadsheet on request. <strong>Converse360 does not request Drive access and cannot list or browse your files.</strong></td>
+    <td>To log leads, orders and conversation outcomes for reporting, and to look up a row to enrich a contact record.</td>
   </tr>
   <tr>
-    <td><strong>Google Forms</strong></td>
-    <td>Read form response submissions.</td>
-    <td>To automatically create CRM contacts from lead form submissions.</td>
+    <td><strong>Google Meet</strong></td>
+    <td><code>meetings.space.created</code> — create a new meeting space. This scope grants access only to meetings Converse360 itself creates; existing meetings, recordings and transcripts are not accessible.</td>
+    <td>To generate a meeting link to share with a customer in a conversation.</td>
   </tr>
 </table>
+<p>
+  These four are the only Google scopes Converse360 requests. All of them are
+  classified by Google as <em>sensitive</em>; Converse360 deliberately does not request
+  any <em>restricted</em> scope, including Gmail read access and any Google Drive scope.
+</p>
 <div class="card">
   <p><strong>How we use Google data.</strong> Data obtained through Google APIs is used
   only to provide the specific feature you have enabled. It is not used for advertising,
