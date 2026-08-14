@@ -1,4 +1,4 @@
-# The marketing site: a self-contained HTML bundle plus two legal pages, on
+# The marketing site: five self-contained HTML pages plus two legal pages, on
 # its own port.
 #
 # WHY A CONTAINER RATHER THAN A PATH ON THE HOST
@@ -8,23 +8,31 @@
 #
 # nginx:alpine is used with a minimal custom config: the stock image serves
 # /usr/share/nginx/html/index.html on :80, and all we add on top is extension-
-# less routing so /privacy and /terms resolve to their .html files.
+# less routing so /features, /solutions, /pricing, /contact, /privacy and /terms
+# resolve to their .html files.
 FROM nginx:1.27-alpine
 
-# Static marketing homepage — fully crawlable by Google's renderer without
-# JavaScript. This is what serves / (converse360.in/).
+# The marketing pages. Each is a fully self-contained bundle — one file, no
+# external assets — regenerated wholesale by the design tool on every site
+# change. Internal navigation between them uses extensionless paths (/pricing,
+# /contact, …), which the try_files rule below resolves.
 #
-# The original Framer bundle ("Converse360 Website.html") is kept in the repo
-# for reference but is no longer served as index.html because the bundler
-# replaces document.documentElement at runtime, which means Google's JS renderer
-# sees the bundle content rather than any static wrapper we add — making it
-# impossible to inject stable, crawlable content into the bundle's HTML shell.
-COPY apps/site/index.html /usr/share/nginx/html/index.html
+# ⚠ CRAWLABILITY: these bundles replace document.documentElement at runtime, so
+# Google's JS renderer sees bundle content rather than the static HTML shell.
+# Each page ships correct <title>, description, canonical and Open Graph tags in
+# the shell, but there is no static body copy for a non-rendering crawler. If
+# organic search matters more than design fidelity on a given route, that route
+# needs a hand-written static page instead of a bundle.
+COPY apps/site/index.html     /usr/share/nginx/html/index.html
+COPY apps/site/features.html  /usr/share/nginx/html/features.html
+COPY apps/site/solutions.html /usr/share/nginx/html/solutions.html
+COPY apps/site/pricing.html   /usr/share/nginx/html/pricing.html
+COPY apps/site/contact.html   /usr/share/nginx/html/contact.html
 
 # Privacy Policy and Terms of Service.
 #
-# These are NOT part of the bundle, on purpose. The bundle is regenerated
-# wholesale by a design tool on every site change, so anything living inside it
+# These are NOT part of the bundles, on purpose. The bundles are regenerated
+# wholesale by a design tool on every site change, so anything living inside them
 # is one re-export away from disappearing — and these two URLs are pasted into
 # the Meta App Dashboard, where a 404 costs an App Review cycle. Separate files
 # survive a re-export untouched.
@@ -35,6 +43,7 @@ COPY apps/site/terms.html /usr/share/nginx/html/terms.html
 # below used to answer /robots.txt with the homepage and a 200, so crawlers
 # received HTML where directives were expected.
 COPY apps/site/robots.txt /usr/share/nginx/html/robots.txt
+COPY apps/site/sitemap.xml /usr/share/nginx/html/sitemap.xml
 
 # Written here rather than as a mounted config file to keep the image
 # self-contained.
@@ -46,15 +55,16 @@ RUN printf '%s\n' \
   '  # The HTML *is* the app, so a stale cached copy is a stale site with no' \
   '  # way for a visitor to bust it. Same reasoning for the legal pages, which' \
   '  # additionally must never serve a superseded version to a reviewer.' \
-  '  location = /index.html { add_header Cache-Control "public, max-age=0, must-revalidate"; }' \
-  '  location = /privacy.html { add_header Cache-Control "public, max-age=0, must-revalidate"; }' \
-  '  location = /terms.html { add_header Cache-Control "public, max-age=0, must-revalidate"; }' \
+  '  location ~* ^/(index|features|solutions|pricing|contact|privacy|terms)\\.html$ {' \
+  '    add_header Cache-Control "public, max-age=0, must-revalidate";' \
+  '  }' \
   '  location ~* \\.(?:css|js|woff2?|png|jpe?g|svg|webp|ico)$ {' \
   '    expires 30d;' \
   '    add_header Cache-Control "public, immutable";' \
   '    access_log off;' \
   '  }' \
-  '  # $uri.html is what makes /privacy and /terms work without the extension.' \
+  '  # $uri.html is what makes /pricing, /contact, /privacy etc. work without' \
+  '  # the extension — internal nav links depend on it.' \
   '  #' \
   '  # The fallback is =404, NOT /index.html. This is a static site, not an SPA:' \
   '  # falling back to the homepage meant every wrong URL answered 200 with the' \
