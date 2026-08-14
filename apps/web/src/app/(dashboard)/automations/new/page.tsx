@@ -6,78 +6,47 @@ import { useSearchParams } from "next/navigation"
 import {
   AutomationBuilder,
   type BuilderInitial,
-  type BuilderStep,
 } from "@/components/automations/automation-builder"
-import { blankStep } from "@/lib/automations/graph"
+import { draftToBuilderSeed, takeDraft } from "@/lib/automations/ai-draft"
+import { templateToBuilderSeed } from "@/lib/automations/template-expand"
 import { AUTOMATION_TEMPLATES, type TemplateSlug } from "@/lib/automations/templates"
-import type { AutomationStepType, AutomationTriggerType } from "@/types"
+import type { AutomationTriggerType } from "@/types"
+
+const EMPTY: BuilderInitial = {
+  name: "",
+  description: "",
+  trigger_type: "new_message_received" as AutomationTriggerType,
+  trigger_config: {},
+  channels: [],
+  is_active: false,
+  steps: [],
+}
 
 export default function NewAutomationPage() {
   const params = useSearchParams()
   const template = params.get("template") as TemplateSlug | null
+  const draftId = params.get("draft")
 
   const initial: BuilderInitial = useMemo(() => {
+    // An AI draft wins over a template: `?draft=` is only ever set by the
+    // AI builder navigating here, and `takeDraft` CONSUMES it — so this
+    // memo must not re-run on anything that changes while the author is
+    // editing, or their work is replaced by a draft that is now gone.
+    if (draftId) {
+      const draft = takeDraft(draftId)
+      if (draft) return draftToBuilderSeed(draft)
+      // The stash is per-tab and read-once, so a refresh or a shared link
+      // lands here. A blank canvas is the honest outcome — silently
+      // re-generating would spend credits nobody asked to spend.
+      return EMPTY
+    }
+
     if (template && AUTOMATION_TEMPLATES[template]) {
-      const t = AUTOMATION_TEMPLATES[template]
-      const steps = expandFromSeeds(
-        t.steps.map((seed, idx) => ({
-          index: idx,
-          step_type: seed.step_type,
-          step_config: seed.step_config as Record<string, unknown>,
-          branch: seed.branch ?? null,
-          parent_index: seed.parent_index ?? null,
-        })),
-      )
-      return {
-        name: t.name,
-        description: t.description,
-        trigger_type: t.trigger_type,
-        trigger_config: t.trigger_config as Record<string, unknown>,
-        channels: [],
-        is_active: false,
-        steps,
-      }
+      return templateToBuilderSeed(AUTOMATION_TEMPLATES[template])
     }
-    return {
-      name: "",
-      description: "",
-      trigger_type: "new_message_received" as AutomationTriggerType,
-      trigger_config: {},
-      channels: [],
-      is_active: false,
-      steps: [],
-    }
-  }, [template])
+
+    return EMPTY
+  }, [template, draftId])
 
   return <AutomationBuilder initial={initial} />
-}
-
-interface SeedRow {
-  index: number
-  step_type: AutomationStepType
-  step_config: Record<string, unknown>
-  branch: "yes" | "no" | null
-  parent_index: number | null
-}
-
-/** Template seeds are flat with parent_index references. Expand into the
- *  builder's nested tree, preserving order within each scope. */
-function expandFromSeeds(rows: SeedRow[]): BuilderStep[] {
-  // Keys are the canvas node ids and the token paths, so they have to be
-  // unique across the whole tree — hence one shared set, not per-scope.
-  const taken = new Set<string>()
-  const nodes: BuilderStep[] = rows.map((r) =>
-    blankStep(r.step_type, taken, r.step_config),
-  )
-  const roots: BuilderStep[] = []
-  rows.forEach((r, i) => {
-    if (r.parent_index == null) {
-      roots.push(nodes[i])
-      return
-    }
-    const parent = nodes[r.parent_index]
-    if (!parent.branches) parent.branches = { yes: [], no: [] }
-    parent.branches[r.branch ?? "yes"].push(nodes[i])
-  })
-  return roots
 }

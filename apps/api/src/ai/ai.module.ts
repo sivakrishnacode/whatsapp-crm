@@ -6,6 +6,7 @@ import { AiController } from './controllers/ai.controller';
 import { AgentController } from './controllers/agent.controller';
 import { AgentActionsController } from './controllers/agent-actions.controller';
 import { AiKnowledgeController } from './controllers/ai-knowledge.controller';
+import { AutomationDraftController } from './controllers/automation-draft.controller';
 import { AiReplyService } from './services/ai-reply.service';
 import { AgentConfigService } from './services/agent-config.service';
 import { AgentRuntimeService } from './services/agent-runtime.service';
@@ -33,6 +34,7 @@ import { AiCreditsModule } from './credits/ai-credits.module';
     AgentController,
     AgentActionsController,
     AiKnowledgeController,
+    AutomationDraftController,
   ],
   providers: [
     AiReplyService,

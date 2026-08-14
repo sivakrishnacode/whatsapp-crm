@@ -5,6 +5,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import type { AutomationStepsTreeService } from './services/automation-steps-tree.service';
 import type { CreateAutomationDto } from './dto/create-automation.dto';
 import type { UpdateAutomationDto } from './dto/update-automation.dto';
+import { AUTOMATION_TEMPLATES } from './services/automation-templates';
 
 const NOW = new Date('2024-01-01T00:00:00.000Z');
 
@@ -101,14 +102,18 @@ describe('AutomationsService', () => {
     });
 
     it('seeds fields from a template when steps are empty', async () => {
+      // Read from the catalogue rather than restating its copy: this
+      // test is about the SEEDING path, and hard-coding the template's
+      // display name made it fail when the wording was edited.
+      const template = AUTOMATION_TEMPLATES.welcome_message;
       prisma.automation.create.mockResolvedValue(
-        makeAutomationRow({ name: 'Welcome Message' }),
+        makeAutomationRow({ name: template.name }),
       );
       const dto = { template: 'welcome_message' } as CreateAutomationDto;
       const result = await service.create('user-1', 'acc-1', dto);
       const expectedData = expect.objectContaining({
-        name: 'Welcome Message',
-        triggerType: 'first_inbound_message',
+        name: template.name,
+        triggerType: template.trigger_type,
       }) as Record<string, unknown>;
       expect(prisma.automation.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expectedData }),
@@ -117,7 +122,7 @@ describe('AutomationsService', () => {
         'aut-1',
         expect.any(Array),
       );
-      expect(result.name).toBe('Welcome Message');
+      expect(result.name).toBe(template.name);
     });
 
     it('rejects activation with an invalid configuration instead of saving it', async () => {

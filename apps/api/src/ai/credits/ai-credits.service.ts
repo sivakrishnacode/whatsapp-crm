@@ -8,7 +8,22 @@ import {
   signupGrantCredits,
 } from './credits.constants';
 
-export type CreditFeature = 'draft' | 'auto_reply' | 'playground' | 'embedding';
+/**
+ * Which part of the product spent a credit.
+ *
+ * ⚠️ PINNED BY A CHECK CONSTRAINT on `ai_credit_ledger.feature`. A value
+ * added here without the matching migration fails the INSERT inside
+ * `consume_ai_credits`, which is caught and logged — so the spend
+ * silently stops being metered rather than erroring. Migration 083 added
+ * 'automation_draft'.
+ */
+export type CreditFeature =
+  | 'draft'
+  | 'auto_reply'
+  | 'playground'
+  | 'embedding'
+  /** The AI automation builder. No conversation attached, unlike 'draft'. */
+  | 'automation_draft';
 
 /** A thrown value is not necessarily an Error; log it without pretending. */
 function errorText(err: unknown): string {

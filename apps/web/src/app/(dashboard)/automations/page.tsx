@@ -11,10 +11,6 @@ import {
   Pencil,
   Trash2,
   FileText,
-  MessageCircle,
-  Clock,
-  Users,
-  PhoneCall,
   Loader2,
 } from "lucide-react"
 
@@ -38,23 +34,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { AUTOMATION_TEMPLATES, type TemplateSlug } from "@/lib/automations/templates"
+import { CreateAutomationDialog } from "@/components/automations/create-automation-dialog"
 import { triggerMeta, formatRelative } from "@/lib/automations/trigger-meta"
 import { cn } from "@/lib/utils"
-
-const TEMPLATE_ORDER: TemplateSlug[] = [
-  "welcome_message",
-  "out_of_office",
-  "lead_qualifier",
-  "follow_up_reminder",
-]
-
-const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
-  welcome_message: MessageCircle,
-  out_of_office: Clock,
-  lead_qualifier: Users,
-  follow_up_reminder: PhoneCall,
-}
 
 export default function AutomationsPage() {
   const router = useRouter()
@@ -63,6 +45,7 @@ export default function AutomationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Automation | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [creating, setCreating] = useState(false)
 
   async function load() {
     try {
@@ -127,10 +110,6 @@ export default function AutomationsPage() {
     load()
   }
 
-  async function startFromTemplate(slug: TemplateSlug) {
-    router.push(`/automations/new?template=${slug}`)
-  }
-
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
@@ -150,8 +129,6 @@ export default function AutomationsPage() {
     )
   }
 
-  const showTemplates = automations.length < 3
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -164,7 +141,7 @@ export default function AutomationsPage() {
         <GatedButton
           canAct={canCreate}
           gateReason="create automations"
-          onClick={() => router.push("/automations/new")}
+          onClick={() => setCreating(true)}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Plus className="h-4 w-4" />
@@ -172,43 +149,32 @@ export default function AutomationsPage() {
         </GatedButton>
       </div>
 
-      {showTemplates && (
-        <section>
-          <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Quick-start templates</h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {TEMPLATE_ORDER.map((slug) => {
-              const t = AUTOMATION_TEMPLATES[slug]
-              const Icon = TEMPLATE_ICON[slug]
-              return (
-                <button
-                  key={slug}
-                  onClick={() => startFromTemplate(slug)}
-                  className="group flex flex-col items-start rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 hover:bg-card/80"
-                >
-                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary group-hover:bg-primary/15">
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <div className="text-sm font-semibold text-foreground">{t.name}</div>
-                  <p className="mt-1 text-xs text-muted-foreground">{t.description}</p>
-                </button>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
       {automations.length === 0 ? (
-        <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40 px-6 py-14 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             <Zap className="h-6 w-6 text-primary" />
           </div>
           <p className="mt-3 text-sm font-medium text-foreground">No automations yet</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Pick a template above or create one from scratch.
+          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+            Start from a template, describe what you want to an AI, or build one
+            step by step on a blank canvas.
           </p>
+          <GatedButton
+            canAct={canCreate}
+            gateReason="create automations"
+            onClick={() => setCreating(true)}
+            className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="h-4 w-4" />
+            Create Automation
+          </GatedButton>
         </div>
       ) : (
-        <ul className="space-y-3">
+        // GRID, not a list. Every row was 90% empty space at desktop
+        // width, so a workspace with a dozen automations scrolled for no
+        // reason. Three columns on a wide screen; the card keeps the same
+        // information, stacked instead of strung out.
+        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {automations.map((a) => (
             <AutomationCard
               key={a.id}
@@ -222,6 +188,8 @@ export default function AutomationsPage() {
           ))}
         </ul>
       )}
+
+      <CreateAutomationDialog open={creating} onOpenChange={setCreating} />
 
       <Dialog open={!!pendingDelete} onOpenChange={(v) => !v && setPendingDelete(null)}>
         <DialogContent>
@@ -273,8 +241,11 @@ function AutomationCard({
 }) {
   const meta = triggerMeta(automation.trigger_type, automation.trigger_config)
   return (
-    <li className="rounded-xl border border-border bg-card transition-colors hover:border-border">
-      <div className="flex items-center gap-4 p-4">
+    <li className="flex flex-col rounded-xl border border-border bg-card transition-colors hover:border-primary/40">
+      {/* Header row: identity on the left, the two controls on the right.
+          The controls stay OUT of the click-to-edit button — a Switch
+          nested in a button is a toggle you cannot reach by keyboard. */}
+      <div className="flex items-start gap-3 p-4 pb-2">
         <div
           className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10"
           aria-hidden
@@ -285,47 +256,25 @@ function AutomationCard({
         <button
           type="button"
           onClick={onEdit}
-          className="min-w-0 flex-1 text-left"
+          className="min-w-0 flex-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
         >
-          <div className="flex items-center gap-2">
+          <span className="flex items-center gap-2">
             <span className="truncate text-sm font-semibold text-foreground">
               {automation.name}
             </span>
             {automation.is_active && (
-              <span className="relative flex h-2 w-2" aria-label="active">
+              <span className="relative flex h-2 w-2 flex-shrink-0" aria-label="active">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
               </span>
             )}
-          </div>
-          {automation.description && (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{automation.description}</p>
-          )}
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                meta.pillClass,
-              )}
-            >
-              {meta.label}
-            </span>
-            {automation.channels.length > 0 && (
-              <span className="inline-flex items-center rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-0.5 text-[11px] font-medium text-slate-400 capitalize">
-                {automation.channels.length === 1
-                  ? `${automation.channels[0]} only`
-                  : automation.channels.join(' + ')}
-              </span>
-            )}
-            <span className="tabular-nums">
-              {automation.execution_count} run{automation.execution_count === 1 ? "" : "s"}
-            </span>
-            <span aria-hidden>·</span>
-            <span>last {formatRelative(automation.last_executed_at)}</span>
-          </div>
+          </span>
+          <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+            {automation.description || meta.label}
+          </span>
         </button>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-shrink-0 items-center gap-1">
           <Switch
             checked={automation.is_active}
             onCheckedChange={(v) => onToggle(!!v)}
@@ -360,6 +309,34 @@ function AutomationCard({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 px-4 pb-3">
+        <span
+          className={cn(
+            "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+            meta.pillClass,
+          )}
+        >
+          {meta.label}
+        </span>
+        {automation.channels.length > 0 && (
+          <span className="inline-flex items-center rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-0.5 text-[11px] font-medium text-slate-400 capitalize">
+            {automation.channels.length === 1
+              ? `${automation.channels[0]} only`
+              : automation.channels.join(" + ")}
+          </span>
+        )}
+      </div>
+
+      {/* Run stats sit on their own footer rule so every card in the row
+          ends at the same place regardless of how long its name wrapped. */}
+      <div className="mt-auto flex items-center gap-2 border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
+        <span className="tabular-nums">
+          {automation.execution_count} run{automation.execution_count === 1 ? "" : "s"}
+        </span>
+        <span aria-hidden>·</span>
+        <span>last {formatRelative(automation.last_executed_at)}</span>
       </div>
     </li>
   )
