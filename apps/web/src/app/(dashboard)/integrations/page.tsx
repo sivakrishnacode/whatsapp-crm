@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -35,12 +35,15 @@ import {
   Plus,
   RefreshCw,
   Trash2,
-  Store,
-  ShoppingBag,
 } from 'lucide-react';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { ConnectedApps } from '@/components/integrations/connected-apps';
+import {
+  IntegrationCard,
+  IntegrationGrid,
+  IntegrationRow,
+} from '@/components/integrations/integration-card';
 import type { EcommerceIntegration } from '@/types';
 
 export default function IntegrationsPage() {
@@ -274,162 +277,144 @@ export default function IntegrationsPage() {
           <Loader2 className="size-8 animate-spin text-primary" />
         </div>
       ) : (
-        <div className="flex flex-wrap gap-6">
-          {/* Shopify Integration Card */}
-          <Card className="border-border bg-card/45 shadow-sm hover:shadow-md transition-shadow flex flex-col w-full max-w-[350px]">
-            <CardHeader className="pb-4">
-              <div className="flex items-start justify-between">
-                <div className="flex size-11 items-center justify-center rounded-xl bg-transparent">
-                  <img src="/icons/shopify.png" alt="Shopify" className="size-11 object-contain" />
-                </div>
-                {shopifyConnected ? (
-                  shopifyHasError ? (
-                    <Badge variant="outline" className="border-red-500/20 bg-red-500/10 text-red-500 text-[10px] font-medium flex items-center gap-1 animate-pulse">
-                      <AlertCircle className="size-3" />
-                      Sync Error ({shopifyStores.length})
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-green-600 dark:text-green-400 text-[10px] font-medium flex items-center gap-1">
-                      <CheckCircle className="size-3" />
-                      Connected ({shopifyStores.length})
-                    </Badge>
-                  )
-                ) : (
-                  <Badge variant="secondary" className="text-muted-foreground text-[10px] font-medium flex items-center gap-1">
-                    <XCircle className="size-3" />
-                    Not Configured
-                  </Badge>
-                )}
-              </div>
-              <CardTitle className="text-base mt-4 font-semibold text-foreground">Shopify Store</CardTitle>
-              <CardDescription className="text-xs mt-1.5 leading-relaxed">
-                Sync products, inventory, and track client orders automatically in real-time.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1 py-0 pb-4">
-              {shopifyConnected && (
-                <div className="text-[11px] text-muted-foreground bg-muted/40 rounded px-2.5 py-1.5 font-mono truncate">
-                  {shopifyStores[0].store_url}
-                </div>
-              )}
-            </CardContent>
-            <CardFooter className="pt-2 border-t border-border">
-              <Button
-                variant={shopifyConnected ? "outline" : "default"}
+        <IntegrationGrid>
+          <IntegrationCard
+            icon={
+              <img
+                src="/icons/shopify.png"
+                alt=""
+                aria-hidden
+                className="size-9 shrink-0 object-contain"
+              />
+            }
+            name="Shopify"
+            blurb="Sync products, inventory and orders in real time"
+            status={
+              shopifyHasError ? 'attention' : shopifyConnected ? 'connected' : 'off'
+            }
+            statusLabel={
+              shopifyHasError
+                ? 'Sync error'
+                : shopifyConnected
+                  ? `${shopifyStores.length} store${shopifyStores.length === 1 ? '' : 's'}`
+                  : 'Not set up'
+            }
+            footer={
+              <button
+                type="button"
                 onClick={() => {
                   setActivePlatform('shopify');
                   setShowAddForm(!shopifyConnected);
                 }}
-                className="w-full text-xs h-9 justify-between font-medium"
+                className={
+                  shopifyConnected
+                    ? 'text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] transition-colors'
+                    : 'bg-primary text-primary-foreground hover:bg-primary/90 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg text-xs font-medium transition-colors'
+                }
               >
-                {shopifyConnected ? 'Manage Integration' : 'Connect Account'}
-                <ArrowRight className="size-3.5" />
-              </Button>
-            </CardFooter>
-          </Card>
+                {shopifyConnected ? 'Manage stores' : 'Connect'}
+                <ArrowRight className="size-3" />
+              </button>
+            }
+          >
+            {shopifyStores.map((store) => (
+              <IntegrationRow
+                key={store.id}
+                label={store.store_url}
+                tone="attention"
+                sublabel={
+                  store.status === 'error' ? 'Sync failed — open to see why' : undefined
+                }
+              />
+            ))}
+          </IntegrationCard>
 
-          {/* WooCommerce Integration Card */}
-          <Card className="border-border bg-card/45 shadow-sm hover:shadow-md transition-shadow flex flex-col w-full max-w-[350px]">
-            <CardHeader className="pb-4">
-              <div className="flex items-start justify-between">
-                <div className="flex size-11 items-center justify-center rounded-xl bg-transparent">
-                  <img src="/icons/woo.png" alt="WooCommerce" className="size-11 object-contain" />
-                </div>
-                {wooConnected ? (
-                  wooHasError ? (
-                    <Badge variant="outline" className="border-red-500/20 bg-red-500/10 text-red-500 text-[10px] font-medium flex items-center gap-1 animate-pulse">
-                      <AlertCircle className="size-3" />
-                      Sync Error ({wooStores.length})
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-green-600 dark:text-green-400 text-[10px] font-medium flex items-center gap-1">
-                      <CheckCircle className="size-3" />
-                      Connected ({wooStores.length})
-                    </Badge>
-                  )
-                ) : (
-                  <Badge variant="secondary" className="text-muted-foreground text-[10px] font-medium flex items-center gap-1">
-                    <XCircle className="size-3" />
-                    Not Configured
-                  </Badge>
-                )}
-              </div>
-              <CardTitle className="text-base mt-4 font-semibold text-foreground flex items-center gap-2">
-                WooCommerce
-                <Badge variant="outline" className="border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] py-0 px-1.5 h-4.5 font-semibold">
-                  Beta
-                </Badge>
-              </CardTitle>
-              <CardDescription className="text-xs mt-1.5 leading-relaxed">
-                Connect WooCommerce store to synchronize inventory and dispatch notifications.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1 py-0 pb-4">
-              {wooConnected && (
-                <div className="text-[11px] text-muted-foreground bg-muted/40 rounded px-2.5 py-1.5 font-mono truncate">
-                  {wooStores[0].store_url}
-                </div>
-              )}
-            </CardContent>
-            <CardFooter className="pt-2 border-t border-border">
-              <Button
-                variant={wooConnected ? "outline" : "default"}
+          <IntegrationCard
+            icon={
+              <img
+                src="/icons/woo.png"
+                alt=""
+                aria-hidden
+                className="size-9 shrink-0 object-contain"
+              />
+            }
+            name="WooCommerce"
+            blurb="Synchronise inventory and dispatch notifications"
+            badge={
+              <span className="rounded border border-amber-500/20 bg-amber-500/10 px-1 text-[9px] font-semibold text-amber-600 dark:text-amber-400">
+                Beta
+              </span>
+            }
+            status={wooHasError ? 'attention' : wooConnected ? 'connected' : 'off'}
+            statusLabel={
+              wooHasError
+                ? 'Sync error'
+                : wooConnected
+                  ? `${wooStores.length} store${wooStores.length === 1 ? '' : 's'}`
+                  : 'Not set up'
+            }
+            footer={
+              <button
+                type="button"
                 onClick={() => {
                   setActivePlatform('woocommerce');
                   setShowAddForm(!wooConnected);
                 }}
-                className="w-full text-xs h-9 justify-between font-medium"
+                className={
+                  wooConnected
+                    ? 'text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] transition-colors'
+                    : 'bg-primary text-primary-foreground hover:bg-primary/90 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg text-xs font-medium transition-colors'
+                }
               >
-                {wooConnected ? 'Manage Integration' : 'Connect Account'}
-                <ArrowRight className="size-3.5" />
-              </Button>
-            </CardFooter>
-          </Card>
+                {wooConnected ? 'Manage stores' : 'Connect'}
+                <ArrowRight className="size-3" />
+              </button>
+            }
+          >
+            {wooStores.map((store) => (
+              <IntegrationRow
+                key={store.id}
+                label={store.store_url}
+                tone="attention"
+                sublabel={
+                  store.status === 'error' ? 'Sync failed — open to see why' : undefined
+                }
+              />
+            ))}
+          </IntegrationCard>
 
-          {/* Zapier Integration Card */}
-          <Card className="border-border bg-card/45 shadow-sm hover:shadow-md transition-shadow flex flex-col w-full max-w-[350px]">
-            <CardHeader className="pb-4">
-              <div className="flex items-start justify-between">
-                <div className="flex size-11 items-center justify-center rounded-xl bg-transparent">
-                  <img src="/icons/zapier.svg" alt="Zapier" className="size-11 object-contain" />
-                </div>
-                {zapierCount > 0 ? (
-                  <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-green-600 dark:text-green-400 text-[10px] font-medium flex items-center gap-1">
-                    <CheckCircle className="size-3" />
-                    Connected ({zapierCount})
-                  </Badge>
-                ) : (
-                  <Badge variant="secondary" className="text-muted-foreground text-[10px] font-medium flex items-center gap-1">
-                    <XCircle className="size-3" />
-                    Not Configured
-                  </Badge>
-                )}
-              </div>
-              <CardTitle className="text-base mt-4 font-semibold text-foreground">Zapier</CardTitle>
-              <CardDescription className="text-xs mt-1.5 leading-relaxed">
-                Trigger Zaps on new contacts, conversations, and messages to automate workflows across thousands of apps.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1 py-0 pb-4">
-              {zapierCount > 0 && (
-                <div className="text-[11px] text-muted-foreground bg-muted/40 rounded px-2.5 py-1.5 font-mono truncate">
-                  {zapierCount} webhook{zapierCount === 1 ? '' : 's'} connected
-                </div>
-              )}
-            </CardContent>
-            <CardFooter className="pt-2 border-t border-border">
-              <Link href="/integrations/zapier" className="w-full">
-                <Button
-                  variant={zapierCount > 0 ? "outline" : "default"}
-                  className="w-full text-xs h-9 justify-between font-medium"
-                >
-                  {zapierCount > 0 ? 'Manage Integration' : 'Connect Zapier'}
-                  <ArrowRight className="size-3.5" />
-                </Button>
+          <IntegrationCard
+            icon={
+              <img
+                src="/icons/zapier.svg"
+                alt=""
+                aria-hidden
+                className="size-9 shrink-0 object-contain"
+              />
+            }
+            name="Zapier"
+            blurb="Trigger Zaps on new contacts, conversations and messages"
+            status={zapierCount > 0 ? 'connected' : 'off'}
+            statusLabel={
+              zapierCount > 0
+                ? `${zapierCount} hook${zapierCount === 1 ? '' : 's'}`
+                : 'Not set up'
+            }
+            footer={
+              <Link
+                href="/integrations/zapier"
+                className={
+                  zapierCount > 0
+                    ? 'text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] transition-colors'
+                    : 'bg-primary text-primary-foreground hover:bg-primary/90 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg text-xs font-medium transition-colors'
+                }
+              >
+                {zapierCount > 0 ? 'Manage webhooks' : 'Connect'}
+                <ArrowRight className="size-3" />
               </Link>
-            </CardFooter>
-          </Card>
-        </div>
+            }
+          />
+        </IntegrationGrid>
       )}
 
       {/* Docs / Help Section */}

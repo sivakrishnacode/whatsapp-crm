@@ -17,25 +17,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  AlertCircle,
-  CheckCircle,
-  ExternalLink,
-  Loader2,
-  Trash2,
-  XCircle,
-} from 'lucide-react';
+import { ExternalLink, Loader2, Trash2 } from 'lucide-react';
 
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+  IntegrationCard,
+  IntegrationGrid,
+  IntegrationRow,
+} from './integration-card';
 import {
   connectUrl,
   connectionsFor,
@@ -142,113 +130,83 @@ export function ConnectedApps() {
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-6">
+      <IntegrationGrid>
         {apps.map((app) => {
           const forApp = connectionsFor(connections, app);
-          const active = forApp.filter((c) => c.status === 'active');
           const broken = forApp.filter((c) => c.status !== 'active');
+          const connected = forApp.length > 0;
 
           return (
-            <Card
+            <IntegrationCard
               key={app.app}
-              className="border-border bg-card/45 flex w-full max-w-[350px] flex-col shadow-sm transition-shadow hover:shadow-md"
-            >
-              <CardHeader className="pb-4">
-                <div className="flex items-start justify-between">
-                  <AppIcon app={app} size={44} />
-
-                  {broken.length > 0 ? (
-                    <Badge
-                      variant="outline"
-                      className="flex items-center gap-1 border-amber-500/20 bg-amber-500/10 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                    >
-                      <AlertCircle className="size-3" />
-                      Needs reconnecting
-                    </Badge>
-                  ) : active.length > 0 ? (
-                    <Badge
-                      variant="outline"
-                      className="flex items-center gap-1 border-green-500/20 bg-green-500/10 text-[10px] font-medium text-green-600 dark:text-green-400"
-                    >
-                      <CheckCircle className="size-3" />
-                      Connected
-                    </Badge>
-                  ) : (
-                    <Badge
-                      variant="secondary"
-                      className="text-muted-foreground flex items-center gap-1 text-[10px] font-medium"
-                    >
-                      <XCircle className="size-3" />
-                      Not Configured
-                    </Badge>
-                  )}
-                </div>
-
-                <CardTitle className="text-foreground mt-4 text-base font-semibold">
-                  {app.name}
-                </CardTitle>
-                <CardDescription className="mt-1.5 text-xs leading-relaxed">
-                  {app.blurb}
-                </CardDescription>
-              </CardHeader>
-
-              <CardContent className="flex-1 space-y-2 py-0 pb-4">
-                {forApp.map((connection) => (
-                  <div
-                    key={connection.id}
-                    className="bg-muted/40 flex items-center justify-between gap-2 rounded px-2.5 py-1.5"
+              icon={<AppIcon app={app} size={36} />}
+              name={app.name}
+              blurb={app.blurb}
+              status={
+                broken.length > 0 ? 'attention' : connected ? 'connected' : 'off'
+              }
+              statusLabel={
+                broken.length > 0
+                  ? 'Reconnect'
+                  : connected
+                    ? 'Connected'
+                    : 'Not set up'
+              }
+              footer={
+                connected ? (
+                  // A text link once something IS connected: adding a
+                  // second account is the rare case, and a full-width
+                  // button for it competes with the disconnect control
+                  // directly above it.
+                  <a
+                    href={connectUrl(app, '/integrations')}
+                    className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] transition-colors"
                   >
-                    <span className="min-w-0">
-                      <span className="text-foreground block truncate font-mono text-[11px]">
-                        {connection.displayName ?? connection.id}
-                      </span>
-                      {connection.status !== 'active' && (
-                        <span className="block text-[10px] text-amber-600 dark:text-amber-400">
-                          {connection.lastError ?? 'Reconnect to keep using it'}
-                        </span>
-                      )}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive hover:bg-destructive/10 h-7 shrink-0 p-1.5"
+                    {broken.length > 0 ? 'Reconnect' : 'Add another account'}
+                    <ExternalLink className="size-3" />
+                  </a>
+                ) : (
+                  <a
+                    href={connectUrl(app, '/integrations')}
+                    className="bg-primary text-primary-foreground hover:bg-primary/90 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    Connect
+                    <ExternalLink className="size-3.5" />
+                  </a>
+                )
+              }
+            >
+              {forApp.map((connection) => (
+                <IntegrationRow
+                  key={connection.id}
+                  label={connection.displayName ?? connection.id}
+                  tone="attention"
+                  sublabel={
+                    connection.status !== 'active'
+                      ? (connection.lastError ?? 'Needs reconnecting')
+                      : undefined
+                  }
+                  action={
+                    <button
+                      type="button"
                       aria-label={`Disconnect ${connection.displayName ?? app.name}`}
                       disabled={disconnecting === connection.id}
                       onClick={() => void disconnect(connection, app.name)}
+                      className="text-muted-foreground/50 hover:text-destructive focus-visible:text-destructive group-hover/row:text-muted-foreground shrink-0 transition-colors disabled:opacity-50"
                     >
                       {disconnecting === connection.id ? (
                         <Loader2 className="size-3.5 animate-spin" />
                       ) : (
                         <Trash2 className="size-3.5" />
                       )}
-                    </Button>
-                  </div>
-                ))}
-              </CardContent>
-
-              <CardFooter className="border-border border-t pt-2">
-                {/* A full navigation, not fetch(): this leaves for
-                    Google's consent screen and comes back. */}
-                <a
-                  href={connectUrl(app, '/integrations')}
-                  className={
-                    forApp.length > 0
-                      ? 'border-border hover:bg-muted flex h-9 w-full items-center justify-between rounded-lg border px-3 text-xs font-medium transition-colors'
-                      : 'bg-primary text-primary-foreground hover:bg-primary/90 flex h-9 w-full items-center justify-between rounded-lg px-3 text-xs font-medium transition-colors'
+                    </button>
                   }
-                >
-                  {broken.length > 0
-                    ? 'Reconnect'
-                    : forApp.length > 0
-                      ? 'Connect another account'
-                      : `Connect ${app.name}`}
-                  <ExternalLink className="size-3.5" />
-                </a>
-              </CardFooter>
-            </Card>
+                />
+              ))}
+            </IntegrationCard>
           );
         })}
-      </div>
+      </IntegrationGrid>
     </section>
   );
 }
