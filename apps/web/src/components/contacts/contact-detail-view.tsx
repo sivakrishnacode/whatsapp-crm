@@ -1,12 +1,29 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { format, formatDistanceToNow } from 'date-fns';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/currency';
 import { toE164 } from '@/lib/whatsapp/phone-utils';
+import {
+  contactDisplayName,
+  contactInitial,
+} from '@/lib/contacts/display';
+import { contactSourceMeta } from '@/lib/contacts/source';
+import { ContactSourceBadge } from '@/components/contacts/contact-source-badge';
 import { toast } from 'sonner';
-import type { Contact, ContactSegment, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, MessageTemplate } from '@/types';
+import type {
+  Contact,
+  ContactSegment,
+  Tag,
+  ContactNote,
+  CustomField,
+  Deal,
+  MessageTemplate,
+} from '@/types';
 import {
   addContactsToSegment,
   listSegmentsLight,
@@ -29,9 +46,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   Phone,
   Mail,
@@ -43,16 +58,55 @@ import {
   Trash2,
   Save,
   X,
-  DollarSign,
   Filter,
   LayoutTemplate,
+  MessageSquare,
+  Pencil,
+  User,
+  AtSign,
+  Hash,
+  Globe,
+  StickyNote,
+  Tag as TagIcon,
+  Layers,
+  Briefcase,
+  SlidersHorizontal,
 } from 'lucide-react';
+// Looser than `LucideIcon` on purpose: the contact-source glyphs include
+// the hand-rolled WhatsApp/Instagram brand SVGs, and all these rows ever
+// do with an icon is render it with a className. See lib/nav/channels.ts.
+import type { NavIcon } from '@/lib/nav/channels';
 
 interface ContactDetailViewProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   contactId: string | null;
   onUpdated: () => void;
+}
+
+/** The four columns this panel can write. */
+type EditableField = 'name' | 'phone' | 'email' | 'company';
+
+/** Just enough of a conversation to link to it and date it. */
+interface ConversationSummary {
+  id: string;
+  channel: string;
+  status: string;
+  last_message_at: string | null;
+}
+
+function relativeTime(iso?: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return formatDistanceToNow(date, { addSuffix: true });
+}
+
+function absoluteTime(iso?: string | null): string | undefined {
+  if (!iso) return undefined;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return format(date, 'd MMM yyyy, HH:mm');
 }
 
 export function ContactDetailView({
@@ -62,11 +116,18 @@ export function ContactDetailView({
   onUpdated,
 }: ContactDetailViewProps) {
   const supabase = createClient();
+  const router = useRouter();
   const { accountId, defaultCurrency, defaultCountry } = useAuth();
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
-  const [copiedPhone, setCopiedPhone] = useState(false);
+
+  // The contact's most recent conversation, if any. Two jobs: the
+  // "Open chat" action in the header, and the "Last message" stat —
+  // the one fact about a contact an agent asks for before anything else.
+  const [conversation, setConversation] = useState<ConversationSummary | null>(
+    null,
+  );
 
   // Send template — lets the business initiate (or re-open) a conversation
   // with this contact by sending an approved template. The send route
@@ -74,17 +135,10 @@ export function ContactDetailView({
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [sendingTemplate, setSendingTemplate] = useState(false);
 
-  // Details tab
-  const [editName, setEditName] = useState('');
-  const [editPhone, setEditPhone] = useState('');
-  const [editEmail, setEditEmail] = useState('');
-  const [editCompany, setEditCompany] = useState('');
-  const [savingDetails, setSavingDetails] = useState(false);
-
   // Tags tab
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [contactTagIds, setContactTagIds] = useState<string[]>([]);
-  const [savingTags, setSavingTags] = useState(false);
+  const [savingTagId, setSavingTagId] = useState<string | null>(null);
 
   // Segments — shown alongside tags, since both are labels on a person.
   // Only static segments are togglable; a dynamic one works out its own
@@ -120,14 +174,20 @@ export function ContactDetailView({
       .eq('id', contactId)
       .single();
 
-    if (data) {
-      setContact(data);
-      setEditName(data.name ?? '');
-      setEditPhone(data.phone);
-      setEditEmail(data.email ?? '');
-      setEditCompany(data.company ?? '');
-    }
+    if (data) setContact(data);
     setLoading(false);
+  }, [contactId, supabase]);
+
+  const fetchConversation = useCallback(async () => {
+    if (!contactId) return;
+    const { data } = await supabase
+      .from('conversations')
+      .select('id, channel, status, last_message_at')
+      .eq('contact_id', contactId)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    setConversation((data as ConversationSummary | null) ?? null);
   }, [contactId, supabase]);
 
   const fetchTags = useCallback(async () => {
@@ -229,65 +289,94 @@ export function ContactDetailView({
   useEffect(() => {
     if (open && contactId) {
       fetchContact();
+      fetchConversation();
       fetchTags();
       fetchSegments();
       fetchNotes();
       fetchCustomFields();
       fetchDeals();
     }
-  }, [open, contactId, fetchContact, fetchTags, fetchSegments, fetchNotes, fetchCustomFields, fetchDeals]);
+  }, [
+    open,
+    contactId,
+    fetchContact,
+    fetchConversation,
+    fetchTags,
+    fetchSegments,
+    fetchNotes,
+    fetchCustomFields,
+    fetchDeals,
+  ]);
 
-  async function copyPhone() {
-    // Instagram-only contacts have no phone; the button that calls this
-    // is hidden for them, but guard anyway rather than copying "null".
-    if (!contact?.phone) return;
-    await navigator.clipboard.writeText(contact.phone);
-    setCopiedPhone(true);
-    setTimeout(() => setCopiedPhone(false), 2000);
-  }
+  /**
+   * Write one column.
+   *
+   * Field-at-a-time rather than one Save button for the whole form: the
+   * old form refused to save anything at all without a phone number,
+   * which an Instagram-only contact does not have (migration 050) and
+   * cannot be given. Here only the phone row answers to the phone rules.
+   */
+  async function saveField(field: EditableField, raw: string) {
+    if (!contactId || !contact) return false;
 
-  async function saveDetails() {
-    if (!contactId || !editPhone.trim()) {
-      toast.error('Phone number is required');
-      return;
-    }
+    const trimmed = raw.trim();
+    let value: string | null = trimmed || null;
 
-    // Canonical E.164 or nothing — contacts_phone_e164_chk (migration
-    // 060) rejects anything else, and this panel writes to Supabase
-    // directly rather than through the API.
-    const canonicalPhone = toE164(editPhone, defaultCountry);
-    if (!canonicalPhone) {
-      toast.error(
-        'That phone number does not look right. Include the country code, e.g. +91.',
+    if (field === 'phone') {
+      // contacts_identity_chk needs a phone OR an Instagram id OR a web
+      // visitor id, so the number is only droppable when one of the
+      // others is standing in for it.
+      const reachableWithoutPhone = Boolean(
+        contact.ig_scoped_id || contact.web_visitor_id,
       );
-      return;
+      if (!trimmed) {
+        if (!reachableWithoutPhone) {
+          toast.error('This contact has no other identifier, so the phone number is required.');
+          return false;
+        }
+      } else {
+        // Canonical E.164 or nothing — contacts_phone_e164_chk (migration
+        // 061) rejects anything else, and this panel writes to Supabase
+        // directly rather than through the API.
+        const canonical = toE164(trimmed, defaultCountry);
+        if (!canonical) {
+          toast.error(
+            'That phone number does not look right. Include the country code, e.g. +91.',
+          );
+          return false;
+        }
+        value = canonical;
+      }
     }
 
-    setSavingDetails(true);
+    const updatedAt = new Date().toISOString();
     const { error } = await supabase
       .from('contacts')
-      .update({
-        name: editName.trim() || null,
-        phone: canonicalPhone,
-        email: editEmail.trim() || null,
-        company: editCompany.trim() || null,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ [field]: value, updated_at: updatedAt })
       .eq('id', contactId);
 
     if (error) {
-      toast.error('Failed to update contact');
-    } else {
-      toast.success('Contact updated');
-      fetchContact();
-      onUpdated();
+      // 23505 is contacts_account_phone_normalized_key — a real
+      // situation (two people, one number) that "Failed to update"
+      // leaves the user guessing about.
+      toast.error(
+        error.code === '23505'
+          ? 'Another contact in this workspace already has that phone number.'
+          : `Failed to update ${field}`,
+      );
+      return false;
     }
-    setSavingDetails(false);
+
+    setContact((prev) =>
+      prev ? { ...prev, [field]: value, updated_at: updatedAt } : prev,
+    );
+    onUpdated();
+    return true;
   }
 
   async function toggleTag(tagId: string) {
     if (!contactId) return;
-    setSavingTags(true);
+    setSavingTagId(tagId);
 
     const isSelected = contactTagIds.includes(tagId);
 
@@ -310,7 +399,7 @@ export function ContactDetailView({
         onUpdated();
       }
     }
-    setSavingTags(false);
+    setSavingTagId(null);
   }
 
   async function addNote() {
@@ -426,6 +515,9 @@ export function ContactDetailView({
       }
 
       toast.success(`Template "${template.name}" sent`);
+      // A template send creates the conversation when there wasn't one,
+      // so the header's "Open chat" action should appear without a reload.
+      fetchConversation();
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'network error';
       toast.error(`Failed to send template: ${reason}`);
@@ -434,455 +526,931 @@ export function ContactDetailView({
     }
   }
 
-  function getInitials(name?: string | null) {
-    if (!name) return '?';
-    return name
-      .split(' ')
-      .map((w) => w[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
+  function openConversation() {
+    if (!conversation) return;
+    onOpenChange(false);
+    router.push(`/inbox?c=${conversation.id}`);
   }
+
+  const displayName = contact ? contactDisplayName(contact) : '';
+  const sourceMeta = contactSourceMeta(contact?.source);
+  const SourceIcon = sourceMeta.icon;
+  const labelCount = contactTagIds.length + contactSegmentIds.length;
 
   return (
     <>
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="bg-popover border-border text-popover-foreground sm:max-w-lg w-full p-0"
-      >
-        {loading || !contact ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="size-6 animate-spin text-primary" />
-          </div>
-        ) : (
-          <div className="flex flex-col h-full">
-            {/* Header */}
-            <SheetHeader className="p-4 border-b border-border/50">
-              <div className="flex items-center gap-3">
-                <Avatar className="size-12 bg-muted border border-border">
-                  <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
-                    {getInitials(contact.name)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <SheetTitle className="text-popover-foreground truncate">
-                    {contact.name || 'Unknown'}
-                  </SheetTitle>
-                  <SheetDescription className="text-muted-foreground text-xs mt-0.5">
-                    Contact details
-                  </SheetDescription>
-                  <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-muted-foreground">
-                    <button
-                      onClick={copyPhone}
-                      className="flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
-                    >
-                      <Phone className="size-3" />
-                      {contact.phone}
-                      {copiedPhone ? (
-                        <Check className="size-3 text-primary" />
-                      ) : (
-                        <Copy className="size-3" />
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent
+          side="right"
+          className="bg-popover border-border text-popover-foreground sm:max-w-xl w-full p-0"
+        >
+          {loading || !contact ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="size-6 animate-spin text-primary" />
+            </div>
+          ) : (
+            <div className="flex flex-col h-full min-h-0">
+              {/* Header — identity, then the two things you'd want to do
+                  with it. `pr-12` keeps clear of the sheet's close button. */}
+              <SheetHeader className="gap-0 p-5 pr-12 pb-4 border-b border-border/60 bg-card/40">
+                <div className="flex items-start gap-3.5">
+                  <div className="relative shrink-0">
+                    <Avatar className="size-14">
+                      {contact.avatar_url && (
+                        <AvatarImage src={contact.avatar_url} alt={displayName} />
                       )}
-                    </button>
+                      <AvatarFallback className="bg-primary/10 text-base font-semibold text-primary">
+                        {contactInitial(contact)}
+                      </AvatarFallback>
+                    </Avatar>
+                    {/* Where they came from, on the avatar — the same
+                        fact as the pill below, but readable at a glance. */}
+                    <span
+                      title={sourceMeta.description}
+                      className="absolute -bottom-0.5 -right-0.5 flex size-6 items-center justify-center rounded-full bg-popover ring-2 ring-popover"
+                    >
+                      <span className="flex size-5 items-center justify-center rounded-full bg-muted">
+                        <SourceIcon
+                          className={cn('size-3', sourceMeta.iconClass)}
+                        />
+                      </span>
+                    </span>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <SheetTitle className="truncate text-lg text-popover-foreground">
+                      {displayName}
+                    </SheetTitle>
+                    <SheetDescription className="sr-only">
+                      Contact details
+                    </SheetDescription>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <ContactSourceBadge source={contact.source} />
+                      {contact.company && (
+                        <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                          <Building2 className="size-3 shrink-0" />
+                          <span className="truncate">{contact.company}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Identifiers, each one click-to-copy. Rendered only when
+                    present: an Instagram-only contact has no phone, and an
+                    empty chip reads as a broken one. */}
+                {(contact.phone || contact.ig_username || contact.email) && (
+                  <div className="mt-3.5 flex flex-wrap gap-1.5">
+                    {contact.phone && (
+                      <CopyChip icon={Phone} value={contact.phone} mono />
+                    )}
+                    {contact.ig_username && (
+                      <CopyChip icon={AtSign} value={contact.ig_username} />
+                    )}
                     {contact.email && (
-                      <span className="flex items-center gap-1">
-                        <Mail className="size-3" />
-                        {contact.email}
-                      </span>
-                    )}
-                    {contact.company && (
-                      <span className="flex items-center gap-1">
-                        <Building2 className="size-3" />
-                        {contact.company}
-                      </span>
+                      <CopyChip icon={Mail} value={contact.email} />
                     )}
                   </div>
-                </div>
-              </div>
-              <div className="mt-3">
-                <Button
-                  size="sm"
-                  onClick={() => setTemplatePickerOpen(true)}
-                  disabled={sendingTemplate}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {sendingTemplate ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <LayoutTemplate className="size-4" />
-                  )}
-                  Send template
-                </Button>
-              </div>
-            </SheetHeader>
+                )}
 
-            {/* Tabs */}
-            <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="bg-muted/50 border-b border-border mx-4 mt-3">
-                <TabsTrigger
-                  value="details"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Details
-                </TabsTrigger>
-                <TabsTrigger
-                  value="tags"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Tags &amp; segments
-                </TabsTrigger>
-                <TabsTrigger
-                  value="notes"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Notes
-                </TabsTrigger>
-                <TabsTrigger
-                  value="custom"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Custom Fields
-                </TabsTrigger>
-                <TabsTrigger
-                  value="deals"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  Deals
-                </TabsTrigger>
-              </TabsList>
-
-              {/* Details Tab */}
-              <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-3">
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">Name</Label>
-                    <Input
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">
-                      Phone <span className="text-red-400">*</span>
-                    </Label>
-                    <Input
-                      value={editPhone}
-                      onChange={(e) => setEditPhone(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">Email</Label>
-                    <Input
-                      value={editEmail}
-                      onChange={(e) => setEditEmail(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">Company</Label>
-                    <Input
-                      value={editCompany}
-                      onChange={(e) => setEditCompany(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
-                    />
-                  </div>
+                <div className="mt-3.5 flex flex-wrap items-center gap-2">
                   <Button
-                    onClick={saveDetails}
-                    disabled={savingDetails}
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
                     size="sm"
+                    onClick={() => setTemplatePickerOpen(true)}
+                    disabled={sendingTemplate || !contact.phone}
+                    title={
+                      contact.phone
+                        ? undefined
+                        : 'Templates go out over WhatsApp, and this contact has no phone number.'
+                    }
+                    className="bg-primary text-primary-foreground hover:bg-primary/90"
                   >
-                    {savingDetails ? (
-                      <Loader2 className="size-3.5 animate-spin" />
+                    {sendingTemplate ? (
+                      <Loader2 className="size-4 animate-spin" />
                     ) : (
-                      <Save className="size-3.5" />
+                      <LayoutTemplate className="size-4" />
                     )}
-                    Save Changes
+                    Send template
                   </Button>
-                </div>
-              </TabsContent>
-
-              {/* Tags Tab */}
-              <TabsContent value="tags" className="flex-1 overflow-y-auto px-4 py-3">
-                <div className="space-y-3">
-                  <p className="text-xs text-muted-foreground">
-                    Click a tag to add or remove it from this contact.
-                  </p>
-                  {allTags.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      No tags available. Create tags in Settings.
-                    </p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {allTags.map((tag) => {
-                        const selected = contactTagIds.includes(tag.id);
-                        return (
-                          <button
-                            key={tag.id}
-                            onClick={() => toggleTag(tag.id)}
-                            disabled={savingTags}
-                            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
-                              selected
-                                ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                                : 'opacity-50 hover:opacity-80'
-                            }`}
-                            style={{
-                              backgroundColor: tag.color + '20',
-                              color: tag.color,
-                            }}
-                          >
-                            {selected && <Check className="size-3 mr-1" />}
-                            {tag.name}
-                          </button>
-                        );
-                      })}
-                    </div>
+                  {conversation && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={openConversation}
+                      className="border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <MessageSquare className="size-4" />
+                      Open chat
+                    </Button>
                   )}
+                </div>
+              </SheetHeader>
 
-                  <div className="border-t border-border pt-3 space-y-3">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">
-                        Segments
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Named audiences you can broadcast to. Filter segments
-                        work out their own members and cannot be edited here.
-                      </p>
+              {/* Timeline facts. Three dates, no invented ones: the
+                  "last replied"-style metrics a CRM shows here need
+                  per-message reads this panel doesn't do. */}
+              <div className="grid grid-cols-3 divide-x divide-border/60 border-b border-border/60 bg-card/40">
+                <StatCell
+                  label="Added"
+                  value={relativeTime(contact.created_at)}
+                  title={absoluteTime(contact.created_at)}
+                />
+                <StatCell
+                  label="Updated"
+                  value={relativeTime(contact.updated_at)}
+                  title={absoluteTime(contact.updated_at)}
+                />
+                <StatCell
+                  label="Last message"
+                  value={
+                    relativeTime(conversation?.last_message_at) ?? 'No messages'
+                  }
+                  title={absoluteTime(conversation?.last_message_at)}
+                />
+              </div>
+
+              {/* Tabs */}
+              <Tabs
+                defaultValue="details"
+                className="flex-1 flex flex-col min-h-0 gap-0"
+              >
+                <div className="px-4 pt-3 pb-1">
+                  <TabsList className="h-auto w-full bg-muted/60 p-1">
+                    <TabsTrigger value="details" className="px-2 py-1.5 text-xs">
+                      Overview
+                    </TabsTrigger>
+                    <TabsTrigger value="tags" className="px-2 py-1.5 text-xs">
+                      Labels
+                      <TabCount value={labelCount} />
+                    </TabsTrigger>
+                    <TabsTrigger value="notes" className="px-2 py-1.5 text-xs">
+                      Notes
+                      <TabCount value={notes.length} />
+                    </TabsTrigger>
+                    <TabsTrigger value="custom" className="px-2 py-1.5 text-xs">
+                      Fields
+                      <TabCount value={customFields.length} />
+                    </TabsTrigger>
+                    <TabsTrigger value="deals" className="px-2 py-1.5 text-xs">
+                      Deals
+                      <TabCount value={deals.length} />
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
+
+                {/* Overview */}
+                <TabsContent
+                  value="details"
+                  className="flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-5 space-y-4"
+                >
+                  <section className="space-y-2">
+                    <SectionLabel>Basics</SectionLabel>
+                    <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border bg-card/50">
+                      <EditableRow
+                        icon={User}
+                        label="Name"
+                        value={contact.name}
+                        placeholder="Add a name"
+                        onSave={(next) => saveField('name', next)}
+                      />
+                      <EditableRow
+                        icon={Phone}
+                        label="Phone"
+                        value={contact.phone}
+                        placeholder="Add a phone number"
+                        mono
+                        inputMode="tel"
+                        onSave={(next) => saveField('phone', next)}
+                      />
+                      <EditableRow
+                        icon={Mail}
+                        label="Email"
+                        value={contact.email}
+                        placeholder="Add an email"
+                        inputMode="email"
+                        onSave={(next) => saveField('email', next)}
+                      />
+                      <EditableRow
+                        icon={Building2}
+                        label="Company"
+                        value={contact.company}
+                        placeholder="Add a company"
+                        onSave={(next) => saveField('company', next)}
+                      />
                     </div>
+                    <p className="px-1 text-[11px] text-muted-foreground">
+                      Click a field to edit it. Changes save on their own.
+                    </p>
+                  </section>
 
-                    {allSegments.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        No segments yet. Create one from the Contacts page.
-                      </p>
+                  <section className="space-y-2">
+                    <SectionLabel>Identity &amp; origin</SectionLabel>
+                    <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border bg-card/50">
+                      <ReadOnlyRow
+                        icon={SourceIcon}
+                        iconClassName={sourceMeta.iconClass}
+                        label="Source"
+                        value={sourceMeta.label}
+                        hint={sourceMeta.description}
+                      />
+                      {contact.ig_username && (
+                        <ReadOnlyRow
+                          icon={AtSign}
+                          label="Instagram"
+                          value={`@${contact.ig_username}`}
+                          hint="Cached handle. Instagram usernames can change."
+                          copyValue={contact.ig_username}
+                        />
+                      )}
+                      {contact.web_visitor_id && (
+                        <ReadOnlyRow
+                          icon={Globe}
+                          label="Web visitor"
+                          value={contact.web_visitor_id}
+                          hint="Browser id from the website chat widget."
+                          mono
+                          copyValue={contact.web_visitor_id}
+                        />
+                      )}
+                      {conversation && (
+                        <ReadOnlyRow
+                          icon={MessageSquare}
+                          label="Conversation"
+                          value={`${conversation.channel} · ${conversation.status}`}
+                          className="capitalize"
+                        />
+                      )}
+                      <ReadOnlyRow
+                        icon={Hash}
+                        label="Contact ID"
+                        value={contact.id}
+                        hint="Use this with the public API."
+                        mono
+                        copyValue={contact.id}
+                      />
+                    </div>
+                  </section>
+                </TabsContent>
+
+                {/* Labels — tags and segments */}
+                <TabsContent
+                  value="tags"
+                  className="flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-5 space-y-5"
+                >
+                  <section className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <SectionLabel icon={TagIcon}>Tags</SectionLabel>
+                      <span className="text-[11px] text-muted-foreground">
+                        {contactTagIds.length} of {allTags.length}
+                      </span>
+                    </div>
+                    {allTags.length === 0 ? (
+                      <EmptyNote>
+                        No tags in this workspace yet. Create them from
+                        Settings.
+                      </EmptyNote>
                     ) : (
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {allTags.map((tag) => (
+                          <ChipToggle
+                            key={tag.id}
+                            label={tag.name}
+                            color={tag.color}
+                            selected={contactTagIds.includes(tag.id)}
+                            busy={savingTagId === tag.id}
+                            onClick={() => toggleTag(tag.id)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <SectionLabel icon={Layers}>Segments</SectionLabel>
+                      <span className="text-[11px] text-muted-foreground">
+                        {contactSegmentIds.length} of {allSegments.length}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Named audiences you can broadcast to. Filter segments work
+                      out their own members and cannot be edited here.
+                    </p>
+                    {allSegments.length === 0 ? (
+                      <EmptyNote>
+                        No segments yet. Create one from the Contacts page.
+                      </EmptyNote>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
                         {allSegments.map((segment) => {
-                          const isMember = contactSegmentIds.includes(
-                            segment.id,
-                          );
                           const isDynamic = segment.kind === 'dynamic';
                           return (
-                            <button
+                            <ChipToggle
                               key={segment.id}
-                              onClick={() => toggleSegment(segment)}
-                              disabled={
-                                isDynamic || savingSegmentId === segment.id
-                              }
+                              label={segment.name}
+                              color={segment.color}
+                              selected={contactSegmentIds.includes(segment.id)}
+                              busy={savingSegmentId === segment.id}
+                              locked={isDynamic}
+                              lockedIcon={Filter}
                               title={
                                 isDynamic
                                   ? 'This segment works out its own members from its rules'
                                   : undefined
                               }
-                              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all ${
-                                isDynamic
-                                  ? 'cursor-not-allowed opacity-60'
-                                  : 'cursor-pointer'
-                              } ${
-                                isMember && !isDynamic
-                                  ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                                  : 'opacity-50 hover:opacity-80'
-                              }`}
-                              style={{
-                                backgroundColor: segment.color + '20',
-                                color: segment.color,
-                              }}
-                            >
-                              {isDynamic ? (
-                                <Filter className="size-3 mr-1" />
-                              ) : isMember ? (
-                                <Check className="size-3 mr-1" />
-                              ) : null}
-                              {segment.name}
-                            </button>
+                              onClick={() => toggleSegment(segment)}
+                            />
                           );
                         })}
                       </div>
                     )}
+                  </section>
+                </TabsContent>
+
+                {/* Notes */}
+                <TabsContent
+                  value="notes"
+                  className="flex-1 flex flex-col min-h-0 px-4 pt-2 pb-5"
+                >
+                  <div className="rounded-xl border border-border bg-card/50 p-2.5">
+                    <Textarea
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Cmd/Ctrl+Enter to post, the same shortcut the
+                        // composer in the inbox trains people on.
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          addNote();
+                        }
+                      }}
+                      placeholder="Write a note for your team..."
+                      className="min-h-[64px] resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 placeholder:text-muted-foreground"
+                    />
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-muted-foreground">
+                        Only your team sees notes.
+                      </span>
+                      <Button
+                        onClick={addNote}
+                        disabled={!newNote.trim() || savingNote}
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                        size="sm"
+                      >
+                        {savingNote ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Plus className="size-3.5" />
+                        )}
+                        Add note
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </TabsContent>
 
-              {/* Notes Tab */}
-              <TabsContent value="notes" className="flex-1 flex flex-col min-h-0 px-4 py-3">
-                <div className="space-y-2 mb-3">
-                  <Textarea
-                    value={newNote}
-                    onChange={(e) => setNewNote(e.target.value)}
-                    placeholder="Write a note..."
-                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground min-h-[60px] text-sm resize-none"
-                  />
-                  <Button
-                    onClick={addNote}
-                    disabled={!newNote.trim() || savingNote}
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                    size="sm"
-                  >
-                    {savingNote ? (
-                      <Loader2 className="size-3.5 animate-spin" />
+                  <div className="mt-3 flex-1 min-h-0 space-y-2 overflow-y-auto">
+                    {loadingNotes ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : notes.length === 0 ? (
+                      <EmptyState
+                        icon={StickyNote}
+                        title="No notes yet"
+                        body="Anything worth remembering about this contact goes here."
+                      />
                     ) : (
-                      <Plus className="size-3.5" />
+                      notes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="group rounded-xl border border-border bg-card/50 p-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="flex-1 whitespace-pre-wrap text-sm text-foreground">
+                              {note.note_text}
+                            </p>
+                            <button
+                              onClick={() => deleteNote(note.id)}
+                              aria-label="Delete note"
+                              className="shrink-0 cursor-pointer text-muted-foreground opacity-0 transition-all hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                          <p
+                            className="mt-2 text-[11px] text-muted-foreground"
+                            title={absoluteTime(note.created_at)}
+                          >
+                            {relativeTime(note.created_at)}
+                          </p>
+                        </div>
+                      ))
                     )}
-                    Add Note
-                  </Button>
-                </div>
+                  </div>
+                </TabsContent>
 
-                <div className="flex-1 overflow-y-auto space-y-2">
-                  {loadingNotes ? (
+                {/* Custom fields */}
+                <TabsContent
+                  value="custom"
+                  className="flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-5"
+                >
+                  {loadingCustom ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="size-5 animate-spin text-muted-foreground" />
                     </div>
-                  ) : notes.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">
-                      No notes yet.
-                    </p>
+                  ) : customFields.length === 0 ? (
+                    <EmptyState
+                      icon={SlidersHorizontal}
+                      title="No custom fields"
+                      body="Define them once in Settings and every contact gets them."
+                    />
                   ) : (
-                    notes.map((note) => (
-                      <div
-                        key={note.id}
-                        className="rounded-lg bg-muted/50 border border-border/50 p-3 group"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm text-muted-foreground whitespace-pre-wrap flex-1">
-                            {note.note_text}
-                          </p>
-                          <button
-                            onClick={() => deleteNote(note.id)}
-                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all cursor-pointer shrink-0"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </button>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1.5">
-                          {new Date(note.created_at).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </TabsContent>
-
-              {/* Custom Fields Tab */}
-              <TabsContent value="custom" className="flex-1 overflow-y-auto px-4 py-3">
-                {loadingCustom ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="size-5 animate-spin text-muted-foreground" />
-                  </div>
-                ) : customFields.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    No custom fields defined. Create them in Settings.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {customFields.map((field) => (
-                      <div key={field.id} className="space-y-1.5">
-                        <Label className="text-muted-foreground text-xs capitalize">
-                          {field.field_name}
-                        </Label>
-                        <Input
-                          value={customValues[field.id] ?? ''}
-                          onChange={(e) =>
-                            setCustomValues((prev) => ({
-                              ...prev,
-                              [field.id]: e.target.value,
-                            }))
-                          }
-                          placeholder={`Enter ${field.field_name}...`}
-                          className="bg-muted border-border text-foreground h-8 text-sm placeholder:text-muted-foreground"
-                        />
-                      </div>
-                    ))}
-                    <Button
-                      onClick={saveCustomFields}
-                      disabled={savingCustom}
-                      className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
-                      size="sm"
-                    >
-                      {savingCustom ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Save className="size-3.5" />
-                      )}
-                      Save Custom Fields
-                    </Button>
-                  </div>
-                )}
-              </TabsContent>
-
-              {/* Deals Tab */}
-              <TabsContent value="deals" className="flex-1 overflow-y-auto px-4 py-3">
-                {loadingDeals ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="size-5 animate-spin text-primary" />
-                  </div>
-                ) : deals.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No deals yet</p>
-                ) : (
-                  <div className="space-y-2">
-                    {deals.map((deal) => (
-                      <div
-                        key={deal.id}
-                        className="rounded-lg border border-border bg-muted/50 p-3"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm font-medium text-foreground">
-                            {deal.title}
-                          </p>
-                          {deal.stage && (
-                            <span
-                              className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                              style={{
-                                backgroundColor: `${deal.stage.color}20`,
-                                color: deal.stage.color,
-                              }}
-                            >
-                              {deal.stage.name}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <DollarSign className="size-3" />
-                            {formatCurrency(
-                              deal.value ?? 0,
-                              deal.currency || defaultCurrency,
-                            )}
-                          </span>
-                          {deal.status && deal.status !== 'open' && (
-                            <span
-                              className={
-                                deal.status === 'won'
-                                  ? 'text-primary'
-                                  : 'text-red-400'
+                    <div className="space-y-3">
+                      <div className="space-y-3 rounded-xl border border-border bg-card/50 p-3">
+                        {customFields.map((field) => (
+                          <div key={field.id} className="space-y-1.5">
+                            <Label className="text-muted-foreground text-[11px] uppercase tracking-wide capitalize">
+                              {field.field_name}
+                            </Label>
+                            <Input
+                              value={customValues[field.id] ?? ''}
+                              onChange={(e) =>
+                                setCustomValues((prev) => ({
+                                  ...prev,
+                                  [field.id]: e.target.value,
+                                }))
                               }
-                            >
-                              {deal.status}
-                            </span>
-                          )}
-                        </div>
+                              placeholder={`Enter ${field.field_name}...`}
+                              className="bg-muted border-border text-foreground h-9 text-sm placeholder:text-muted-foreground"
+                            />
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
-          </div>
-        )}
-      </SheetContent>
-    </Sheet>
-    <TemplatePicker
-      open={templatePickerOpen}
-      onOpenChange={setTemplatePickerOpen}
-      onSelect={handleSendTemplate}
-    />
+                      <Button
+                        onClick={saveCustomFields}
+                        disabled={savingCustom}
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+                        size="sm"
+                      >
+                        {savingCustom ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Save className="size-3.5" />
+                        )}
+                        Save custom fields
+                      </Button>
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* Deals */}
+                <TabsContent
+                  value="deals"
+                  className="flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-5"
+                >
+                  {loadingDeals ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="size-5 animate-spin text-primary" />
+                    </div>
+                  ) : deals.length === 0 ? (
+                    <EmptyState
+                      icon={Briefcase}
+                      title="No deals yet"
+                      body="Deals raised for this contact in Pipelines show up here."
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      {deals.map((deal) => (
+                        <div
+                          key={deal.id}
+                          className="rounded-xl border border-border bg-card/50 p-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-medium text-foreground">
+                              {deal.title}
+                            </p>
+                            {deal.stage && (
+                              <span
+                                className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                style={{
+                                  backgroundColor: `${deal.stage.color}20`,
+                                  color: deal.stage.color,
+                                }}
+                              >
+                                {deal.stage.name}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-2 flex items-center justify-between text-xs">
+                            <span className="font-medium text-foreground">
+                              {formatCurrency(
+                                deal.value ?? 0,
+                                deal.currency || defaultCurrency,
+                              )}
+                            </span>
+                            {deal.status && deal.status !== 'open' && (
+                              <span
+                                className={cn(
+                                  'rounded-full px-2 py-0.5 text-[10px] font-medium capitalize',
+                                  deal.status === 'won'
+                                    ? 'bg-success-surface text-success'
+                                    : 'bg-destructive-surface text-destructive',
+                                )}
+                              >
+                                {deal.status}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+      <TemplatePicker
+        open={templatePickerOpen}
+        onOpenChange={setTemplatePickerOpen}
+        onSelect={handleSendTemplate}
+      />
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Panel-local building blocks.
+ *
+ * They live here rather than in components/ui because each one encodes a
+ * decision about this panel — click-anywhere-to-edit rows, chips that say
+ * "on/off" without relying on opacity — not a reusable primitive.
+ * ---------------------------------------------------------------------- */
+
+function SectionLabel({
+  icon: Icon,
+  children,
+}: {
+  icon?: NavIcon;
+  children: React.ReactNode;
+}) {
+  return (
+    <p className="flex items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+      {Icon && <Icon className="size-3" />}
+      {children}
+    </p>
+  );
+}
+
+function TabCount({ value }: { value: number }) {
+  if (value === 0) return null;
+  return (
+    <span className="ml-0.5 rounded-full bg-foreground/10 px-1.5 text-[10px] font-medium tabular-nums">
+      {value}
+    </span>
+  );
+}
+
+function StatCell({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string | null;
+  title?: string;
+}) {
+  return (
+    <div className="px-4 py-2.5" title={title}>
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-0.5 truncate text-xs text-foreground">{value ?? '—'}</p>
+    </div>
+  );
+}
+
+function EmptyNote({ children }: { children: React.ReactNode }) {
+  return <p className="text-sm text-muted-foreground">{children}</p>;
+}
+
+function EmptyState({
+  icon: Icon,
+  title,
+  body,
+}: {
+  icon: NavIcon;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-1.5 px-6 py-10 text-center">
+      <span className="flex size-9 items-center justify-center rounded-full bg-muted">
+        <Icon className="size-4 text-muted-foreground" />
+      </span>
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      <p className="max-w-[15rem] text-xs text-muted-foreground">{body}</p>
+    </div>
+  );
+}
+
+/** Header identifier that copies itself when clicked. */
+function CopyChip({
+  icon: Icon,
+  value,
+  mono,
+}: {
+  icon: NavIcon;
+  value: string;
+  mono?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      toast.error('Could not copy to the clipboard');
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={`Copy ${value}`}
+      className="inline-flex max-w-full cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-card/60 px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+    >
+      <Icon className="size-3 shrink-0" />
+      <span className={cn('truncate', mono && 'font-mono')}>{value}</span>
+      {copied ? (
+        <Check className="size-3 shrink-0 text-primary" />
+      ) : (
+        <Copy className="size-3 shrink-0 opacity-60" />
+      )}
+    </button>
+  );
+}
+
+/**
+ * One editable record row.
+ *
+ * Reads as a value until you click it, which is the difference between a
+ * contact record and a form: most visits are to look something up, not to
+ * change it. Saving is explicit (tick, or Enter) — never on blur, which
+ * would fire while you were reaching for Cancel.
+ */
+function EditableRow({
+  icon: Icon,
+  label,
+  value,
+  placeholder,
+  mono,
+  inputMode,
+  onSave,
+}: {
+  icon: NavIcon;
+  label: string;
+  value: string | null | undefined;
+  placeholder: string;
+  mono?: boolean;
+  inputMode?: 'tel' | 'email' | 'text';
+  onSave: (next: string) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  function begin() {
+    setDraft(value ?? '');
+    setEditing(true);
+  }
+
+  async function commit() {
+    if (draft.trim() === (value ?? '').trim()) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    const ok = await onSave(draft);
+    setSaving(false);
+    if (ok) setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2.5 px-3 py-2">
+        <Icon className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            {label}
+          </p>
+          <Input
+            autoFocus
+            value={draft}
+            inputMode={inputMode}
+            disabled={saving}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commit();
+              }
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            className={cn(
+              'mt-1 h-8 border-border bg-muted text-sm text-foreground',
+              mono && 'font-mono',
+            )}
+          />
+        </div>
+        <div className="flex shrink-0 items-center gap-1 self-end pb-0.5">
+          <Button
+            size="icon-sm"
+            onClick={commit}
+            disabled={saving}
+            aria-label={`Save ${label}`}
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            {saving ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Check className="size-3.5" />
+            )}
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => setEditing(false)}
+            disabled={saving}
+            aria-label={`Cancel editing ${label}`}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={begin}
+      className="group flex w-full cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-muted/50"
+    >
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      {/* Spans, not paragraphs: a button may only contain phrasing
+          content, and this row is the button. */}
+      <span className="min-w-0 flex-1">
+        <span className="block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          {label}
+        </span>
+        <span
+          className={cn(
+            'block truncate text-sm',
+            value ? 'text-foreground' : 'text-muted-foreground/70',
+            value && mono && 'font-mono',
+          )}
+        >
+          {value || placeholder}
+        </span>
+      </span>
+      <Pencil className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+    </button>
+  );
+}
+
+/** A record row nothing may change here — optionally copyable. */
+function ReadOnlyRow({
+  icon: Icon,
+  iconClassName,
+  label,
+  value,
+  hint,
+  mono,
+  className,
+  copyValue,
+}: {
+  icon: NavIcon;
+  iconClassName?: string;
+  label: string;
+  value: string;
+  hint?: string;
+  mono?: boolean;
+  className?: string;
+  copyValue?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    if (!copyValue) return;
+    try {
+      await navigator.clipboard.writeText(copyValue);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      toast.error('Could not copy to the clipboard');
+    }
+  }
+
+  return (
+    <div className="group flex items-center gap-2.5 px-3 py-2.5" title={hint}>
+      <Icon className={cn('size-4 shrink-0 text-muted-foreground', iconClassName)} />
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          {label}
+        </p>
+        <p
+          className={cn(
+            'truncate text-sm text-foreground',
+            mono && 'font-mono text-xs',
+            className,
+          )}
+        >
+          {value}
+        </p>
+      </div>
+      {copyValue && (
+        <button
+          type="button"
+          onClick={copy}
+          aria-label={`Copy ${label}`}
+          className="shrink-0 cursor-pointer text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          {copied ? (
+            <Check className="size-3.5 text-primary" />
+          ) : (
+            <Copy className="size-3.5" />
+          )}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Tag / segment chip.
+ *
+ * "Applied" is carried by fill + border + tick rather than by opacity: a
+ * 50%-opacity chip in a colour the user chose reads as a disabled control,
+ * not as an unticked one, and the two states have to be tellable apart at
+ * a glance to be worth clicking.
+ */
+function ChipToggle({
+  label,
+  color,
+  selected,
+  busy,
+  locked,
+  lockedIcon: LockedIcon,
+  title,
+  onClick,
+}: {
+  label: string;
+  color: string;
+  selected: boolean;
+  busy?: boolean;
+  locked?: boolean;
+  lockedIcon?: NavIcon;
+  title?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={locked || busy}
+      title={title}
+      aria-pressed={selected}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-all',
+        locked ? 'cursor-not-allowed' : 'cursor-pointer hover:border-solid',
+        selected
+          ? 'border-transparent'
+          : 'border-dashed border-border text-muted-foreground hover:text-foreground',
+      )}
+      style={
+        selected
+          ? { backgroundColor: `${color}24`, color, borderColor: `${color}66` }
+          : undefined
+      }
+    >
+      {busy ? (
+        <Loader2 className="size-3 shrink-0 animate-spin" />
+      ) : locked && LockedIcon ? (
+        <LockedIcon className="size-3 shrink-0" />
+      ) : selected ? (
+        <Check className="size-3 shrink-0" />
+      ) : (
+        <span
+          className="size-2 shrink-0 rounded-full"
+          style={{ backgroundColor: color }}
+        />
+      )}
+      {label}
+    </button>
   );
 }

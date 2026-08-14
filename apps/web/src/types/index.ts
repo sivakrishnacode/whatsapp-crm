@@ -121,6 +121,14 @@ export interface Contact {
   ig_scoped_id?: string | null;
   /** Cached @handle. Display only — Instagram usernames are mutable. */
   ig_username?: string | null;
+  /**
+   * Opaque browser id for a web-widget visitor. Account-scoped and
+   * meaningless outside this tenant. NULL for every non-web contact.
+   * Read-only here, but load-bearing: `contacts_identity_chk` needs a
+   * phone OR an `ig_scoped_id` OR this, so it decides whether a phone
+   * number may be cleared.
+   */
+  web_visitor_id?: string | null;
   name?: string;
   email?: string;
   company?: string;
