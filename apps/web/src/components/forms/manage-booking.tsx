@@ -6,11 +6,13 @@ import {
   CalendarX,
   Loader2,
   RotateCcw,
+  Video,
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { forgetBookingByManageUrl } from '@/lib/forms/booking-memory';
 import { SlotPicker } from './slot-picker';
 
 interface Booking {
@@ -20,6 +22,8 @@ interface Booking {
   ends_at: string;
   timezone: string;
   status: string;
+  /** Present when the form creates Google Meet links. */
+  meeting_url?: string | null;
 }
 
 /**
@@ -126,7 +130,12 @@ export function ManageBooking({ token }: { token: string }) {
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
       );
       if (!res.ok) throw new Error('Could not cancel');
-      setBooking((await res.json()) as Booking);
+      const next = (await res.json()) as Booking;
+      setBooking(next);
+      // Drop the browser's memory of it too, or the form would go on
+      // offering "you already have a booking" for a cancelled one — and
+      // leave its manage token sitting in storage.
+      forgetBookingByManageUrl(token);
       toast.success('Your booking has been cancelled.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not cancel');
@@ -198,6 +207,30 @@ export function ManageBooking({ token }: { token: string }) {
           )}
         </div>
       </div>
+
+      {/* A refresh straight after booking now LANDS here, so this is
+          where the customer expects to find the call — it used to exist
+          only on the confirmation screen they had just lost. */}
+      {!cancelled && booking.meeting_url && (
+        <a
+          href={booking.meeting_url}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 transition-colors hover:bg-muted/40"
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <Video className="size-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-foreground">
+              Join with Google Meet
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {booking.meeting_url.replace(/^https?:\/\//, '')}
+            </span>
+          </span>
+        </a>
+      )}
 
       {!cancelled && mode === 'view' && (
         <div className="flex flex-wrap gap-2">

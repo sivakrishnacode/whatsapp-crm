@@ -29,6 +29,7 @@ import FormAvailabilityPanel, {
   type Availability,
 } from '@/components/forms/form-availability-panel';
 import FormSubmissionsPanel from '@/components/forms/form-submissions-panel';
+import FormAppointmentsPanel from '@/components/forms/form-appointments-panel';
 import { resolveFormTheme, type FormTheme } from '@/lib/forms/theme';
 
 interface FormData {
@@ -72,6 +73,7 @@ export default function FormBuilderPage() {
    * from whenever the form was last saved.
    */
   const [submissionCount, setSubmissionCount] = useState(0);
+  const [appointmentCount, setAppointmentCount] = useState<number | null>(null);
 
   /**
    * Derived from the LOCAL field list, not the saved one, so adding a Time
@@ -292,6 +294,16 @@ export default function FormBuilderPage() {
               editor to read a table and then having to come back is the
               long way round to a question ("did anyone fill it in?") that
               gets asked while building. */}
+          {/* Only for forms that actually take bookings — same rule as
+              Availability, and for the same reason: an appointments list
+              for a form with no time picker can never have a row. */}
+          {hasSlotField && (
+            <TabsTrigger value="appointments" id="tab-appointments">
+              <CalendarClock className="mr-2 h-4 w-4" />
+              Appointments
+              {appointmentCount !== null && ` (${appointmentCount})`}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="submissions" id="tab-submissions">
             <BarChart2 className="mr-2 h-4 w-4" />
             Submissions ({submissionCount})
@@ -347,6 +359,13 @@ export default function FormBuilderPage() {
         {/* Unmounted while inactive (base-ui `keepMounted` defaults to
             false), so submissions are fetched when the tab is first opened
             rather than on every visit to the editor. */}
+        <TabsContent value="appointments" className="flex-1 overflow-auto p-4">
+          <FormAppointmentsPanel
+            formId={form.id}
+            onCountChange={setAppointmentCount}
+          />
+        </TabsContent>
+
         <TabsContent value="submissions" className="flex-1 overflow-auto p-4">
           <FormSubmissionsPanel
             formId={form.id}
