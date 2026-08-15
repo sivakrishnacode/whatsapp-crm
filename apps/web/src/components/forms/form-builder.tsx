@@ -65,7 +65,7 @@ import {
 import { splitIntoPages } from '@/lib/forms/visibility';
 import type { FormTheme } from '@/lib/forms/theme';
 import type { FormFieldType } from './form-renderer';
-import FormRenderer, { FieldInput } from './form-renderer';
+import FormRenderer, { ACCENT_BUTTON, FieldInput } from './form-renderer';
 import FormFieldInspector from './form-field-inspector';
 import FormDesignControls from './form-design-controls';
 import FormSurface from './form-surface';
@@ -603,7 +603,11 @@ function Canvas({
                   items={fields.map((f) => f.field_key)}
                   strategy={verticalListSortingStrategy}
                 >
-                  <div className="flex flex-wrap gap-5">
+                  {/* gap-6 and the 0.75rem half-width below are the
+                      renderer's own numbers, not approximations of them.
+                      They have to be identical or a half-width pair sits
+                      differently here than it does publicly. */}
+                  <div className="flex flex-wrap gap-6">
                     {fields.map((field, idx) => (
                       <CanvasField
                         key={field.field_key}
@@ -623,6 +627,20 @@ function Canvas({
                         onDuplicate={() => onDuplicate(field.field_key)}
                       />
                     ))}
+
+                    {/* The submit button is part of the form, so the
+                        canvas shows it. Inert, and not selectable — its
+                        label lives on the Settings tab. */}
+                    <div className="w-full pt-2">
+                      <button
+                        type="button"
+                        disabled
+                        style={ACCENT_BUTTON}
+                        className="w-full px-8 py-2.5 font-medium shadow-md sm:w-auto"
+                      >
+                        {submitLabel}
+                      </button>
+                    </div>
                   </div>
                 </SortableContext>
               )}
@@ -687,12 +705,26 @@ function CanvasField({
       ref={setNodeRef}
       style={style}
       onClick={onSelect}
+      /*
+       * Geometry is the RENDERER'S, exactly.
+       *
+       * This wrapper used to add `p-2` and a border, and set its own
+       * half-width from a different gap — so a half-width field was
+       * narrower here than in public, and (worse) the width was applied
+       * TWICE: this element took 50%, then the FieldInput inside took 50%
+       * of that. Half-width fields were rendering at about a quarter.
+       *
+       * Now: no padding, no border, the renderer's own `0.75rem` figure,
+       * and the selection indicator is an OUTLINE — outlines are painted
+       * outside the box and take no layout space, so the field measures
+       * the same selected, hovered or neither.
+       */
       className={cn(
-        'group relative cursor-pointer rounded-lg border border-transparent p-2 transition-colors',
-        isHalf ? 'w-full sm:w-[calc(50%-0.625rem)]' : 'w-full',
+        'group relative cursor-pointer rounded-lg outline-offset-4 transition-[outline-color]',
+        isHalf ? 'w-full sm:w-[calc(50%-0.75rem)]' : 'w-full',
         selected
-          ? 'border-primary/50 bg-primary/[0.03] ring-1 ring-primary/20'
-          : 'hover:border-border hover:bg-muted/30',
+          ? 'outline-2 outline-primary/60'
+          : 'outline-2 outline-transparent hover:outline-border',
         isDragging && 'opacity-40',
       )}
     >
@@ -742,7 +774,16 @@ function CanvasField({
         </button>
       </div>
 
-      <FieldBadges field={field} />
+      {/* Floated, not inline: a badge in the flow would push the field
+          down and make the canvas taller than the published form. */}
+      <div
+        className={cn(
+          'absolute -top-2.5 left-2 z-10 transition-opacity',
+          selected ? 'opacity-100' : 'opacity-90',
+        )}
+      >
+        <FieldBadges field={field} />
+      </div>
 
       {field.type === 'page_break' ? (
         <PageBreakPreview step={stepNumber ?? 2} total={totalSteps} />
@@ -755,7 +796,10 @@ function CanvasField({
            builder's own controls are the interactive ones. */
         <div className="pointer-events-none select-none" inert>
           <FieldInput
-            field={field}
+            // `width: 'full'` because THIS wrapper already carries the
+            // half-width. Passing the field's own width made FieldInput
+            // take 50% of a box that was already 50%.
+            field={{ ...field, width: 'full' }}
             value={undefined}
             error={undefined}
             onChange={() => {}}
@@ -774,7 +818,7 @@ function FieldBadges({ field }: { field: FormBuilderField }) {
   if (badges.length === 0) return null;
 
   return (
-    <div className="mb-1.5 flex flex-wrap items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1">
       {badges.map((b) => (
         <span
           key={b}
