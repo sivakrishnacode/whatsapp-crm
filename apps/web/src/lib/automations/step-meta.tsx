@@ -679,6 +679,16 @@ export function summarizeStep(
     case 'wait':
       return `${cfg.amount ?? '?'} ${cfg.unit ?? ''}`.trim();
     case 'wait_until': {
+      // Instant mode reads completely differently on the node — "09:00
+      // UTC" would be a lie for a step that waits for a booking.
+      const instant = s('instant');
+      if (instant) {
+        const offset = Number(cfg.offset_minutes) || 0;
+        if (offset === 0) return 'at the trigger’s time';
+        return offset < 0
+          ? `${Math.abs(offset)} min before the trigger’s time`
+          : `${offset} min after the trigger’s time`;
+      }
       const days = Array.isArray(cfg.days) ? (cfg.days as number[]) : [];
       const when = s('time') || '09:00';
       return days.length > 0 ? `${when} on ${days.length} day(s)` : `${when} ${s('timezone') || 'UTC'}`;

@@ -134,11 +134,23 @@ export function validateStep(step: BuilderStep): StepIssue[] {
       }
       break;
     }
-    case 'wait_until':
-      if (!/^\d{1,2}:\d{2}$/.test(String(c.time ?? ''))) {
+    case 'wait_until': {
+      // Mirrors the server: `instant` mode replaces `time` entirely, so
+      // demanding HH:mm would reject a perfectly good reminder step.
+      const instant = String(c.instant ?? '').trim();
+      if (instant) {
+        if (!instant.includes('{{')) {
+          issues.push({
+            field: 'instant',
+            message:
+              'Use a token like {{ vars.booking.starts_at }} — a fixed date would be the same for every run',
+          });
+        }
+      } else if (!/^\d{1,2}:\d{2}$/.test(String(c.time ?? ''))) {
         issues.push({ field: 'time', message: 'Set a time as HH:mm' });
       }
       break;
+    }
     case 'condition': {
       const rules = Array.isArray(c.rules)
         ? (c.rules as { subject?: string; operand?: string }[])

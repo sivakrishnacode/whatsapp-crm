@@ -142,6 +142,53 @@ export class AutomationDispatchService {
   }
 
   /** Resume a run that was parked at a wait step. Called from the BullMQ processor. */
+  /**
+   * True when a held run is about a booking that is no longer valid.
+   *
+   * "No longer valid" is deliberately narrow: cancelled, deleted, or
+   * MOVED. A reschedule changes `starts_at`, which means the reminder was
+   * scheduled against the old time and would arrive at the wrong moment —
+   * the reschedule fires its own `appointment_rescheduled` trigger, so a
+   * correctly-timed reminder can be scheduled from that instead.
+   *
+   * Fails OPEN: a lookup that errors returns false and the run proceeds.
+   * A missed reminder is a worse outcome than a slightly stale one, and
+   * this must never become a way for a database blip to silence
+   * automations that have nothing to do with bookings.
+   */
+  private async bookingWentAway(context: AutomationContext): Promise<boolean> {
+    const appointmentId = context?.appointment_id;
+    if (typeof appointmentId !== 'string' || !appointmentId) return false;
+
+    try {
+      const booking = await this.prisma.form_bookings.findUnique({
+        where: { id: appointmentId },
+        select: { status: true, starts_at: true },
+      });
+      if (!booking) return true;
+      if (booking.status !== 'confirmed') return true;
+
+      const scheduledFor = (
+        context.vars as { booking?: { starts_at?: unknown } } | undefined
+      )?.booking?.starts_at;
+      if (typeof scheduledFor === 'string') {
+        const then = new Date(scheduledFor).getTime();
+        if (
+          !Number.isNaN(then) &&
+          Math.abs(then - booking.starts_at.getTime()) > 60_000
+        ) {
+          return true;
+        }
+      }
+      return false;
+    } catch (err) {
+      this.logger.warn(
+        `resume: could not verify booking ${appointmentId}, proceeding: ${String(err)}`,
+      );
+      return false;
+    }
+  }
+
   async resume(pendingExecutionId: string): Promise<void> {
     const pending = await this.prisma.automationPendingExecution.findUnique({
       where: { id: pendingExecutionId },
@@ -166,6 +213,30 @@ export class AutomationDispatchService {
       return;
     }
 
+    /*
+     * A held run can outlive the thing it is about.
+     *
+     * A reminder scheduled for "30 minutes before the appointment" sits in
+     * the queue for days. If the customer cancels or moves the booking in
+     * the meantime, firing it anyway sends "your meeting starts in 30
+     * minutes" for a meeting that is not happening — worse than sending
+     * nothing, because the customer may turn up.
+     *
+     * The context records `appointment_id` (BookingService.fanOut), so
+     * this can be checked cheaply and only for runs that are about a
+     * booking. Everything else is unaffected.
+     */
+    const context = (pending.context ?? {}) as AutomationContext;
+    if (await this.bookingWentAway(context)) {
+      this.logger.log(
+        `resume: booking ${String(context.appointment_id)} is cancelled or moved, dropping held run ${pending.id}`,
+      );
+      // 'done', not 'failed': nothing went wrong. The run reached its
+      // conclusion early because its subject went away.
+      await this.markPending(pending.id, 'done');
+      return;
+    }
+
     // Deliberately NOT try/caught here: executeStepsFrom already swallows
     // and logs every *business* step failure into automation_logs (a
     // step throwing is a normal, expected outcome — see its per-step
@@ -182,7 +253,7 @@ export class AutomationDispatchService {
         userId: automation.userId,
       },
       contactId: pending.contactId,
-      context: (pending.context ?? {}) as AutomationContext,
+      context,
       parentStepId: pending.parentStepId,
       branch: pending.branch as 'yes' | 'no' | null,
       startPosition: pending.nextStepPosition,

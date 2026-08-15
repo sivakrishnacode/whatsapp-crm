@@ -154,14 +154,42 @@ function validateOne(
         });
       }
       break;
-    case 'wait_until':
-      if (!/^\d{1,2}:\d{2}$/.test(String(c.time ?? ''))) {
+    case 'wait_until': {
+      // Two modes. `instant` wins when present, so `time` is only
+      // required when there is no instant to wait for.
+      // Narrowed rather than String()-coerced: `c` is untrusted JSON, and
+      // an object would stringify to "[object Object]" and then look like
+      // a perfectly valid non-empty instant.
+      const instant = typeof c.instant === 'string' ? c.instant.trim() : '';
+      if (instant) {
+        if (!instant.includes('{{')) {
+          // A literal date would make every run of this automation wait
+          // for the same fixed moment, which is never what "wait until
+          // the appointment" means and silently stops working the day
+          // after it passes.
+          issues.push({
+            path: `${path}.instant`,
+            message:
+              'must be a token such as {{ vars.booking.starts_at }} — a fixed date would be the same moment for every run',
+          });
+        }
+        if (
+          c.offset_minutes !== undefined &&
+          !Number.isFinite(Number(c.offset_minutes))
+        ) {
+          issues.push({
+            path: `${path}.offset_minutes`,
+            message: 'offset must be a number of minutes',
+          });
+        }
+      } else if (!/^\d{1,2}:\d{2}$/.test(String(c.time ?? ''))) {
         issues.push({
           path: `${path}.time`,
           message: 'time must look like HH:mm (24-hour)',
         });
       }
       break;
+    }
     case 'condition': {
       // Two shapes are legal: the legacy single triple, and `rules[]`.
       // Requiring `subject` unconditionally would reject every condition

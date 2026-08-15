@@ -232,6 +232,7 @@ export class AutomationStepExecutorService {
             ? this.waitMs(step.stepConfig as unknown as WaitStepConfig)
             : this.waitUntilMs(
                 step.stepConfig as unknown as WaitUntilStepConfig,
+                args.context,
               );
         const pending = await this.prisma.automationPendingExecution.create({
           data: {
@@ -1514,7 +1515,44 @@ export class AutomationStepExecutorService {
    *   time: a silently different answer per deploy is worse than one
    *   documented default.
    */
-  private waitUntilMs(cfg: WaitUntilStepConfig): number {
+  private waitUntilMs(
+    cfg: WaitUntilStepConfig,
+    context: AutomationContext,
+  ): number {
+    /*
+     * `instant` mode: a moment the RUN carries, not one the clock knows.
+     *
+     * This is what makes "30 minutes before this appointment" possible —
+     * every booking has a different start, and only the trigger context
+     * knows it. Resolved through the same interpolation every other step
+     * uses, so `{{ vars.booking.starts_at }}` means here exactly what it
+     * means in a message body.
+     */
+    if (cfg.instant?.trim()) {
+      const raw = interpolate(cfg.instant, context).trim();
+      const target = new Date(raw);
+      if (Number.isNaN(target.getTime())) {
+        // Unparseable. A guessed delay would fire a reminder at a random
+        // time, which is worse than not firing: throw, so the step FAILS
+        // visibly in the log rather than silently mistiming.
+        throw new Error(
+          `wait_until could not read "${cfg.instant}" as a date/time (got "${raw}")`,
+        );
+      }
+
+      const offsetMs = (Number(cfg.offset_minutes) || 0) * 60_000;
+      const delay = target.getTime() + offsetMs - Date.now();
+
+      /*
+       * Already due. Clamped to "now" rather than skipped, because the
+       * usual cause is benign: someone books 10 minutes before the slot,
+       * so "30 minutes before" is already 20 minutes past. A reminder that
+       * arrives late still beats one that never arrives, and the message
+       * itself says when the appointment is.
+       */
+      return Math.max(0, delay);
+    }
+
     const [rawH, rawM] = String(cfg.time ?? '09:00').split(':');
     const hour = Math.min(23, Math.max(0, Number(rawH) || 0));
     const minute = Math.min(59, Math.max(0, Number(rawM) || 0));

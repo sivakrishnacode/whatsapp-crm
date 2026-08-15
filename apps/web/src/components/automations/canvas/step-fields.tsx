@@ -1003,10 +1003,82 @@ function WaitFields({ config, onChange }: StepFieldsProps) {
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function WaitUntilFields({ config, onChange }: StepFieldsProps) {
+function WaitUntilFields({ config, onChange, groups }: StepFieldsProps) {
   const days = Array.isArray(config.days) ? (config.days as number[]) : [];
+  const instant = str(config.instant);
+  const mode: 'clock' | 'instant' = instant ? 'instant' : 'clock';
+
   return (
     <>
+      {/*
+        Two genuinely different rules, so a picker rather than a pile of
+        fields: "every day at 9am" and "half an hour before this
+        appointment" cannot be expressed as one another, and showing both
+        sets at once invites filling in a combination that means nothing.
+      */}
+      <FieldBlock label="Wait for">
+        <div className="flex gap-1">
+          {(
+            [
+              { value: 'clock', label: 'A time of day' },
+              { value: 'instant', label: 'A time from the trigger' },
+            ] as const
+          ).map((m) => (
+            <button
+              key={m.value}
+              type="button"
+              aria-pressed={mode === m.value}
+              onClick={() =>
+                onChange(
+                  m.value === 'instant'
+                    ? { instant: '{{ vars.booking.starts_at }}', offset_minutes: -30 }
+                    : { instant: '', offset_minutes: 0 },
+                )
+              }
+              className={cn(
+                'flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors',
+                mode === m.value
+                  ? 'border-primary/50 bg-primary/15 text-primary'
+                  : 'border-border bg-muted text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </FieldBlock>
+
+      {mode === 'instant' ? (
+        <>
+          <TokenInput
+            label="Moment"
+            value={instant}
+            onChange={(v) => onChange({ instant: v })}
+            groups={groups}
+            hint="A date/time from the trigger. For a booking form that is {{ vars.booking.starts_at }}."
+          />
+          <FieldBlock
+            label="Offset (minutes)"
+            hint="Negative is BEFORE. −30 means half an hour before it starts. 0 is exactly on time."
+          >
+            <Input
+              type="number"
+              value={String(config.offset_minutes ?? -30)}
+              onChange={(e) =>
+                onChange({ offset_minutes: Number(e.target.value) })
+              }
+              className="bg-muted"
+            />
+          </FieldBlock>
+          <p className="text-muted-foreground text-[11px] leading-relaxed">
+            If that moment has already passed when the run reaches this
+            step, it carries on immediately rather than skipping — a late
+            reminder still beats none. A held run is dropped if the booking
+            is cancelled or moved.
+          </p>
+        </>
+      ) : (
+      <>
       <FieldBlock
         label="Wait until"
         hint="24-hour clock. “In 12 hours” and “at 9am” are different rules — this is the second one."
@@ -1058,6 +1130,8 @@ function WaitUntilFields({ config, onChange }: StepFieldsProps) {
           })}
         </div>
       </FieldBlock>
+      </>
+      )}
     </>
   );
 }

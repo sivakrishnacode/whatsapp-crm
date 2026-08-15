@@ -561,9 +561,22 @@ export interface NotifyTeamStepConfig extends CommonStepOptions {
   body?: string;
 }
 
+/**
+ * Hold until a moment.
+ *
+ * TWO MODES, AND `instant` WINS WHEN PRESENT
+ *   The original is a WALL-CLOCK rule: "09:00, weekdays". It answers
+ *   "when next?" and has no idea what the run is about.
+ *
+ *   `instant` is a moment carried BY the run — a token path resolved
+ *   against the context, plus an offset. That is what makes "30 minutes
+ *   before this appointment" expressible: the time is different for every
+ *   booking and only the trigger knows it. Neither mode can express the
+ *   other, which is why both exist rather than one growing a flag.
+ */
 export interface WaitUntilStepConfig extends CommonStepOptions {
-  /** "HH:mm", 24h. Interpreted in `timezone`. */
-  time: string;
+  /** "HH:mm", 24h. Interpreted in `timezone`. Wall-clock mode. */
+  time?: string;
   /**
    * IANA zone. Defaults to UTC — an omitted zone must not silently mean
    * "the server's", which is a different answer on every deploy.
@@ -571,6 +584,18 @@ export interface WaitUntilStepConfig extends CommonStepOptions {
   timezone?: string;
   /** Restrict to these weekdays (0=Sun). Empty/absent = any day. */
   days?: number[];
+
+  /**
+   * A moment from the run, as a token — e.g.
+   * `{{ vars.booking.starts_at }}`. Resolved to a Date; anything
+   * unparseable makes the step give up rather than guess.
+   */
+  instant?: string;
+  /**
+   * Minutes to shift `instant` by. NEGATIVE IS BEFORE, which is the whole
+   * point: -30 is "half an hour before it starts".
+   */
+  offset_minutes?: number;
 }
 
 export interface SetConversationStatusStepConfig extends CommonStepOptions {
