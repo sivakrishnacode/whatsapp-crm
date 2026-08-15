@@ -29,6 +29,7 @@ import FormSharePanel from '@/components/forms/form-share-panel';
 import FormAvailabilityPanel, {
   type Availability,
 } from '@/components/forms/form-availability-panel';
+import FormSubmissionsPanel from '@/components/forms/form-submissions-panel';
 
 interface FormData {
   id: string;
@@ -56,6 +57,13 @@ export default function FormBuilderPage() {
   const [dirty, setDirty] = useState(false);
   const [localFields, setLocalFields] = useState<FormBuilderField[]>([]);
   const [activeTab, setActiveTab] = useState('builder');
+  /**
+   * Seeded from the form record so the tab has a number before the table
+   * is ever opened, then corrected by the panel once it has really
+   * counted. Otherwise the badge keeps quoting a stale `submission_count`
+   * from whenever the form was last saved.
+   */
+  const [submissionCount, setSubmissionCount] = useState(0);
 
   /**
    * Derived from the LOCAL field list, not the saved one, so adding a Time
@@ -74,6 +82,7 @@ export default function FormBuilderPage() {
         const data = await res.json();
         setForm(data);
         setLocalFields(data.fields ?? []);
+        setSubmissionCount(data.submission_count ?? 0);
       } catch {
         toast.error('Form not found');
         router.push('/forms');
@@ -262,13 +271,13 @@ export default function FormBuilderPage() {
             <Share2 className="mr-2 h-4 w-4" />
             Share
           </TabsTrigger>
-          <TabsTrigger
-            value="submissions"
-            id="tab-submissions"
-            onClick={() => router.push(`/forms/${id}/submissions`)}
-          >
+          {/* An ordinary tab, not a navigation. Leaving the full-screen
+              editor to read a table and then having to come back is the
+              long way round to a question ("did anyone fill it in?") that
+              gets asked while building. */}
+          <TabsTrigger value="submissions" id="tab-submissions">
             <BarChart2 className="mr-2 h-4 w-4" />
-            Submissions ({form.submission_count})
+            Submissions ({submissionCount})
           </TabsTrigger>
           {form.status === 'published' && (
             <TabsTrigger value="preview" id="tab-preview">
@@ -308,6 +317,18 @@ export default function FormBuilderPage() {
 
         <TabsContent value="share" className="flex-1 overflow-auto p-4">
           <FormSharePanel form={form as never} />
+        </TabsContent>
+
+        {/* Unmounted while inactive (base-ui `keepMounted` defaults to
+            false), so submissions are fetched when the tab is first opened
+            rather than on every visit to the editor. */}
+        <TabsContent value="submissions" className="flex-1 overflow-auto p-4">
+          <FormSubmissionsPanel
+            formId={form.id}
+            formName={form.name}
+            fields={localFields}
+            onCountChange={setSubmissionCount}
+          />
         </TabsContent>
 
         <TabsContent value="preview" className="flex-1 overflow-hidden">
