@@ -9,12 +9,10 @@ import {
   Globe,
   Clock,
   Loader2,
-  Eye,
   Settings2,
   BarChart2,
   Share2,
   CalendarClock,
-  Palette,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -31,7 +29,7 @@ import FormAvailabilityPanel, {
   type Availability,
 } from '@/components/forms/form-availability-panel';
 import FormSubmissionsPanel from '@/components/forms/form-submissions-panel';
-import FormAppearancePanel from '@/components/forms/form-appearance-panel';
+import { resolveFormTheme, type FormTheme } from '@/lib/forms/theme';
 
 interface FormData {
   id: string;
@@ -58,6 +56,14 @@ export default function FormBuilderPage() {
   const [publishing, setPublishing] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [localFields, setLocalFields] = useState<FormBuilderField[]>([]);
+  /**
+   * Appearance, edited on the builder's Design panel and written by the
+   * SAME Save as the fields. It used to be its own tab with its own Save,
+   * which meant two ways to have unsaved work on one screen.
+   */
+  const [localTheme, setLocalTheme] = useState<FormTheme>(() =>
+    resolveFormTheme(undefined),
+  );
   const [activeTab, setActiveTab] = useState('builder');
   /**
    * Seeded from the form record so the tab has a number before the table
@@ -84,6 +90,7 @@ export default function FormBuilderPage() {
         const data = await res.json();
         setForm(data);
         setLocalFields(data.fields ?? []);
+        setLocalTheme(resolveFormTheme(data.settings?.theme));
         setSubmissionCount(data.submission_count ?? 0);
       } catch {
         toast.error('Form not found');
@@ -107,7 +114,12 @@ export default function FormBuilderPage() {
       const res = await fetch(`/api/forms/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: localFields }),
+        // Fields and theme together — settings are merged server-side, so
+        // sending `theme` alone cannot clobber the other settings.
+        body: JSON.stringify({
+          fields: localFields,
+          settings: { theme: localTheme },
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -116,6 +128,7 @@ export default function FormBuilderPage() {
       const updated = await res.json();
       setForm(updated);
       setLocalFields(updated.fields ?? []);
+      setLocalTheme(resolveFormTheme(updated.settings?.theme));
       setDirty(false);
       toast.success('Form saved');
     } catch (err) {
@@ -249,9 +262,11 @@ export default function FormBuilderPage() {
         className="flex flex-1 flex-col overflow-hidden"
       >
         <TabsList className="mx-4 mt-3 flex-shrink-0 self-start">
+          {/* Build is the builder, the design controls and the preview —
+              three tabs that were three views of one form. */}
           <TabsTrigger value="builder" id="tab-builder">
             <Settings2 className="mr-2 h-4 w-4" />
-            Builder
+            Build
           </TabsTrigger>
           <TabsTrigger value="settings" id="tab-settings">
             <Settings2 className="mr-2 h-4 w-4" />
@@ -269,10 +284,6 @@ export default function FormBuilderPage() {
               Availability
             </TabsTrigger>
           )}
-          <TabsTrigger value="appearance" id="tab-appearance">
-            <Palette className="mr-2 h-4 w-4" />
-            Appearance
-          </TabsTrigger>
           <TabsTrigger value="share" id="tab-share">
             <Share2 className="mr-2 h-4 w-4" />
             Share
@@ -285,12 +296,6 @@ export default function FormBuilderPage() {
             <BarChart2 className="mr-2 h-4 w-4" />
             Submissions ({submissionCount})
           </TabsTrigger>
-          {form.status === 'published' && (
-            <TabsTrigger value="preview" id="tab-preview">
-              <Eye className="mr-2 h-4 w-4" />
-              Preview
-            </TabsTrigger>
-          )}
         </TabsList>
 
         {/* `overflow-hidden`, not `auto`: the builder is three columns that
@@ -303,7 +308,17 @@ export default function FormBuilderPage() {
           <FormBuilder
             fields={localFields}
             onChange={handleFieldsChange}
-            theme={(form.settings as { theme?: unknown })?.theme}
+            theme={localTheme}
+            onThemeChange={(next) => {
+              setLocalTheme(next);
+              setDirty(true);
+            }}
+            formName={form.name}
+            description={form.description}
+            submitLabel={
+              (form.settings as { submit_label?: string })?.submit_label ??
+              'Submit'
+            }
           />
         </TabsContent>
 
@@ -325,26 +340,6 @@ export default function FormBuilderPage() {
           />
         </TabsContent>
 
-        {/* Its own tab rather than a section of Settings: it is the only
-            panel with a live preview, and it wants the width. */}
-        <TabsContent
-          value="appearance"
-          className="min-h-0 flex-1 overflow-hidden p-4"
-        >
-          <FormAppearancePanel
-            formId={form.id}
-            formName={form.name}
-            description={form.description}
-            fields={localFields}
-            submitLabel={
-              (form.settings as { submit_label?: string })?.submit_label ??
-              'Submit'
-            }
-            theme={(form.settings as { theme?: unknown })?.theme}
-            onUpdate={(updated) => setForm({ ...form, ...updated })}
-          />
-        </TabsContent>
-
         <TabsContent value="share" className="flex-1 overflow-auto p-4">
           <FormSharePanel form={form as never} />
         </TabsContent>
@@ -361,13 +356,6 @@ export default function FormBuilderPage() {
           />
         </TabsContent>
 
-        <TabsContent value="preview" className="flex-1 overflow-hidden">
-          <iframe
-            src={form.public_url}
-            className="h-full w-full border-0"
-            title="Form preview"
-          />
-        </TabsContent>
       </Tabs>
     </div>
   );

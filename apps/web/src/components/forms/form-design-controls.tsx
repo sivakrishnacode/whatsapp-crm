@@ -1,18 +1,18 @@
 'use client';
 
 /**
- * The Appearance tab: how the hosted form looks, with a live preview.
+ * How the hosted form looks — the Design side of the builder's inspector.
  *
- * The preview is the REAL `FormSurface` wrapping the REAL `FormRenderer`,
- * for the same reason the builder canvas renders real fields — a mock-up
- * of your own product's output is a promise you have to keep by hand.
+ * CONTROLLED, WITH NO SAVE OF ITS OWN
+ *   This used to be a whole tab with its own preview and its own Save
+ *   button, next to a Builder tab that already rendered a live canvas.
+ *   Two previews of the same form and two Saves is one product pretending
+ *   to be two. The canvas is the preview, and the editor's single Save
+ *   writes fields and theme together.
  */
 
-import { useState } from 'react';
-import { toast } from 'sonner';
-import { Check, Loader2, Monitor, Moon, Sun } from 'lucide-react';
+import { Check, Monitor, Moon, Sun } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -20,15 +20,10 @@ import { cn } from '@/lib/utils';
 import {
   ACCENT_PRESETS,
   DEFAULT_FORM_THEME,
-  resolveFormTheme,
-  safeAccent,
   type FormColorScheme,
   type FormHeaderStyle,
   type FormTheme,
 } from '@/lib/forms/theme';
-import type { FormBuilderField } from '@/lib/forms/field-types';
-import FormRenderer from './form-renderer';
-import FormSurface from './form-surface';
 
 const SCHEMES: {
   value: FormColorScheme;
@@ -59,61 +54,21 @@ const ROUNDED: { value: FormTheme['rounded']; label: string }[] = [
   { value: 'pill', label: 'Pill' },
 ];
 
-export default function FormAppearancePanel({
-  formId,
-  formName,
-  description,
-  fields,
-  submitLabel,
-  theme: savedTheme,
-  onUpdate,
+export default function FormDesignControls({
+  theme,
+  onChange,
 }: {
-  formId: string;
-  formName: string;
-  description: string | null;
-  fields: FormBuilderField[];
-  submitLabel: string;
-  theme: unknown;
-  onUpdate: (patch: { settings: Record<string, unknown> }) => void;
+  theme: FormTheme;
+  onChange: (next: FormTheme) => void;
 }) {
-  const [theme, setTheme] = useState<FormTheme>(() =>
-    resolveFormTheme(savedTheme),
-  );
-  const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const patch = <K extends keyof FormTheme>(key: K, value: FormTheme[K]) =>
+    onChange({ ...theme, [key]: value });
 
-  const patch = <K extends keyof FormTheme>(key: K, value: FormTheme[K]) => {
-    setTheme((prev) => ({ ...prev, [key]: value }));
-    setDirty(true);
-  };
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/forms/${formId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        // Only `theme` is sent. Settings are merged server-side, so every
-        // other setting keeps its value rather than being reset to the
-        // defaults this panel happens to know about.
-        body: JSON.stringify({ settings: { theme } }),
-      });
-      if (!res.ok) throw new Error();
-      const updated = await res.json();
-      onUpdate(updated);
-      setDirty(false);
-      toast.success('Appearance saved');
-    } catch {
-      toast.error('Could not save appearance');
-    } finally {
-      setSaving(false);
-    }
-  };
+  const setTheme = (updater: (prev: FormTheme) => FormTheme) =>
+    onChange(updater(theme));
 
   return (
-    <div className="flex h-full min-h-0 gap-6">
-      {/* Controls */}
-      <div className="w-80 shrink-0 space-y-6 overflow-y-auto pr-1">
+    <div className="space-y-6">
         <Group
           title="Colour scheme"
           hint="A hosted form is your page, not the visitor's app — so it defaults to light rather than following their device."
@@ -180,7 +135,6 @@ export default function FormAppearancePanel({
                 // Typed freely so a half-entered "#7c3" is not stamped
                 // back to the default mid-keystroke; only a complete,
                 // valid hex is committed.
-                setDirty(true);
                 setTheme((prev) => ({
                   ...prev,
                   accent: /^#[0-9a-fA-F]{6}$/.test(raw)
@@ -253,62 +207,13 @@ export default function FormAppearancePanel({
           </div>
         </Group>
 
-        <div className="flex items-center gap-2 pb-2">
-          <Button id="btn-save-appearance" disabled={!dirty || saving} onClick={save}>
-            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Save appearance
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setTheme(DEFAULT_FORM_THEME);
-              setDirty(true);
-            }}
-          >
-            Reset
-          </Button>
-        </div>
-      </div>
-
-      {/* Preview */}
-      <div className="min-w-0 flex-1 overflow-y-auto rounded-xl border bg-muted/20">
-        <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-card/95 px-4 py-2 backdrop-blur">
-          <span className="text-xs font-medium text-muted-foreground">
-            Live preview
-          </span>
-          <span
-            className="ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px]"
-            style={{
-              borderColor: safeAccent(theme.accent),
-              color: safeAccent(theme.accent),
-            }}
-          >
-            {safeAccent(theme.accent)}
-          </span>
-        </div>
-
-        <FormSurface
-          theme={theme}
-          name={formName}
-          description={description}
-          preview
-          booking={fields.some((f) => f.type === 'appointment_slot')}
-        >
-          <FormRenderer
-            form={{
-              id: formId,
-              name: formName,
-              description,
-              slug: 'preview',
-              kind: 'form',
-              fields,
-              settings: { submit_label: submitLabel, honeypot: false },
-            }}
-            preview
-          />
-        </FormSurface>
-      </div>
+      <button
+        type="button"
+        onClick={() => onChange(DEFAULT_FORM_THEME)}
+        className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+      >
+        Reset to defaults
+      </button>
     </div>
   );
 }

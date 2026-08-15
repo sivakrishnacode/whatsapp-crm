@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import type { Contact, ContactSegment, Tag, ContactTag } from '@/types';
@@ -73,6 +74,8 @@ interface ContactWithTags extends Contact {
 
 export default function ContactsPage() {
   const supabase = createClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
 
@@ -289,6 +292,41 @@ export default function ContactsPage() {
   function openDetail(contactId: string) {
     setDetailContactId(contactId);
     setDetailOpen(true);
+  }
+
+  /**
+   * Open a contact named by `?contact=<id>`.
+   *
+   * Four places link here that way — the submissions table, web sessions,
+   * ad leads and Instagram comments — and nothing was reading the
+   * parameter, so every one of them dropped the visitor on the unfiltered
+   * list with no sign that a specific contact had been asked for. (The
+   * submissions table was worse still: it linked to `/contacts/<id>`,
+   * which is not a route at all, so it 404'd.)
+   *
+   * DERIVED, not synced with an effect — the same choice, for the same
+   * reason, as the rail drawer in dashboard-shell.tsx. An effect calling
+   * `openDetail` would set state after the commit, so the drawer would be
+   * shut for one frame before popping open.
+   */
+  const contactParam = searchParams.get('contact');
+  const detailOpenEffective = detailOpen || Boolean(contactParam);
+  const detailContactIdEffective = contactParam ?? detailContactId;
+
+  /**
+   * Closing has to CLEAR the parameter, or the derivation above reopens
+   * the drawer on the very next render. Clearing it also means Back
+   * returns to wherever the link came from rather than to this page with
+   * the drawer up again.
+   */
+  function handleDetailOpenChange(open: boolean) {
+    setDetailOpen(open);
+    if (open || !contactParam) return;
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('contact');
+    router.replace(next.size ? `/contacts?${next}` : '/contacts', {
+      scroll: false,
+    });
   }
 
   function confirmDelete(contact: Contact) {
@@ -948,9 +986,9 @@ export default function ContactsPage() {
 
       {/* Contact Detail Sheet */}
       <ContactDetailView
-        open={detailOpen}
-        onOpenChange={setDetailOpen}
-        contactId={detailContactId}
+        open={detailOpenEffective}
+        onOpenChange={handleDetailOpenChange}
+        contactId={detailContactIdEffective}
         onUpdated={fetchContacts}
       />
 

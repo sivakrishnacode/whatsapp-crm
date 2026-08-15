@@ -221,8 +221,12 @@ export default function FormSubmissionsPanel({
                         variant="ghost"
                         size="sm"
                         className="h-7 gap-1 text-xs"
+                        // `?contact=` opens the drawer on the contacts
+                        // page. There is no /contacts/<id> route — that
+                        // link 404'd — and this is the form the rest of
+                        // the app already uses.
                         onClick={() =>
-                          router.push(`/contacts/${sub.contact_id}`)
+                          router.push(`/contacts?contact=${sub.contact_id}`)
                         }
                       >
                         <User className="h-3 w-3" />

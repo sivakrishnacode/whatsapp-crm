@@ -42,10 +42,14 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Copy,
   CornerDownRight,
+  Eye,
   EyeOff,
   GripVertical,
+  Palette as PaletteIcon,
+  Pencil,
   Plus,
   Search,
+  SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
 
@@ -60,28 +64,54 @@ import {
   type FormBuilderField,
 } from '@/lib/forms/field-types';
 import { splitIntoPages } from '@/lib/forms/visibility';
-import { formThemeStyle, resolveFormTheme } from '@/lib/forms/theme';
+import {
+  formSchemeAttr,
+  formThemeStyle,
+  type FormTheme,
+} from '@/lib/forms/theme';
 import type { FormFieldType } from './form-renderer';
-import { FieldInput } from './form-renderer';
+import FormRenderer, { FieldInput } from './form-renderer';
 import FormFieldInspector from './form-field-inspector';
+import FormDesignControls from './form-design-controls';
+import FormSurface from './form-surface';
 
 interface FormBuilderProps {
   fields: FormBuilderField[];
   onChange: (fields: FormBuilderField[]) => void;
-  /**
-   * The form's saved appearance, so the canvas paints the accent and
-   * corner radius the visitor will actually see. Without it the canvas
-   * would show the default violet while the Appearance tab showed green,
-   * which is exactly the drift rendering real fields is meant to avoid.
-   */
-  theme?: unknown;
+  /** Resolved appearance. The canvas paints what the visitor will see. */
+  theme: FormTheme;
+  onThemeChange: (next: FormTheme) => void;
+  /** For the preview's page chrome — the title, blurb and branding. */
+  formName: string;
+  description: string | null;
+  submitLabel: string;
 }
 
+/**
+ * Builder, design and preview in ONE surface.
+ *
+ * They were three tabs, and the split was never real: the canvas already
+ * renders the actual `FieldInput`, so it was a preview; the Appearance tab
+ * carried a second preview of the same form beside it; and the Preview tab
+ * was a third. Three views of one thing, each slightly behind the others,
+ * and two Save buttons between them.
+ *
+ * Now: the canvas is the preview, `Design` is the other half of the
+ * inspector, and `Preview` is a MODE that swaps the editing chrome for a
+ * working form on its real page background. One Save, in the header,
+ * writes fields and theme together.
+ */
 export default function FormBuilder({
   fields,
   onChange,
   theme,
+  onThemeChange,
+  formName,
+  description,
+  submitLabel,
 }: FormBuilderProps) {
+  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
+  const [inspector, setInspector] = useState<'field' | 'design'>('field');
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [dragging, setDragging] = useState<
@@ -217,47 +247,82 @@ export default function FormBuilder({
       onDragEnd={handleDragEnd}
       onDragCancel={() => setDragging(null)}
     >
-      <div className="flex h-full min-h-0 gap-4">
-        <Palette
-          query={query}
-          onQueryChange={setQuery}
-          onAdd={(type) => insertAt(type, fields.length)}
-        />
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        <Toolbar mode={mode} onModeChange={setMode} />
 
-        <Canvas
-          fields={fields}
-          theme={theme}
-          selected={selected}
-          onSelect={setSelected}
-          onRemove={removeField}
-          onDuplicate={duplicateField}
-        />
+        <div className="flex min-h-0 flex-1 gap-4">
+          {/* The palette is meaningless while previewing — there is
+              nothing to drag onto a working form. */}
+          {mode === 'edit' && (
+            <Palette
+              query={query}
+              onQueryChange={setQuery}
+              onAdd={(type) => insertAt(type, fields.length)}
+            />
+          )}
 
-        <aside className="hidden w-80 shrink-0 flex-col overflow-hidden rounded-xl border bg-card xl:flex">
-          <div className="border-b px-4 py-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              {selectedField ? 'Field settings' : 'Settings'}
-            </h2>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            {selectedField ? (
-              <FormFieldInspector
-                key={selectedField.field_key}
-                field={selectedField}
-                precedingFields={fields.slice(0, selectedIndex)}
-                onChange={(patch) =>
-                  updateField(selectedField.field_key, patch)
-                }
+          {mode === 'edit' ? (
+            <Canvas
+              fields={fields}
+              theme={theme}
+              selected={selected}
+              onSelect={setSelected}
+              onRemove={removeField}
+              onDuplicate={duplicateField}
+            />
+          ) : (
+            <LivePreview
+              fields={fields}
+              theme={theme}
+              formName={formName}
+              description={description}
+              submitLabel={submitLabel}
+            />
+          )}
+
+          <aside className="hidden w-80 shrink-0 flex-col overflow-hidden rounded-xl border bg-card xl:flex">
+            {/* Field and Design are two halves of one inspector rather
+                than two tabs of the editor: both describe the thing on
+                the canvas, and switching between them should not move
+                you off it. */}
+            <div className="flex flex-none gap-1 border-b p-2">
+              <InspectorTab
+                active={inspector === 'field'}
+                onClick={() => setInspector('field')}
+                icon={SlidersHorizontal}
+                label="Field"
               />
-            ) : (
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Select a field on the left to change its label, make it
-                required, save it to a contact, or show it only when an
-                earlier answer matches.
-              </p>
-            )}
-          </div>
-        </aside>
+              <InspectorTab
+                active={inspector === 'design'}
+                onClick={() => setInspector('design')}
+                icon={PaletteIcon}
+                label="Design"
+              />
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {inspector === 'design' ? (
+                <FormDesignControls theme={theme} onChange={onThemeChange} />
+              ) : selectedField ? (
+                <FormFieldInspector
+                  key={selectedField.field_key}
+                  field={selectedField}
+                  precedingFields={fields.slice(0, selectedIndex)}
+                  onChange={(patch) =>
+                    updateField(selectedField.field_key, patch)
+                  }
+                />
+              ) : (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Select a field to change its label, make it required, save
+                  it to a contact, or show it only when an earlier answer
+                  matches. <strong>Design</strong> sets the colours and
+                  layout of the whole form.
+                </p>
+              )}
+            </div>
+          </aside>
+        </div>
       </div>
 
       {/* Follows the cursor. Without it a palette drag looks like nothing
@@ -276,6 +341,128 @@ export default function FormBuilder({
         ) : null}
       </DragOverlay>
     </DndContext>
+  );
+}
+
+// -----------------------------------------------------------------------
+// Toolbar / preview
+// -----------------------------------------------------------------------
+
+function Toolbar({
+  mode,
+  onModeChange,
+}: {
+  mode: 'edit' | 'preview';
+  onModeChange: (m: 'edit' | 'preview') => void;
+}) {
+  return (
+    <div className="flex flex-none items-center gap-2">
+      <div className="flex rounded-lg border bg-card p-0.5">
+        {(
+          [
+            { value: 'edit', label: 'Edit', icon: Pencil },
+            { value: 'preview', label: 'Preview', icon: Eye },
+          ] as const
+        ).map((m) => (
+          <button
+            key={m.value}
+            type="button"
+            id={`builder-mode-${m.value}`}
+            onClick={() => onModeChange(m.value)}
+            className={cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+              mode === m.value
+                ? 'bg-primary/10 text-primary'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <m.icon className="h-3.5 w-3.5" />
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        {mode === 'edit'
+          ? 'Click a field to edit it. Drag to reorder.'
+          : 'The form as a visitor sees it. Submitting is disabled.'}
+      </p>
+    </div>
+  );
+}
+
+function InspectorTab({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+        active
+          ? 'bg-primary/10 text-primary'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
+  );
+}
+
+/**
+ * The form on its real page background, working.
+ *
+ * `FormSurface` + `FormRenderer` — the exact pair the hosted page uses —
+ * so this is the form rather than a picture of it. `preview` on the
+ * renderer is what stops a submission being recorded from the editor.
+ */
+function LivePreview({
+  fields,
+  theme,
+  formName,
+  description,
+  submitLabel,
+}: {
+  fields: FormBuilderField[];
+  theme: FormTheme;
+  formName: string;
+  description: string | null;
+  submitLabel: string;
+}) {
+  return (
+    <div className="min-w-0 flex-1 overflow-y-auto rounded-xl border">
+      <FormSurface
+        theme={theme}
+        name={formName}
+        description={description}
+        preview
+        booking={fields.some((f) => f.type === 'appointment_slot')}
+      >
+        <FormRenderer
+          form={{
+            id: 'preview',
+            name: formName,
+            description,
+            slug: 'preview',
+            kind: 'form',
+            fields,
+            settings: { submit_label: submitLabel, honeypot: false },
+          }}
+          preview
+        />
+      </FormSurface>
+    </div>
   );
 }
 
@@ -417,13 +604,17 @@ function Canvas({
   onDuplicate,
 }: {
   fields: FormBuilderField[];
-  theme?: unknown;
+  theme: FormTheme;
   selected: string | null;
   onSelect: (key: string | null) => void;
   onRemove: (key: string) => void;
   onDuplicate: (key: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: CANVAS_DROP_ID });
+
+  // Already resolved by the page, so the canvas and the preview cannot
+  // disagree about what the theme is.
+  const resolvedTheme = theme;
 
   // Only to label the step dividers. Membership is positional, so this
   // needs no conditional evaluation — everything between two breaks is one
@@ -457,9 +648,20 @@ function Canvas({
             items={fields.map((f) => f.field_key)}
             strategy={verticalListSortingStrategy}
           >
+            {/*
+              The card carries the form's OWN scheme, not the dashboard's.
+              `formThemeStyle` alone set the accent and radius but left the
+              colour tokens inherited, so a light form was drawn black
+              inside a dark dashboard — the one thing a WYSIWYG canvas must
+              not do. `data-form-scheme` overrides the token custom
+              properties for this subtree exactly as it does on the hosted
+              page, so the card matches what a visitor sees while the
+              surrounding editor chrome stays in the dashboard's theme.
+            */}
             <div
-              className="flex flex-wrap gap-5 rounded-xl border bg-background p-6 shadow-sm"
-              style={formThemeStyle(resolveFormTheme(theme))}
+              className="flex flex-wrap gap-5 rounded-xl border bg-background p-6 text-foreground shadow-sm"
+              data-form-scheme={formSchemeAttr(resolvedTheme)}
+              style={formThemeStyle(resolvedTheme)}
             >
               {fields.map((field, idx) => (
                 <CanvasField
