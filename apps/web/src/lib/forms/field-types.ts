@@ -44,18 +44,41 @@ import type {
  * A field as the BUILDER sees it.
  *
  * The renderer's `PublicFormField` is the visitor's view, and the server
- * strips `mapping` and `default_value` from it on purpose — they describe
- * the tenant's own CRM structure and are none of a visitor's business
+ * strips `mapping` from it unconditionally — it describes the tenant's own
+ * CRM structure and is none of a visitor's business
  * (`toPublicProjection` in forms.service.ts). The dashboard is the one
  * place both exist, so it gets its own superset rather than widening the
  * public type and quietly making the strip look unnecessary.
+ *
+ * `default_value` is NOT here: it survives into the public projection for
+ * visible fields, because a prefill the visitor cannot see is not a
+ * prefill. Only hidden fields have it stripped, and the validator applies
+ * theirs server-side.
  */
 export interface FormBuilderField extends PublicFormField {
   /** `name` | `email` | `phone` | `company` | `custom:<custom_field_id>`. */
   mapping?: string;
-  /** hidden only — used when the URL carries no matching query param. */
-  default_value?: string;
 }
+
+/** Named answer formats. Mirrors FIELD_FORMATS in the API's form.types.ts. */
+export const FIELD_FORMAT_OPTIONS: {
+  value: string;
+  label: string;
+  /** Field types it makes sense on. Empty = any text-ish field. */
+  only?: string[];
+}[] = [
+  { value: 'any', label: 'Anything' },
+  { value: 'letters', label: 'Letters only' },
+  { value: 'letters_spaces', label: 'Name (letters, spaces, hyphens)' },
+  { value: 'alphanumeric', label: 'Letters and numbers' },
+  { value: 'digits', label: 'Digits only' },
+  { value: 'no_links', label: 'No links (spam control)' },
+  { value: 'url', label: 'Web address' },
+  { value: 'business_email', label: 'Work email only', only: ['email'] },
+];
+
+/** Field types that accept length bounds and a format. */
+export const TEXTUAL_TYPES = ['text', 'textarea', 'email'];
 
 export interface FieldTypeDef {
   type: FormFieldType;

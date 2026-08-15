@@ -33,7 +33,12 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
-import { fieldTypeDef, type FormBuilderField } from '@/lib/forms/field-types';
+import {
+  FIELD_FORMAT_OPTIONS,
+  TEXTUAL_TYPES,
+  fieldTypeDef,
+  type FormBuilderField,
+} from '@/lib/forms/field-types';
 import {
   CONDITION_OPERATOR_LABELS,
   FIELD_CONDITION_OPERATORS,
@@ -166,16 +171,83 @@ export default function FormFieldInspector({
             </p>
           )}
 
-          {field.type === 'hidden' && (
-            <Field
-              label="Default value"
-              hint="Used when the URL has no matching ?query parameter."
-            >
-              <Input
-                value={field.default_value ?? ''}
-                onChange={(e) => onChange({ default_value: e.target.value })}
-              />
-            </Field>
+          {/* Every answerable field, not just hidden ones: a prefill is
+              how you send a form to someone you already know. The server
+              still strips it from the public projection for HIDDEN fields
+              and applies it itself, because that one is campaign
+              structure a visitor should not see. */}
+          <Field
+            label={field.type === 'hidden' ? 'Default value' : 'Prefilled with'}
+            hint={`Overridden by ?${field.field_key}= in the link, so you can fill it per recipient.`}
+          >
+            <Input
+              value={field.default_value ?? ''}
+              placeholder={field.type === 'hidden' ? 'e.g. spring-campaign' : 'Leave empty for a blank field'}
+              onChange={(e) =>
+                onChange({ default_value: e.target.value || undefined })
+              }
+            />
+          </Field>
+
+          {TEXTUAL_TYPES.includes(field.type) && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Min length">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={field.min_length ?? ''}
+                    onChange={(e) =>
+                      onChange({
+                        min_length:
+                          e.target.value === ''
+                            ? undefined
+                            : Number(e.target.value),
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Max length">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={field.max_length ?? ''}
+                    onChange={(e) =>
+                      onChange({
+                        max_length:
+                          e.target.value === ''
+                            ? undefined
+                            : Number(e.target.value),
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+
+              <Field
+                label="Accepted format"
+                hint="Checked on the server, so it holds even if someone edits the page."
+              >
+                <select
+                  value={field.format ?? 'any'}
+                  onChange={(e) =>
+                    onChange({
+                      format:
+                        e.target.value === 'any' ? undefined : e.target.value,
+                    })
+                  }
+                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  {FIELD_FORMAT_OPTIONS.filter(
+                    (o) => !o.only || o.only.includes(field.type),
+                  ).map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </>
           )}
 
           {def.bounds && (

@@ -560,3 +560,119 @@ describe('validateSubmission — hidden field defaults', () => {
     expect(result.data).not.toHaveProperty('plain');
   });
 });
+
+// ============================================================
+// Length bounds and named formats
+// ============================================================
+
+describe('validateSubmission — length bounds', () => {
+  it('rejects an answer under the minimum', () => {
+    const result = validateSubmission(
+      [field({ field_key: 'code', min_length: 4 })],
+      { code: 'ab' },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors[0].message).toContain('at least 4 characters');
+  });
+
+  it('rejects an answer over the maximum', () => {
+    const result = validateSubmission(
+      [field({ field_key: 'code', max_length: 3 })],
+      { code: 'abcdef' },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors[0].message).toContain('at most 3 characters');
+  });
+
+  it('measures the TRIMMED value, so trailing spaces do not pass a minimum', () => {
+    const result = validateSubmission(
+      [field({ field_key: 'code', min_length: 4 })],
+      { code: 'ab   ' },
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects a definition whose minimum exceeds its maximum', () => {
+    // Otherwise the form saves and then rejects every answer, which reads
+    // as a broken form rather than a broken rule.
+    const issues = validateFormDefinition([
+      field({ field_key: 'x', min_length: 10, max_length: 5 }),
+    ]);
+    expect(issues[0].message).toContain('greater than maximum');
+  });
+});
+
+describe('validateSubmission — named formats', () => {
+  const withFormat = (format: string, value: unknown) =>
+    validateSubmission(
+      [field({ field_key: 'q', label: 'Answer', format: format as never })],
+      { q: value },
+    );
+
+  it('accepts letters and rejects digits for `letters`', () => {
+    expect(withFormat('letters', 'Priya').ok).toBe(true);
+    expect(withFormat('letters', 'Priya2').ok).toBe(false);
+  });
+
+  it('allows spaces, apostrophes and hyphens for `letters_spaces`', () => {
+    expect(withFormat('letters_spaces', "Siva O'Brien-Rao").ok).toBe(true);
+    expect(withFormat('letters_spaces', 'Siva 99').ok).toBe(false);
+  });
+
+  it('accepts non-ASCII letters — the patterns are Unicode-aware', () => {
+    // A name is not [a-z]. Rejecting "José" or "இரா" would be a bug that
+    // only shows up for the customers least able to report it.
+    expect(withFormat('letters', 'José').ok).toBe(true);
+    expect(withFormat('letters', 'இரா').ok).toBe(true);
+  });
+
+  it('rejects links for `no_links`', () => {
+    expect(withFormat('no_links', 'please call me').ok).toBe(true);
+    expect(withFormat('no_links', 'visit https://spam.test').ok).toBe(false);
+    expect(withFormat('no_links', 'see www.spam.test').ok).toBe(false);
+  });
+
+  it('requires a scheme for `url`', () => {
+    expect(withFormat('url', 'https://example.com').ok).toBe(true);
+    expect(withFormat('url', 'example.com').ok).toBe(false);
+  });
+
+  it('blocks consumer mailboxes for `business_email`', () => {
+    const business = validateSubmission(
+      [field({ field_key: 'e', type: 'email', label: 'Work email', format: 'business_email' })],
+      { e: 'siva@acme.co' },
+    );
+    const free = validateSubmission(
+      [field({ field_key: 'e', type: 'email', label: 'Work email', format: 'business_email' })],
+      { e: 'siva@gmail.com' },
+    );
+    expect(business.ok).toBe(true);
+    expect(free.ok).toBe(false);
+    expect(free.errors[0].message).toContain('work email');
+  });
+
+  it('is a no-op for `any` and when unset', () => {
+    expect(withFormat('any', 'whatever 123 !').ok).toBe(true);
+    expect(
+      validateSubmission([field({ field_key: 'q' })], { q: 'whatever' }).ok,
+    ).toBe(true);
+  });
+
+  it('rejects an unknown format at save time', () => {
+    const issues = validateFormDefinition([
+      field({ field_key: 'x', format: 'regex-please' as never }),
+    ]);
+    expect(issues[0].message).toContain('Unknown format');
+  });
+
+  it('does not apply a format to an answer that was never given', () => {
+    // An optional field left blank must not fail its format check — that
+    // would make every formatted field required by accident.
+    expect(
+      validateSubmission(
+        [field({ field_key: 'q', format: 'digits' })],
+        {},
+      ).ok,
+    ).toBe(true);
+  });
+});

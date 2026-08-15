@@ -381,13 +381,20 @@ export class FormsService {
         description: row.description,
         slug: row.slug,
         kind: row.kind as 'form' | 'booking',
-        // `mapping` and `default_value` are stripped: they say where an
-        // answer lands in the CRM and which custom fields exist, which is
-        // the tenant's internal structure and none of a visitor's business.
+        // `mapping` is always stripped: it says where an answer lands in
+        // the CRM and which custom fields exist, which is the tenant's
+        // internal structure and none of a visitor's business.
+        //
+        // `default_value` depends on the field. On a HIDDEN field it is
+        // campaign structure the visitor must not see, and it is applied
+        // server-side in the validator instead. On a VISIBLE field it is a
+        // prefill — the visitor is looking straight at it in the input, so
+        // stripping it would only stop the prefill working.
         fields: fields.map(({ mapping, default_value, ...rest }) => {
           void mapping;
-          void default_value;
-          return rest;
+          return rest.type === 'hidden'
+            ? rest
+            : { ...rest, default_value };
         }),
         settings: {
           submit_label: settings.submit_label,

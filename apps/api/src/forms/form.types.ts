@@ -129,8 +129,42 @@ export interface FormField {
    */
   mapping?: string;
 
-  /** hidden only. Prefilled from a query param of the same name. */
+  /**
+   * Starting value.
+   *
+   * On a HIDDEN field this is campaign structure and is stripped from the
+   * public projection, then applied server-side. On a visible field it is
+   * a prefill the visitor can see and edit, so it must reach the browser —
+   * `toPublicProjection` strips it only for hidden.
+   *
+   * A `?query` parameter of the same key wins over it either way, which is
+   * what makes "send this form to a known contact with their details
+   * already in it" work.
+   */
   default_value?: string;
+
+  /**
+   * Length bounds for text answers. Separate from `min`/`max`, which are
+   * the NUMERIC bounds — one field can legitimately want neither, and
+   * collapsing them makes "between 1 and 5" ambiguous on a text box.
+   */
+  min_length?: number;
+  max_length?: number;
+
+  /**
+   * A named format the answer must match.
+   *
+   * ⚠️ DELIBERATELY A FIXED LIST, NOT A USER-SUPPLIED REGEX.
+   *   A pattern typed by a customer and executed on the server against
+   *   visitor input is a denial-of-service vector: catastrophic
+   *   backtracking on something like `(a+)+$` hangs the event loop for
+   *   every tenant, and capping input length does not save you. Node has
+   *   no regex timeout, so the only safe options were a linear-time engine
+   *   (a new dependency) or not accepting arbitrary patterns. This is the
+   *   second, and it is also the better UI for a no-code product —
+   *   `FIELD_FORMATS` covers what people actually ask for.
+   */
+  format?: FieldFormat;
 
   /** file only. */
   accept?: string[];
@@ -145,6 +179,20 @@ export interface FormField {
    */
   visible_when?: FieldCondition;
 }
+
+/** Named answer formats. Each maps to a regex WE wrote — see FORMAT_RULES. */
+export const FIELD_FORMATS = [
+  'any',
+  'letters',
+  'letters_spaces',
+  'alphanumeric',
+  'digits',
+  'no_links',
+  'url',
+  'business_email',
+] as const;
+
+export type FieldFormat = (typeof FIELD_FORMATS)[number];
 
 /**
  * How the hosted page looks. Owner's choice, not the visitor's.

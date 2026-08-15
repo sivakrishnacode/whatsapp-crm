@@ -66,6 +66,12 @@ export interface PublicFormField {
   max?: number;
   scale?: number;
   accept?: string[];
+  /** Starting value. Stripped by the server for hidden fields. */
+  default_value?: string;
+  min_length?: number;
+  max_length?: number;
+  /** Named format, enforced server-side. See form-validate.ts. */
+  format?: string;
   /** Show only when this rule holds. See lib/forms/visibility.ts. */
   visible_when?: FieldCondition;
 }
@@ -172,7 +178,11 @@ export default function FormRenderer({
   compact = false,
   fetchSlots,
 }: FormRendererProps) {
-  const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  // Prefills are the INITIAL state rather than an effect, so the inputs
+  // are already filled on first paint and nothing flashes empty.
+  const [answers, setAnswers] = useState<Record<string, unknown>>(() =>
+    initialAnswersFor(form.fields),
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -214,15 +224,6 @@ export default function FormRenderer({
   const currentPage = Math.min(pageIndex, totalPages - 1);
   const isMultiPage = totalPages > 1;
   const isLastPage = currentPage >= totalPages - 1;
-
-  // Initialise hidden defaults
-  const initialAnswers: Record<string, unknown> = {};
-  form.fields.forEach((f) => {
-    if (f.type === 'hidden' && typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      initialAnswers[f.field_key] = params.get(f.field_key) ?? '';
-    }
-  });
 
   const setAnswer = (key: string, value: unknown) => {
     setAnswers((prev) => ({ ...prev, [key]: value }));
@@ -310,7 +311,7 @@ export default function FormRenderer({
       }
 
       const payload: FormSubmitPayload = {
-        answers: { ...initialAnswers, ...visibleAnswers },
+        answers: visibleAnswers,
         spam: { elapsedMs: Date.now() - startTime },
       };
 
@@ -425,6 +426,41 @@ export default function FormRenderer({
       </div>
     </form>
   );
+}
+
+/**
+ * Starting answers: a `?query` parameter of the field's key, else the
+ * field's own default.
+ *
+ * The query wins, which is what makes "send this form to a known contact
+ * with their details already in it" work — `?email=x@y.co` beats whatever
+ * the form was authored with.
+ *
+ * Hidden fields are included here too, but the server applies their
+ * default independently: `default_value` is stripped from the public
+ * projection for hidden fields, so the browser genuinely does not know it
+ * and must not be the only thing that fills it in.
+ */
+function initialAnswersFor(
+  fields: PublicFormField[],
+): Record<string, unknown> {
+  const params =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : null;
+
+  const initial: Record<string, unknown> = {};
+  for (const f of fields) {
+    if (f.type === 'heading' || f.type === 'paragraph' || f.type === 'page_break') {
+      continue;
+    }
+    const fromQuery = params?.get(f.field_key);
+    const value = fromQuery ?? f.default_value;
+    if (value !== undefined && value !== null && value !== '') {
+      initial[f.field_key] = value;
+    }
+  }
+  return initial;
 }
 
 /** True for the shapes an unanswered field can take. */
@@ -559,6 +595,9 @@ export function FieldInput({
           type={field.type === 'phone' ? 'tel' : field.type}
           placeholder={field.placeholder}
           value={strVal}
+          // A hint, not the enforcement — the validator re-checks it,
+          // because maxlength is one devtools edit away.
+          maxLength={field.max_length}
           onChange={(e) => onChange(e.target.value)}
           className={cn(
             'h-10 bg-background text-foreground border-input placeholder:text-muted-foreground/50 rounded-[var(--form-radius)] transition-all focus-visible:border-[var(--form-accent)] focus-visible:ring-2 focus-visible:ring-[var(--form-accent)]/25',
@@ -574,6 +613,7 @@ export function FieldInput({
           id={`field-${field.field_key}`}
           placeholder={field.placeholder}
           value={strVal}
+          maxLength={field.max_length}
           onChange={(e) => onChange(e.target.value)}
           rows={4}
           className={cn(

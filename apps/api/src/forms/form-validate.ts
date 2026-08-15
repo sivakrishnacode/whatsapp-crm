@@ -1,9 +1,11 @@
 import {
   FIELD_CONDITION_OPERATORS,
+  FIELD_FORMATS,
   FORM_FIELD_TYPES,
   PRESENTATIONAL_TYPES,
   computeFieldVisibility,
   type FieldError,
+  type FieldFormat,
   type FormField,
   type FormFieldType,
 } from './form.types';
@@ -47,6 +49,109 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 /** Guards a single text answer from being used as a storage-exhaustion vector. */
 const MAX_TEXT = 5000;
 const MAX_SHORT_TEXT = 500;
+
+/**
+ * The named formats, and the message each failure gets.
+ *
+ * ⚠️ EVERY PATTERN HERE IS ONE WE WROTE, AND THAT IS THE POINT.
+ *   `format` is a fixed enum rather than a user-supplied regex because a
+ *   customer-authored pattern run server-side on visitor input is a
+ *   denial-of-service vector — catastrophic backtracking stalls the event
+ *   loop for every tenant, Node cannot time a regex out, and capping the
+ *   input does not help. All of these are linear: no nested quantifiers,
+ *   no ambiguous alternation.
+ *
+ * The messages say what IS allowed, not what was wrong. "Use letters
+ * only" tells someone what to do next; "invalid format" does not.
+ */
+const FORMAT_RULES: Record<
+  Exclude<FieldFormat, 'any'>,
+  { test: (value: string) => boolean; message: string }
+> = {
+  // ⚠️ \p{M} (combining marks) belongs in every one of these alongside
+  // \p{L}. Indic, Arabic and Vietnamese scripts build a written letter
+  // from a base plus one or more marks, so \p{L} alone rejects "இரா" and
+  // "नमस्ते" while happily accepting "Jose" — a bug that only shows up for
+  // the customers least likely to report it.
+  letters: {
+    test: (v) => /^[\p{L}\p{M}]+$/u.test(v),
+    message: 'should be letters only',
+  },
+  letters_spaces: {
+    test: (v) => /^[\p{L}\p{M}][\p{L}\p{M} '\-]*$/u.test(v),
+    message: 'should be letters, spaces, apostrophes and hyphens only',
+  },
+  alphanumeric: {
+    test: (v) => /^[\p{L}\p{M}\p{N}]+$/u.test(v),
+    message: 'should be letters and numbers only',
+  },
+  digits: {
+    test: (v) => /^\p{N}+$/u.test(v),
+    message: 'should be digits only',
+  },
+  no_links: {
+    // Spam control for free-text boxes. Deliberately blunt: it looks for
+    // a scheme or a bare host, not for a valid URL.
+    test: (v) => !/(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|io|ru|xyz|top|link)\b)/i.test(v),
+    message: 'should not contain links',
+  },
+  url: {
+    test: (v) => /^https?:\/\/[^\s.]+\.[^\s]{2,}$/i.test(v),
+    message: 'should be a web address starting with http:// or https://',
+  },
+  business_email: {
+    test: (v) => !FREE_EMAIL_DOMAINS.has(v.split('@')[1]?.toLowerCase() ?? ''),
+    message: 'should be a work email address',
+  },
+};
+
+/** Consumer mailbox providers, for the `business_email` format. */
+const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'yahoo.co.uk',
+  'yahoo.co.in',
+  'hotmail.com',
+  'hotmail.co.uk',
+  'outlook.com',
+  'live.com',
+  'msn.com',
+  'aol.com',
+  'icloud.com',
+  'me.com',
+  'mail.com',
+  'gmx.com',
+  'yandex.com',
+  'proton.me',
+  'protonmail.com',
+  'zoho.com',
+  'rediffmail.com',
+]);
+
+/**
+ * Length and format checks shared by every text-ish answer.
+ *
+ * Returns an error message or null. Runs AFTER the type's own coercion,
+ * so `email` has already been lowercased and shape-checked by the time
+ * `business_email` looks at its domain.
+ */
+function checkTextRules(field: FormField, value: string): string | null {
+  const label = field.label || field.field_key;
+
+  if (field.min_length !== undefined && value.length < field.min_length) {
+    return `${label} should be at least ${field.min_length} characters.`;
+  }
+  if (field.max_length !== undefined && value.length > field.max_length) {
+    return `${label} should be at most ${field.max_length} characters.`;
+  }
+
+  const format = field.format;
+  if (!format || format === 'any') return null;
+  const rule = FORMAT_RULES[format];
+  if (!rule || rule.test(value)) return null;
+  return `${label} ${rule.message}.`;
+}
 
 // ============================================================
 // Definition validation (dashboard save path)
@@ -131,6 +236,31 @@ export function validateFormDefinition(fields: unknown): DefinitionIssue[] {
         index,
         field_key: field.field_key ?? null,
         message: 'Choice fields need at least one option.',
+      });
+    }
+
+    if (
+      field.format !== undefined &&
+      !(FIELD_FORMATS as readonly string[]).includes(field.format)
+    ) {
+      issues.push({
+        index,
+        field_key: field.field_key ?? null,
+        message: `Unknown format "${String(field.format)}".`,
+      });
+    }
+
+    if (
+      field.min_length !== undefined &&
+      field.max_length !== undefined &&
+      field.min_length > field.max_length
+    ) {
+      // Otherwise the form saves and then rejects every answer, which
+      // reads as a broken form rather than a broken rule.
+      issues.push({
+        index,
+        field_key: field.field_key ?? null,
+        message: 'Minimum length is greater than maximum length.',
       });
     }
 
@@ -279,17 +409,21 @@ function coerceField(field: FormField, input: unknown): CoerceResult {
   switch (field.type) {
     case 'text':
     case 'hidden': {
-      const text = String(raw);
+      const text = String(raw).trim();
       if (text.length > MAX_SHORT_TEXT) {
         return { error: `${label} is too long.` };
       }
-      return { value: text.trim() };
+      const ruleError = checkTextRules(field, text);
+      if (ruleError) return { error: ruleError };
+      return { value: text };
     }
 
     case 'textarea': {
-      const text = String(raw);
+      const text = String(raw).trim();
       if (text.length > MAX_TEXT) return { error: `${label} is too long.` };
-      return { value: text.trim() };
+      const ruleError = checkTextRules(field, text);
+      if (ruleError) return { error: ruleError };
+      return { value: text };
     }
 
     case 'email': {
@@ -297,6 +431,8 @@ function coerceField(field: FormField, input: unknown): CoerceResult {
       if (email.length > 320 || !EMAIL_RE.test(email)) {
         return { error: `${label} is not a valid email address.` };
       }
+      const ruleError = checkTextRules(field, email);
+      if (ruleError) return { error: ruleError };
       return { value: email };
     }
 
