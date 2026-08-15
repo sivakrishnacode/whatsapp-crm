@@ -8,6 +8,11 @@
  * once in FlowEditorShell so they show in both views (lifted in PR 3
  * so canvas users can also save + see validator issues).
  *
+ * The trigger and entry panels moved to `flow-settings.tsx` when the
+ * canvas got its docked inspector: they were list-only, which meant a
+ * canvas user had to switch views to set a keyword. Both views mount
+ * the same two components now.
+ *
  * State lives in the shared `useFlowEditor()` context — toggling
  * Canvas ⇄ List never loses edits, and a drag on the canvas updates
  * the same nodes the list view reads.
@@ -17,25 +22,24 @@
  * are list-only and have no canvas analogue.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   CircleAlert,
   Plus,
   Trash2,
   ChevronDown,
   ChevronUp,
-  CornerDownRight,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,6 +52,7 @@ import {
 import { cn } from '@/lib/utils';
 import { type ValidationIssue } from '@/lib/flows/validate';
 import {
+  ADDABLE_NODE_TYPES,
   NODE_META,
   NodeIconChip,
   groupNodeTypesByCategory,
@@ -58,9 +63,9 @@ import {
   type NodeType,
 } from './shared';
 import { NodeConfigForm } from './forms/node-config-form';
-import { NodeKeySelect } from './forms/fields';
 import { IssueLine } from './validation-panel';
-import { useFlowEditor, type BuilderState } from './flow-editor-state';
+import { EntryPicker, TriggerPanel } from './flow-settings';
+import { useFlowEditor } from './flow-editor-state';
 
 // ============================================================
 // Local state shape — mirrors the DB but the configs are typed
@@ -205,162 +210,6 @@ export function FlowBuilder() {
 }
 
 // ============================================================
-// Keyword trigger input
-// ============================================================
-
-/**
- * Comma-separated keyword entry. Keeps a local draft string so the
- * comma (and trailing space) the user types survive until they're done
- * — parsing into the keywords array on every keystroke stripped the
- * trailing comma the instant it was typed, making it impossible to
- * start a second keyword (issue #234). We commit on blur / Enter, then
- * re-display the cleaned, rejoined form. Seeded once on mount; the
- * component unmounts/remounts when the trigger type changes, so the
- * seed stays in sync. Mirrors the automations builder's KeywordMatchConfig.
- */
-function KeywordsInput({
-  keywords,
-  onChange,
-}: {
-  keywords: string[];
-  onChange: (keywords: string[]) => void;
-}) {
-  const [draft, setDraft] = useState(keywords.join(', '));
-
-  function commit() {
-    const parsed = draft
-      .split(',')
-      .map((k) => k.trim())
-      .filter(Boolean);
-    setDraft(parsed.join(', '));
-    onChange(parsed);
-  }
-
-  return (
-    <Input
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          commit();
-        }
-      }}
-      placeholder="support, help, hi"
-      className="bg-muted"
-    />
-  );
-}
-
-// ============================================================
-// Trigger panel
-// ============================================================
-
-function TriggerPanel({
-  state,
-  setState,
-  triggerIssues,
-}: {
-  state: BuilderState;
-  setState: React.Dispatch<React.SetStateAction<BuilderState>>;
-  triggerIssues: ValidationIssue[];
-}) {
-  return (
-    <section className="border-border bg-card rounded-lg border p-4">
-      <h2 className="text-foreground mb-3 text-sm font-semibold">Trigger</h2>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div>
-          <label className="text-muted-foreground mb-1 block text-xs">
-            When…
-          </label>
-          <Select
-            value={state.trigger_type}
-            onValueChange={(v) =>
-              setState((s) => ({
-                ...s,
-                trigger_type: v as BuilderState['trigger_type'],
-                trigger_config:
-                  v === 'keyword' ? { keywords: [] } : v === 'manual' ? {} : {},
-              }))
-            }
-          >
-            <SelectTrigger className="bg-muted">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="keyword">
-                A message contains a keyword
-              </SelectItem>
-              <SelectItem value="first_inbound_message">
-                Customer&apos;s first ever inbound message
-              </SelectItem>
-              <SelectItem value="manual">
-                Manual only (no auto-trigger)
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        {state.trigger_type === 'keyword' && (
-          <div>
-            <label className="text-muted-foreground mb-1 block text-xs">
-              Keywords (comma-separated)
-            </label>
-            <KeywordsInput
-              keywords={
-                Array.isArray(state.trigger_config.keywords)
-                  ? (state.trigger_config.keywords as string[])
-                  : []
-              }
-              onChange={(keywords) =>
-                setState((s) => ({
-                  ...s,
-                  trigger_config: { ...s.trigger_config, keywords },
-                }))
-              }
-            />
-          </div>
-        )}
-      </div>
-      {triggerIssues.length > 0 && (
-        <div className="mt-3 flex flex-col gap-1">
-          {triggerIssues.map((i, ix) => (
-            <IssueLine key={ix} issue={i} />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-// ============================================================
-// Entry-node picker
-// ============================================================
-
-function EntryPicker({
-  state,
-  setState,
-}: {
-  state: BuilderState;
-  setState: React.Dispatch<React.SetStateAction<BuilderState>>;
-}) {
-  if (state.nodes.length === 0) return null;
-  return (
-    <section className="border-border bg-card flex items-center gap-3 rounded-lg border p-3">
-      <CornerDownRight className="text-primary h-4 w-4 shrink-0" />
-      <span className="text-muted-foreground text-xs">Entry node:</span>
-      <NodeKeySelect
-        value={state.entry_node_id}
-        nodes={state.nodes}
-        onChange={(key) => setState((s) => ({ ...s, entry_node_id: key }))}
-        placeholder="Pick the first node…"
-        className="max-w-xs flex-1"
-      />
-    </section>
-  );
-}
-
-// ============================================================
 // Node card — collapsed summary + expanded config form
 // ============================================================
 
@@ -446,7 +295,7 @@ function NodeCard({
           )}
         </div>
         {hasError && (
-          <CircleAlert className="h-3.5 w-3.5 shrink-0 text-accent-red" />
+          <CircleAlert className="text-accent-red h-3.5 w-3.5 shrink-0" />
         )}
         {expanded ? (
           <ChevronUp className="text-muted-foreground h-4 w-4" />
@@ -474,7 +323,7 @@ function NodeCard({
               variant="ghost"
               size="sm"
               onClick={onRemove}
-              className="text-accent-red hover:bg-red-500/10 hover:text-accent-red"
+              className="text-accent-red hover:text-accent-red hover:bg-red-500/10"
             >
               <Trash2 className="h-3.5 w-3.5" />
               Remove node
@@ -567,19 +416,8 @@ function NodeConfigWithAdvanced({
 // ============================================================
 
 function AddNodeButton({ onAdd }: { onAdd: (type: NodeType) => void }) {
-  const types: NodeType[] = [
-    'start',
-    'send_buttons',
-    'send_list',
-    'send_message',
-    'send_media',
-    'collect_input',
-    'condition',
-    'set_tag',
-    'set_segment',
-    'handoff',
-    'end',
-  ];
+  // Same list the canvas palette offers — see ADDABLE_NODE_TYPES.
+  const types = ADDABLE_NODE_TYPES;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger

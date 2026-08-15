@@ -1,41 +1,46 @@
-"use client";
+'use client';
 
 /**
- * View-switcher + chrome for the flow editor.
+ * Full-screen chrome for the flow editor.
  *
- * Lays the editor out as one app-like column that fills the dashboard
- * content area (toolbar → mode row → stage → validation bar), matching
- * the Flow Builder design handoff:
- *   - A segmented Canvas / List control on the left of the mode row.
- *   - A node-type legend on the right so the canvas's per-type colors
- *     are decodable at a glance.
- *   - The active view is mounted inside a rounded "stage" that owns its
- *     own scroll/overflow, so the canvas can fill available height and
- *     the list scrolls internally.
+ *   ┌ top bar — name, status, Test / Runs / Activate / Save ──────┐
+ *   ├ palette │            canvas             │ inspector ────────┤
+ *   └ validation bar ─────────────────────────────────────────────┘
  *
- * Why a separate component:
- *   - The page itself stays trivially small (loading + error + this).
- *   - Either view can stay unaware of the other — they share data
- *     (`{flow, nodes}`) and nothing else.
+ * WHY `fixed inset-0`
+ *   Three columns that all want vertical room cannot share a page with
+ *   the dashboard rail and a scrolling content column — the canvas ended
+ *   up a letterbox about 300px tall, which is the complaint this rebuild
+ *   answers. Same decision, and the same implementation, as the
+ *   automation editor (`automation-builder.tsx`) and the form editor.
  *
- * View choice persists per-browser via localStorage so a power user
- * who prefers the list isn't fighting the default on every load.
- * Canvas is the default for everyone else — the original user
- * feedback was that the list shape made flows "hard to understand".
+ * WHY ONE ReactFlowProvider AROUND ALL THREE PANES
+ *   The palette adds a node at the centre of the VISIBLE viewport, which
+ *   means it needs `useReactFlow()` — and that only works inside a
+ *   provider. Wrapping the whole workspace (rather than just the canvas)
+ *   is what lets a pane outside the graph talk about coordinates in it.
+ *
+ * The Canvas / List toggle survives. The list is the only view that
+ * works on a phone (canvas handles are ~10px and drag-to-connect is not
+ * a finger workflow), so below `md` it is forced and the toggle hides —
+ * along with the palette and inspector, which are canvas affordances.
  */
 
-import { useEffect, useState } from "react";
-import { GitFork, List } from "lucide-react";
+import { useEffect, useState } from 'react';
+import { GitFork, List, PanelLeftOpen } from 'lucide-react';
+import { ReactFlowProvider } from '@xyflow/react';
 
-import { FlowBuilder } from "./flow-builder";
-import { FlowCanvas } from "./flow-canvas";
-import { FlowSimulator } from "./flow-simulator";
-import { FlowEditorProvider } from "./flow-editor-state";
-import { EditorHeader } from "./header";
-import { ValidationPanel } from "./validation-panel";
-import { NODE_META, nodeColors, type NodeType } from "./shared";
-import { cn } from "@/lib/utils";
-import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
+import { FlowBuilder } from './flow-builder';
+import { FlowCanvas } from './flow-canvas';
+import { FlowSimulator } from './flow-simulator';
+import { FlowEditorProvider } from './flow-editor-state';
+import { EditorHeader } from './header';
+import { NodeInspector } from './node-inspector';
+import { NodePalette } from './node-palette';
+import { ValidationPanel } from './validation-panel';
+import { NODE_META, nodeColors, type NodeType } from './shared';
+import { cn } from '@/lib/utils';
+import type { FlowRow, FlowNodeRow } from '@/lib/flows/types';
 
 /**
  * Below this viewport width we force list view and hide the toggle.
@@ -43,11 +48,12 @@ import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
  * ~10px and live finger drags from one node to another aren't a
  * practical workflow. Matches Tailwind's `md` breakpoint.
  */
-const MOBILE_BREAKPOINT = "(max-width: 767px)";
+const MOBILE_BREAKPOINT = '(max-width: 767px)';
 
-type View = "canvas" | "list";
+type View = 'canvas' | 'list';
 
-const STORAGE_KEY = "converse360.flowEditor.view";
+const STORAGE_KEY = 'converse360.flowEditor.view';
+const PALETTE_STORAGE_KEY = 'converse360.flowEditor.palette';
 
 // Legend covers every node type, derived from NODE_META so a new type
 // can't silently go undocumented. NODE_META's key order already reads
@@ -61,94 +67,147 @@ interface Props {
 
 export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
   const [view, setView] = useState<View>(() => {
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved === "canvas" || saved === "list") return saved;
-    } catch {
-      // ignore
-    }
-    return "canvas";
+    const saved = readStored(STORAGE_KEY, 'canvas');
+    return saved === 'list' ? 'list' : 'canvas';
   });
+  const [paletteOpen, setPaletteOpen] = useState(
+    () => readStored(PALETTE_STORAGE_KEY, 'open') === 'open'
+  );
 
   const isMobile = useMatchMedia(MOBILE_BREAKPOINT);
-  const effectiveView: View = isMobile ? "list" : view;
+  const effectiveView: View = isMobile ? 'list' : view;
   const [simulatorOpen, setSimulatorOpen] = useState(false);
 
   const choose = (next: View) => {
     setView(next);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // ignore
-    }
+    writeStored(STORAGE_KEY, next);
   };
+
+  const togglePalette = (next: boolean) => {
+    setPaletteOpen(next);
+    writeStored(PALETTE_STORAGE_KEY, next ? 'open' : 'closed');
+  };
+
+  const showCanvasPanes = effectiveView === 'canvas' && !isMobile;
 
   return (
     <FlowEditorProvider initialFlow={initialFlow} initialNodes={initialNodes}>
-      <div className="flex h-full min-h-0 flex-col">
-        <EditorHeader onTest={() => setSimulatorOpen(true)} />
+      <ReactFlowProvider>
+        <div className="bg-background fixed inset-0 z-40 flex flex-col">
+          <EditorHeader onTest={() => setSimulatorOpen(true)} />
 
-        {/* ---- mode row: view toggle + node-type legend ----
-            Omitted entirely on mobile (canvas is unavailable there and
-            the legend is lg-only), so there's no empty band above the
-            stage on small screens. */}
-        {!isMobile && (
-          <div className="flex items-center gap-4 px-6 py-3.5">
-            <div
-              role="group"
-              aria-label="Editor view"
-              className="inline-flex gap-0.5 rounded-lg border border-border bg-muted p-0.5"
-            >
-              <SegButton
-                active={effectiveView === "canvas"}
-                onClick={() => choose("canvas")}
-                icon={<GitFork className="h-3.5 w-3.5" />}
-                label="Canvas"
-              />
-              <SegButton
-                active={effectiveView === "list"}
-                onClick={() => choose("list")}
-                icon={<List className="h-3.5 w-3.5" />}
-                label="List"
-              />
-            </div>
-            <div className="ml-auto hidden flex-wrap items-center gap-x-3.5 gap-y-1.5 lg:flex">
-              {LEGEND_TYPES.map((t) => (
-                <span
-                  key={t}
-                  className="inline-flex items-center gap-1.5 text-[11.5px] text-muted-foreground"
+          {/* ---- mode row: view toggle + node-type legend ----
+              Omitted entirely on mobile (canvas is unavailable there and
+              the legend is lg-only), so there's no empty band above the
+              stage on small screens. */}
+          {!isMobile && (
+            <div className="border-border flex items-center gap-3 border-b px-4 py-2">
+              <div
+                role="group"
+                aria-label="Editor view"
+                className="border-border bg-muted inline-flex gap-0.5 rounded-lg border p-0.5"
+              >
+                <SegButton
+                  active={effectiveView === 'canvas'}
+                  onClick={() => choose('canvas')}
+                  icon={<GitFork className="h-3.5 w-3.5" />}
+                  label="Canvas"
+                />
+                <SegButton
+                  active={effectiveView === 'list'}
+                  onClick={() => choose('list')}
+                  icon={<List className="h-3.5 w-3.5" />}
+                  label="List"
+                />
+              </div>
+
+              {/* Re-opens the palette. Lives here rather than floating on
+                  the canvas so the control that hides it and the control
+                  that brings it back sit in one predictable place. */}
+              {effectiveView === 'canvas' && !paletteOpen && (
+                <button
+                  type="button"
+                  onClick={() => togglePalette(true)}
+                  className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-medium transition-colors"
                 >
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ background: nodeColors(t).solid }}
-                  />
-                  {NODE_META[t].label}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+                  <PanelLeftOpen className="h-3.5 w-3.5" />
+                  Nodes
+                </button>
+              )}
 
-        {/* ---- stage: the active view, owning its own overflow ---- */}
-        <div className="relative mx-6 min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card-2">
-          {effectiveView === "canvas" ? (
-            <FlowCanvas />
-          ) : (
-            <div className="absolute inset-0 overflow-y-auto">
-              <FlowBuilder />
+              <div className="ml-auto hidden flex-wrap items-center gap-x-3.5 gap-y-1.5 lg:flex">
+                {LEGEND_TYPES.map((t) => (
+                  <span
+                    key={t}
+                    className="text-muted-foreground inline-flex items-center gap-1.5 text-[11.5px]"
+                  >
+                    <span
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ background: nodeColors(t).solid }}
+                    />
+                    {NODE_META[t].label}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
+
+          {/* ---- workspace: palette · stage · inspector ---- */}
+          <div className="flex min-h-0 flex-1">
+            {showCanvasPanes && (
+              <NodePalette
+                collapsed={!paletteOpen}
+                onCollapse={() => togglePalette(false)}
+              />
+            )}
+
+            <div className="bg-card-2 relative min-w-0 flex-1">
+              {effectiveView === 'canvas' ? (
+                <FlowCanvas />
+              ) : (
+                <div className="absolute inset-0 overflow-y-auto">
+                  <FlowBuilder />
+                </div>
+              )}
+            </div>
+
+            {showCanvasPanes && <NodeInspector />}
+          </div>
+
+          {/* ---- validation / activate-readiness bar ---- */}
+          <div className="border-border border-t px-4 py-2.5">
+            <ValidationPanel />
+          </div>
         </div>
 
-        {/* ---- validation / activate-readiness bar ---- */}
-        <div className="px-6 pb-5 pt-3">
-          <ValidationPanel />
-        </div>
-      </div>
-
-      <FlowSimulator open={simulatorOpen} onClose={() => setSimulatorOpen(false)} />
+        <FlowSimulator
+          open={simulatorOpen}
+          onClose={() => setSimulatorOpen(false)}
+        />
+      </ReactFlowProvider>
     </FlowEditorProvider>
   );
+}
+
+/**
+ * localStorage read that also survives SSR — this runs inside a
+ * useState initializer, where `window` does not exist on the server and
+ * the ReferenceError would otherwise blow up the render.
+ */
+function readStored(key: string, fallback: string): string {
+  try {
+    return window.localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStored(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Private mode / storage disabled — the preference just doesn't persist.
+  }
 }
 
 /**
@@ -158,17 +217,17 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
  */
 function useMatchMedia(query: string): boolean {
   const [matches, setMatches] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
+    if (typeof window === 'undefined') return false;
     return window.matchMedia(query).matches;
   });
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === 'undefined') return;
     const mql = window.matchMedia(query);
     const handler = (e: MediaQueryListEvent) => setMatches(e.matches);
     // Safari < 14 still uses addListener; addEventListener is the
     // modern path. Both fire identically.
-    mql.addEventListener("change", handler);
-    return () => mql.removeEventListener("change", handler);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
   }, [query]);
   return matches;
 }
@@ -190,10 +249,10 @@ function SegButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-medium transition-colors",
+        'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-medium transition-colors',
         active
-          ? "bg-card text-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground",
+          ? 'bg-card text-foreground shadow-sm'
+          : 'text-muted-foreground hover:text-foreground'
       )}
     >
       {icon}

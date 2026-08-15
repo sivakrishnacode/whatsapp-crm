@@ -13,8 +13,9 @@
  *   - Renders edges between nodes, labeled per slot (button title,
  *     "true" / "false", list row title) so a branching flow reads
  *     as a real decision tree.
- *   - Click a node → side-sheet opens with the same per-node form
- *     the list view uses, plus "Set as entry" / "Delete".
+ *   - Click a node → the DOCKED inspector (a sibling pane, see
+ *     `node-inspector.tsx`) edits it. Selection lives in the editor
+ *     context because the pane doing the editing is no longer ours.
  *   - Drag from a source handle on one node to a target handle on
  *     another → wires that slot's `next_node_key`. Per-slot handles
  *     for multi-outgoing types (condition, send_buttons, send_list)
@@ -22,8 +23,10 @@
  *   - Backspace / Delete on a selected node → removes it AND clears
  *     every inbound `next_node_key` reference (no dangling arrows).
  *   - Delete on a selected edge → clears just that slot.
- *   - "+ Add node" floating button drops a new node at the visible
- *     viewport center.
+ *   - Nodes are added by dragging from the palette rail onto the
+ *     canvas (they land where you drop them) or by clicking a palette
+ *     tile (lands at the viewport centre). Both live in
+ *     `node-palette.tsx`.
  *   - Runs dagre auto-layout once on mount for flows whose
  *     `position_x` / `position_y` are all zero (pre-canvas flows
  *     and brand-new flows) — otherwise everything would pile at
@@ -36,7 +39,7 @@
  * list view reads.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyNodeChanges,
   Background,
@@ -47,7 +50,6 @@ import {
   Panel,
   Position,
   ReactFlow,
-  ReactFlowProvider,
   useReactFlow,
   type Connection,
   type Node as RfNode,
@@ -57,18 +59,8 @@ import {
   type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
 import {
   applyEdgeConnection,
   deriveCanvasEdges,
@@ -76,25 +68,16 @@ import {
 } from '@/lib/flows/edges';
 import { autoLayout, shouldAutoLayout } from '@/lib/flows/layout';
 import {
+  ADDABLE_NODE_TYPES,
   NODE_META,
   NodeIconChip,
-  groupNodeTypesByCategory,
   nodeColors,
   summarizeNode,
   type BuilderNode,
   type NodeType,
 } from './shared';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { NODE_DND_MIME } from './node-palette';
 import { useFlowEditor } from './flow-editor-state';
-import { NodeConfigForm } from './forms/node-config-form';
 
 // React-Flow node `data` payload — the bits our custom renderer needs.
 interface NodeData extends Record<string, unknown> {
@@ -261,39 +244,32 @@ const NODE_TYPES = { flow: FlowNodeCard };
  * (notably, the pan-to-flash effect). The split is required because
  * useReactFlow() must be called inside a ReactFlowProvider.
  */
+/**
+ * The ReactFlowProvider now lives in `flow-editor-shell.tsx`, wrapping
+ * all three panes — the palette needs `useReactFlow()` to place a
+ * click-added node at the viewport centre, and a provider scoped to the
+ * canvas alone would not reach it. This component is mounted inside
+ * that provider.
+ */
 export function FlowCanvas() {
-  return (
-    <ReactFlowProvider>
-      <FlowCanvasInner />
-    </ReactFlowProvider>
-  );
+  return <FlowCanvasInner />;
 }
 
 function FlowCanvasInner() {
   const {
     state,
-    setState,
     updateNodeConfig,
     updateNodePosition,
     updateNodePositions,
     removeNode,
+    addNode,
+    selectedNodeKey,
+    selectNode,
     flashKey,
   } = useFlowEditor();
   const reactFlow = useReactFlow();
   const builderNodes = state.nodes;
   const entryNodeId = state.entry_node_id;
-
-  // Side-panel state — which node's form is open. Canvas-only UI; the
-  // list view's analogue is the per-card expanded set in
-  // flow-builder.tsx.
-  const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
-  const selectedNode = useMemo(
-    () =>
-      selectedNodeKey
-        ? (builderNodes.find((n) => n.node_key === selectedNodeKey) ?? null)
-        : null,
-    [selectedNodeKey, builderNodes]
-  );
 
   const autoLayoutPositions = useMemo(() => {
     const canvasEdges = deriveCanvasEdges(builderNodes);
@@ -336,6 +312,13 @@ function FlowCanvasInner() {
           x: fallback?.x ?? n.position_x ?? 0,
           y: fallback?.y ?? n.position_y ?? 0,
         },
+        // Selection is driven by the editor context, not by React
+        // Flow's internal state, because it is now shared with a pane
+        // outside the graph. A node added from the palette is selected
+        // the moment it lands, so the card the inspector is editing is
+        // also the card highlighted on the canvas — the two cannot
+        // disagree about what you are looking at.
+        selected: n.node_key === selectedNodeKey,
         data: {
           node: n,
           isEntry: n.node_key === entryNodeId,
@@ -345,7 +328,13 @@ function FlowCanvasInner() {
     });
 
     return nodes;
-  }, [builderNodes, entryNodeId, flashKey, autoLayoutPositions]);
+  }, [
+    builderNodes,
+    entryNodeId,
+    flashKey,
+    autoLayoutPositions,
+    selectedNodeKey,
+  ]);
 
   const [rfNodes, setRfNodes] = useState<RfNode<NodeData>[]>(derivedRfNodes);
 
@@ -414,9 +403,52 @@ function FlowCanvasInner() {
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: RfNode<NodeData>) => {
-      setSelectedNodeKey(node.id);
+      selectNode(node.id);
     },
-    []
+    [selectNode]
+  );
+
+  // Clicking empty canvas deselects, which swaps the inspector back to
+  // the flow's own settings. Without this the pane would keep showing
+  // the last node you touched with no way back short of deleting it.
+  const handlePaneClick = useCallback(() => {
+    selectNode(null);
+  }, [selectNode]);
+
+  // ---- palette drag-and-drop ----
+  // The drop lands the node where the pointer released, so the author
+  // places it rather than hunting for it afterwards. `screenToFlowPosition`
+  // handles pan and zoom, so a drop is accurate at any viewport.
+  const handleDragOver = useCallback((event: React.DragEvent) => {
+    if (!event.dataTransfer.types.includes(NODE_DND_MIME)) return;
+    // Only preventDefault for OUR payload — otherwise the canvas would
+    // swallow file drags and every other drop the browser handles.
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handleDrop = useCallback(
+    (event: React.DragEvent) => {
+      const raw = event.dataTransfer.getData(NODE_DND_MIME);
+      if (!raw) return;
+      // The payload is attacker-irrelevant (same-page drag) but still
+      // untrusted input: a value that isn't a known node type would
+      // create a node no form can render.
+      if (!ADDABLE_NODE_TYPES.includes(raw as NodeType)) return;
+      event.preventDefault();
+      const position = reactFlow.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      const key = addNode(raw as NodeType);
+      updateNodePosition(
+        key,
+        position.x - NODE_WIDTH / 2,
+        position.y - NODE_HEIGHT / 2
+      );
+      selectNode(key);
+    },
+    [addNode, reactFlow, selectNode, updateNodePosition]
   );
 
   // Drag-to-connect: React-Flow fires onConnect when the user drops a
@@ -460,12 +492,12 @@ function FlowCanvasInner() {
   // node currently being edited.
   const handleNodesDelete = useCallback(
     (deleted: RfNode<NodeData>[]) => {
-      for (const n of deleted) {
-        removeNode(n.id);
-        if (selectedNodeKey === n.id) setSelectedNodeKey(null);
-      }
+      // `removeNode` clears the inspector's selection itself when it
+      // deletes the open node, so there's nothing to do here beyond
+      // forwarding each delete.
+      for (const n of deleted) removeNode(n.id);
     },
-    [removeNode, selectedNodeKey]
+    [removeNode]
   );
 
   // Edge delete: clear the source node's slot rather than removing
@@ -484,39 +516,19 @@ function FlowCanvasInner() {
     [builderNodes, updateNodeConfig]
   );
 
-  // Wrapped mutators that target the currently-selected node — pass to
-  // the form so each keystroke goes through the editor context (which
-  // flips `dirty` and feeds the validator).
-  const onSelectedUpdateConfig = useCallback(
-    (patch: Record<string, unknown>) => {
-      if (selectedNodeKey) updateNodeConfig(selectedNodeKey, patch);
-    },
-    [selectedNodeKey, updateNodeConfig]
-  );
-
-  const handleDeleteSelected = useCallback(() => {
-    if (!selectedNodeKey) return;
-    removeNode(selectedNodeKey);
-    setSelectedNodeKey(null);
-  }, [selectedNodeKey, removeNode]);
-
-  const handleSetEntry = useCallback(() => {
-    if (!selectedNodeKey) return;
-    setState((s) => ({ ...s, entry_node_id: selectedNodeKey }));
-  }, [selectedNodeKey, setState]);
-
-  if (rfNodes.length === 0) {
-    return (
-      <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-3 text-sm">
-        <p>No nodes yet.</p>
-        <CanvasAddNodeButton />
-      </div>
-    );
-  }
+  // An empty flow used to early-return a centered message INSTEAD of
+  // the graph, which meant the one canvas you most want to drop a node
+  // onto was not a drop target at all. The graph always mounts now and
+  // the hint is an overlay on top of it.
+  const isEmpty = rfNodes.length === 0;
 
   return (
     <>
-      <div className="h-full w-full overflow-hidden">
+      <div
+        className="h-full w-full overflow-hidden"
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
@@ -527,6 +539,7 @@ function FlowCanvasInner() {
           onNodesChange={handleNodesChange}
           onNodeDragStop={handleNodeDragStop}
           onNodeClick={handleNodeClick}
+          onPaneClick={handlePaneClick}
           onConnect={handleConnect}
           onNodesDelete={handleNodesDelete}
           onEdgesDelete={handleEdgesDelete}
@@ -564,220 +577,23 @@ function FlowCanvasInner() {
             maskColor="color-mix(in oklch, var(--background) 70%, transparent)"
             className="!border-border !bg-card !rounded-xl !border !shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)]"
           />
-          <Panel position="top-left" className="!top-4 !left-4">
-            <CanvasAddNodeButton />
-          </Panel>
+          {isEmpty && (
+            // pointer-events-none so the hint never blocks the drop it
+            // is asking for.
+            <Panel
+              position="top-center"
+              className="pointer-events-none !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2"
+            >
+              <div className="border-border bg-card/80 text-muted-foreground rounded-xl border border-dashed px-6 py-5 text-center text-sm backdrop-blur-sm">
+                <p className="text-foreground font-medium">No nodes yet.</p>
+                <p className="mt-1 text-xs">
+                  Drag a node in from the left — or click one to drop it here.
+                </p>
+              </div>
+            </Panel>
+          )}
         </ReactFlow>
       </div>
-
-      <NodeEditSheet
-        node={selectedNode}
-        isEntry={selectedNode?.node_key === entryNodeId}
-        allNodes={builderNodes}
-        onClose={() => setSelectedNodeKey(null)}
-        onUpdateConfig={onSelectedUpdateConfig}
-        onDelete={handleDeleteSelected}
-        onSetEntry={handleSetEntry}
-      />
     </>
-  );
-}
-
-// ============================================================
-// Side panel — opens when a canvas node is clicked. Mounts the
-// shared NodeConfigForm dispatcher so edits made here behave
-// identically to the list view's per-card editor.
-// ============================================================
-
-function NodeEditSheet({
-  node,
-  isEntry,
-  allNodes,
-  onClose,
-  onUpdateConfig,
-  onDelete,
-  onSetEntry,
-}: {
-  node: BuilderNode | null;
-  isEntry: boolean;
-  allNodes: BuilderNode[];
-  onClose: () => void;
-  onUpdateConfig: (patch: Record<string, unknown>) => void;
-  onDelete: () => void;
-  onSetEntry: () => void;
-}) {
-  // Sheet is controlled — opens when a node is selected, closes via
-  // Esc / overlay / close button (all delegated to onClose).
-  const open = node !== null;
-  if (!node) {
-    return (
-      <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-        <SheetContent side="right" className="w-full sm:max-w-md" />
-      </Sheet>
-    );
-  }
-  const meta = NODE_META[node.node_type];
-  const c = nodeColors(node.node_type);
-  return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent
-        side="right"
-        className="border-border bg-popover flex w-full flex-col gap-0 border-l p-0 sm:max-w-md"
-      >
-        <SheetHeader className="border-border flex-row items-center gap-3 space-y-0 border-b px-5 py-4">
-          <NodeIconChip type={node.node_type} size={36} iconSize={18} />
-          <div className="min-w-0 flex-1">
-            <SheetTitle className="flex items-center gap-2 text-[11px] font-semibold tracking-wider uppercase">
-              <span style={{ color: c.text }}>{meta.label}</span>
-              {isEntry && (
-                <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-accent-green uppercase">
-                  Entry
-                </span>
-              )}
-            </SheetTitle>
-            <SheetDescription className="text-muted-foreground mt-0.5 text-xs">
-              {meta.blurb}
-            </SheetDescription>
-          </div>
-          <code className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]">
-            {node.node_key}
-          </code>
-        </SheetHeader>
-
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
-          <NodeConfigForm
-            node={node}
-            allNodes={allNodes}
-            showAdvanced={false}
-            onUpdateConfig={onUpdateConfig}
-          />
-        </div>
-
-        <SheetFooter className="border-border border-t px-5 py-3 sm:flex-row sm:justify-between">
-          {!isEntry ? (
-            <Button variant="ghost" size="sm" onClick={onSetEntry}>
-              Set as entry
-            </Button>
-          ) : (
-            <span />
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onDelete}
-            className="text-accent-red hover:bg-red-500/10 hover:text-accent-red"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete node
-          </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-// ============================================================
-// Floating add-node button — bottom-right of the canvas. Mirrors
-// the list view's AddNodeButton (same dropdown menu, same NodeType
-// list, same icons via NODE_META) but drops the new node into the
-// center of the visible viewport rather than appending to a list.
-// ============================================================
-
-const ADD_NODE_TYPES: NodeType[] = [
-  'start',
-  'send_buttons',
-  'send_list',
-  'send_message',
-  'send_media',
-  'collect_input',
-  'condition',
-  'set_tag',
-  'set_segment',
-  'handoff',
-  'end',
-];
-
-function CanvasAddNodeButton() {
-  const reactFlow = useReactFlow();
-  const { addNode, updateNodePosition } = useFlowEditor();
-
-  const handleAdd = (type: NodeType) => {
-    const key = addNode(type);
-    // Place the new node at the visible canvas center. The Panel's
-    // own DOM lives inside ReactFlow so we can climb up to find the
-    // .react-flow root and read its bounding rect. If we can't find
-    // it (test envs, etc.), addNode's default (0, 0) is the fallback
-    // and the user can drag the node into view.
-    const root = document.querySelector('.react-flow') as HTMLElement | null;
-    if (!root) return;
-    const rect = root.getBoundingClientRect();
-    const center = reactFlow.screenToFlowPosition({
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-    });
-    // NODE_WIDTH / NODE_HEIGHT are the dagre layout defaults; offset
-    // so the card sits visually centered rather than top-left at the
-    // viewport center.
-    updateNodePosition(
-      key,
-      center.x - NODE_WIDTH / 2,
-      center.y - NODE_HEIGHT / 2
-    );
-  };
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        className="bg-primary text-primary-foreground hover:bg-primary-hover inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-medium shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)] transition-colors"
-        aria-label="Add node"
-      >
-        <Plus className="h-4 w-4" />
-        Add node
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="border-border bg-popover w-[268px] p-1.5"
-      >
-        {groupNodeTypesByCategory(ADD_NODE_TYPES).map((group, i) => (
-          // DropdownMenuGroup (base-ui Menu.Group) is REQUIRED: the
-          // DropdownMenuLabel below is base-ui's Menu.GroupLabel, which
-          // throws at render without a Menu.Group ancestor. A plain <div>
-          // here crashed the page when this menu opened (issue #336).
-          <Fragment key={group.id}>
-            {i > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="text-muted-foreground px-2 py-1.5 text-[11px] font-semibold tracking-wider uppercase">
-                {group.label}
-              </DropdownMenuLabel>
-              {group.types.map((t) => {
-                const meta = NODE_META[t];
-                return (
-                  <DropdownMenuItem
-                    key={t}
-                    onClick={() => handleAdd(t)}
-                    className="gap-3 py-2"
-                  >
-                    <NodeIconChip
-                      type={t}
-                      size={28}
-                      iconSize={16}
-                      className="rounded-md"
-                    />
-                    <span className="flex flex-col">
-                      <span className="text-popover-foreground text-[13px] font-semibold">
-                        {meta.label}
-                      </span>
-                      <span className="text-muted-foreground text-[11.5px]">
-                        {meta.blurb}
-                      </span>
-                    </span>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuGroup>
-          </Fragment>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

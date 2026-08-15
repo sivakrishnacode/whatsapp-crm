@@ -178,6 +178,30 @@ export const NODE_META: Record<
 };
 
 /**
+ * Every node type an author may ADD, in the order the palette and the
+ * add-menus offer them.
+ *
+ * ⚠️ This is the ONE list. It used to be spelled out three times (the
+ * list view's AddNodeButton, the canvas's ADD_NODE_TYPES, and the
+ * shell's legend), which meant a new node type could ship visible in
+ * one picker and missing from another — with nothing failing. Derive
+ * from here, or from NODE_META, and never re-type it.
+ */
+export const ADDABLE_NODE_TYPES: NodeType[] = [
+  'start',
+  'send_buttons',
+  'send_list',
+  'send_message',
+  'send_media',
+  'collect_input',
+  'condition',
+  'set_tag',
+  'set_segment',
+  'handoff',
+  'end',
+];
+
+/**
  * Bucket an ordered list of node types by category, preserving both
  * the category order (NODE_CATEGORIES) and the within-category order
  * of the input list. Empty categories are dropped. Used by both the
