@@ -101,12 +101,8 @@ export interface PublicForm {
  *
  * Both fall back to the token palette, so the renderer still looks right
  * in the widget and anywhere else no surface wraps it.
- *
- * Exported for the builder canvas, which draws an inert copy of the
- * button: a canvas that stops short of the submit is not showing the
- * form, and re-declaring the style there is how the two drift.
  */
-export const ACCENT_BUTTON: React.CSSProperties = {
+const ACCENT_BUTTON: React.CSSProperties = {
   backgroundColor: 'var(--form-accent, var(--primary))',
   color: 'var(--form-accent-fg, var(--primary-foreground))',
   borderRadius: 'var(--form-radius, 0.625rem)',
