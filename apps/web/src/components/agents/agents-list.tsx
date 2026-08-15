@@ -218,7 +218,17 @@ export function AgentsList() {
       />
 
       <Sheet open={providerOpen} onOpenChange={setProviderOpen}>
-        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+        {/*
+          Wider than the studio's test drawer on purpose: this one holds
+          the provider form, whose two-column model/key row is unreadable
+          when it wraps. Capped at 3xl to match the width AiConfig gives
+          itself in Settings, so the same form is not two different
+          shapes in two places.
+        */}
+        <SheetContent
+          side="right"
+          className="w-full overflow-y-auto sm:max-w-2xl lg:max-w-3xl"
+        >
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
               <KeyRound className="size-4 text-primary" />
