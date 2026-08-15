@@ -15,6 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  EditorActionBar,
+  EditorCard,
+  EditorEmptyState,
+  EditorGrid,
+  EditorScreen,
+} from './form-editor-shell';
 
 interface AvailabilityWindow {
   weekday: number;
@@ -75,7 +82,7 @@ export default function FormAvailabilityPanel({
   onUpdate: (next: Availability | null) => void;
 }) {
   const [draft, setDraft] = useState<Availability>(
-    availability ?? defaultAvailability(),
+    availability ?? defaultAvailability()
   );
   const [enabled, setEnabled] = useState(availability !== null);
   const [saving, setSaving] = useState(false);
@@ -109,17 +116,19 @@ export default function FormAvailabilityPanel({
 
   if (!hasSlotField) {
     return (
-      <div className="mx-auto max-w-lg py-12 text-center">
-        <CalendarClock className="mx-auto size-8 text-muted-foreground" />
-        <p className="mt-3 text-sm font-medium text-foreground">
-          This form doesn’t take bookings yet
-        </p>
-        <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-          Add a <strong>Time slot</strong> field on the Builder tab. That field
-          is what turns a form into a booking form — visitors then pick from
-          times you’re genuinely free, and two people can’t take the same one.
-        </p>
-      </div>
+      <EditorScreen
+        title="Availability"
+        description="When this form offers times, and what it does with a booking."
+      >
+        <EditorEmptyState
+          icon={CalendarClock}
+          title="This form doesn’t take bookings yet"
+        >
+          Add a <strong>Time slot</strong> field on the Build tab. That field is
+          what turns a form into a booking form — visitors then pick from times
+          you’re genuinely free, and two people can’t take the same one.
+        </EditorEmptyState>
+      </EditorScreen>
     );
   }
 
@@ -127,13 +136,16 @@ export default function FormAvailabilityPanel({
     setDraft((prev) => ({ ...prev, [key]: value }));
 
   return (
-    <div className="max-w-2xl space-y-6 p-4">
-      <div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-4">
+    <EditorScreen
+      title="Availability"
+      description="When the time picker offers slots, how long they are, and what happens on your calendar."
+    >
+      <div className="border-border bg-card flex items-start justify-between gap-4 rounded-xl border p-4">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-foreground">
+          <p className="text-foreground text-sm font-semibold">
             Accept bookings
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="text-muted-foreground mt-1 text-xs">
             Off means the time picker shows nothing, so nobody can book.
           </p>
         </div>
@@ -146,252 +158,279 @@ export default function FormAvailabilityPanel({
         </Button>
       </div>
 
+      {/*
+        Two columns from `lg` up: the numbers on the left, the calendar
+        itself on the right. As one column this screen was five cards deep,
+        so the Google Calendar section — the part people come here for
+        second — lived below the fold with the whole right of the screen
+        empty beside it.
+      */}
       {enabled && (
-        <>
-          <section className="space-y-4 rounded-xl border border-border bg-card p-4">
-            <p className="text-sm font-semibold text-foreground">Slot shape</p>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="tz">Timezone</Label>
-                <Input
-                  id="tz"
-                  value={draft.timezone}
-                  onChange={(e) => set('timezone', e.target.value)}
-                  placeholder="Asia/Kolkata"
-                  className="font-mono text-xs"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Your hours are read in this zone. Visitors see times in it
-                  too, labelled — so nobody quotes a different time to you.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="slot">Appointment length (minutes)</Label>
-                <Input
-                  id="slot"
-                  type="number"
-                  min={5}
-                  max={480}
-                  value={draft.slot_minutes}
-                  onChange={(e) =>
-                    set('slot_minutes', Number(e.target.value) || 30)
-                  }
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="buffer">Gap between appointments</Label>
-                <Input
-                  id="buffer"
-                  type="number"
-                  min={0}
-                  max={240}
-                  value={draft.buffer_minutes}
-                  onChange={(e) =>
-                    set('buffer_minutes', Number(e.target.value) || 0)
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  Reserved either side of a booking, so back-to-back slots
-                  aren’t offered.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="notice">Minimum notice (minutes)</Label>
-                <Input
-                  id="notice"
-                  type="number"
-                  min={0}
-                  value={draft.min_notice_minutes}
-                  onChange={(e) =>
-                    set('min_notice_minutes', Number(e.target.value) || 0)
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  Stops someone booking a slot ten minutes from now.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="window">How far ahead people can book (days)</Label>
-                <Input
-                  id="window"
-                  type="number"
-                  min={1}
-                  max={365}
-                  value={draft.window_days}
-                  onChange={(e) =>
-                    set('window_days', Number(e.target.value) || 30)
-                  }
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="capacity">Places per slot</Label>
-                <Input
-                  id="capacity"
-                  type="number"
-                  min={1}
-                  value={draft.capacity}
-                  onChange={(e) => set('capacity', Number(e.target.value) || 1)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Leave at 1 for one-to-one. Above 1 makes it a group session —
-                  and note that the database guarantee against two people
-                  taking the same slot only applies at 1.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          <section className="space-y-3 rounded-xl border border-border bg-card p-4">
-            <p className="text-sm font-semibold text-foreground">
-              When you’re available
-            </p>
-
-            {draft.windows.length === 0 && (
-              <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-accent-amber">
-                No hours set, so no times will be offered.
-              </p>
-            )}
-
-            {draft.windows.map((window, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <Select
-                  value={String(window.weekday)}
-                  onValueChange={(v) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      windows: prev.windows.map((w, i) =>
-                        i === index && v !== null
-                          ? { ...w, weekday: Number(v) }
-                          : w,
-                      ),
-                    }))
-                  }
-                >
-                  <SelectTrigger className="w-28">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DAYS.map((day, dayIndex) => (
-                      <SelectItem key={day} value={String(dayIndex)}>
-                        {day}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Input
-                  type="time"
-                  value={window.start}
-                  onChange={(e) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      windows: prev.windows.map((w, i) =>
-                        i === index ? { ...w, start: e.target.value } : w,
-                      ),
-                    }))
-                  }
-                  className="w-28"
-                />
-                <span className="text-xs text-muted-foreground">to</span>
-                <Input
-                  type="time"
-                  value={window.end}
-                  onChange={(e) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      windows: prev.windows.map((w, i) =>
-                        i === index ? { ...w, end: e.target.value } : w,
-                      ),
-                    }))
-                  }
-                  className="w-28"
-                />
-
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      windows: prev.windows.filter((_, i) => i !== index),
-                    }))
-                  }
-                  className="text-muted-foreground hover:text-destructive"
-                  aria-label="Remove these hours"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-            ))}
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                setDraft((prev) => ({
-                  ...prev,
-                  windows: [
-                    ...prev.windows,
-                    { weekday: 1, start: '09:00', end: '17:00' },
-                  ],
-                }))
-              }
+        /*
+         * 7/5, not 6/6. The hours rows are three fixed-width controls plus a
+         * delete button — about 380px — and gain nothing from more room,
+         * while Slot shape and Google Calendar are hint-heavy and are what
+         * actually wanted the width. Each column packs independently, so
+         * eleven rows of hours leaves no hole under Slot shape.
+         */
+        <EditorGrid className="mt-4 xl:grid-cols-12">
+          <div className="flex flex-col gap-4 xl:col-span-7">
+            <EditorCard
+              title="Slot shape"
+              description="How long an appointment is and how far ahead it can be booked."
             >
-              <Plus className="size-4" />
-              Add hours
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              Two rows on the same day models a lunch break.
-            </p>
-          </section>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="tz">Timezone</Label>
+                  <Input
+                    id="tz"
+                    value={draft.timezone}
+                    onChange={(e) => set('timezone', e.target.value)}
+                    placeholder="Asia/Kolkata"
+                    className="font-mono text-xs"
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    Your hours are read in this zone. Visitors see times in it
+                    too, labelled — so nobody quotes a different time to you.
+                  </p>
+                </div>
 
-          <section className="space-y-2 rounded-xl border border-border bg-card p-4">
-            <Label htmlFor="blackout">Closed dates</Label>
-            <Input
-              id="blackout"
-              value={(draft.blackout_dates ?? []).join(', ')}
-              onChange={(e) =>
-                set(
-                  'blackout_dates',
-                  e.target.value
-                    .split(',')
-                    .map((d) => d.trim())
-                    .filter(Boolean),
-                )
+                <div className="space-y-1.5">
+                  <Label htmlFor="slot">Appointment length (minutes)</Label>
+                  <Input
+                    id="slot"
+                    type="number"
+                    min={5}
+                    max={480}
+                    value={draft.slot_minutes}
+                    onChange={(e) =>
+                      set('slot_minutes', Number(e.target.value) || 30)
+                    }
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="buffer">Gap between appointments</Label>
+                  <Input
+                    id="buffer"
+                    type="number"
+                    min={0}
+                    max={240}
+                    value={draft.buffer_minutes}
+                    onChange={(e) =>
+                      set('buffer_minutes', Number(e.target.value) || 0)
+                    }
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    Reserved either side of a booking, so back-to-back slots
+                    aren’t offered.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="notice">Minimum notice (minutes)</Label>
+                  <Input
+                    id="notice"
+                    type="number"
+                    min={0}
+                    value={draft.min_notice_minutes}
+                    onChange={(e) =>
+                      set('min_notice_minutes', Number(e.target.value) || 0)
+                    }
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    Stops someone booking a slot ten minutes from now.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="window">
+                    How far ahead people can book (days)
+                  </Label>
+                  <Input
+                    id="window"
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={draft.window_days}
+                    onChange={(e) =>
+                      set('window_days', Number(e.target.value) || 30)
+                    }
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="capacity">Places per slot</Label>
+                  <Input
+                    id="capacity"
+                    type="number"
+                    min={1}
+                    value={draft.capacity}
+                    onChange={(e) =>
+                      set('capacity', Number(e.target.value) || 1)
+                    }
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    Leave at 1 for one-to-one. Above 1 makes it a group session
+                    — and note that the database guarantee against two people
+                    taking the same slot only applies at 1.
+                  </p>
+                </div>
+              </div>
+            </EditorCard>
+
+            <CalendarSyncSection
+              value={draft.calendar}
+              onChange={(calendar) =>
+                setDraft((d) => ({ ...d, calendar: calendar ?? undefined }))
               }
-              placeholder="2026-12-25, 2026-12-26"
-              className="font-mono text-xs"
             />
-            <p className="text-xs text-muted-foreground">
-              Comma-separated <code>YYYY-MM-DD</code>. Holidays and one-off
-              closures — no times are offered on these days.
-            </p>
-          </section>
+          </div>
 
-          <CalendarSyncSection
-            value={draft.calendar}
-            onChange={(calendar) =>
-              setDraft((d) => ({ ...d, calendar: calendar ?? undefined }))
-            }
-          />
-        </>
+          <div className="flex flex-col gap-4 xl:col-span-5">
+            <EditorCard
+              title="When you’re available"
+              description="Your weekly hours, in the timezone above. Two rows on the same day models a lunch break."
+              contentClassName="gap-3"
+            >
+              {draft.windows.length === 0 && (
+                <p className="border-accent-amber/30 bg-accent-amber-surface text-accent-amber rounded-lg border px-3 py-2 text-xs">
+                  No hours set, so no times will be offered.
+                </p>
+              )}
+
+              {draft.windows.map((window, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <Select
+                    value={String(window.weekday)}
+                    onValueChange={(v) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        windows: prev.windows.map((w, i) =>
+                          i === index && v !== null
+                            ? { ...w, weekday: Number(v) }
+                            : w
+                        ),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DAYS.map((day, dayIndex) => (
+                        <SelectItem key={day} value={String(dayIndex)}>
+                          {day}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Input
+                    type="time"
+                    value={window.start}
+                    onChange={(e) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        windows: prev.windows.map((w, i) =>
+                          i === index ? { ...w, start: e.target.value } : w
+                        ),
+                      }))
+                    }
+                    className="w-28"
+                  />
+                  <span className="text-muted-foreground text-xs">to</span>
+                  <Input
+                    type="time"
+                    value={window.end}
+                    onChange={(e) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        windows: prev.windows.map((w, i) =>
+                          i === index ? { ...w, end: e.target.value } : w
+                        ),
+                      }))
+                    }
+                    className="w-28"
+                  />
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        windows: prev.windows.filter((_, i) => i !== index),
+                      }))
+                    }
+                    className="text-muted-foreground hover:text-destructive"
+                    aria-label="Remove these hours"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              ))}
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="self-start"
+                onClick={() =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    windows: [
+                      ...prev.windows,
+                      { weekday: 1, start: '09:00', end: '17:00' },
+                    ],
+                  }))
+                }
+              >
+                <Plus className="mr-1.5 size-4" />
+                Add hours
+              </Button>
+            </EditorCard>
+
+            <EditorCard
+              title="Closed dates"
+              description="Holidays and one-off closures — no times are offered on these days."
+            >
+              <Label htmlFor="blackout" className="sr-only">
+                Closed dates
+              </Label>
+              <Input
+                id="blackout"
+                value={(draft.blackout_dates ?? []).join(', ')}
+                onChange={(e) =>
+                  set(
+                    'blackout_dates',
+                    e.target.value
+                      .split(',')
+                      .map((d) => d.trim())
+                      .filter(Boolean)
+                  )
+                }
+                placeholder="2026-12-25, 2026-12-26"
+                className="font-mono text-xs"
+              />
+              <p className="text-muted-foreground text-xs">
+                Comma-separated <code>YYYY-MM-DD</code>.
+              </p>
+            </EditorCard>
+          </div>
+        </EditorGrid>
       )}
 
-      <Button onClick={save} disabled={saving}>
-        {saving ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <Save className="size-4" />
-        )}
-        Save availability
-      </Button>
-    </div>
+      <EditorActionBar>
+        <Button onClick={save} disabled={saving}>
+          {saving ? (
+            <Loader2 className="mr-2 size-4 animate-spin" />
+          ) : (
+            <Save className="mr-2 size-4" />
+          )}
+          Save availability
+        </Button>
+      </EditorActionBar>
+    </EditorScreen>
   );
 }
 
@@ -411,7 +450,12 @@ function CalendarSyncSection({
   onChange: (next: AvailabilityCalendar | null) => void;
 }) {
   const [connections, setConnections] = useState<
-    { id: string; provider: string; displayName: string | null; status: string }[]
+    {
+      id: string;
+      provider: string;
+      displayName: string | null;
+      status: string;
+    }[]
   >([]);
   const [loading, setLoading] = useState(true);
 
@@ -422,7 +466,9 @@ function CalendarSyncSection({
         const res = await fetch('/api/connections', { cache: 'no-store' });
         const data = res.ok ? await res.json() : [];
         if (!cancelled) {
-          setConnections(Array.isArray(data) ? data : (data?.connections ?? []));
+          setConnections(
+            Array.isArray(data) ? data : (data?.connections ?? [])
+          );
         }
       } catch {
         // Leaves the list empty, which renders the "connect one" state —
@@ -438,7 +484,7 @@ function CalendarSyncSection({
   }, []);
 
   const googleConnections = connections.filter((c) =>
-    c.provider?.toLowerCase().includes('google'),
+    c.provider?.toLowerCase().includes('google')
   );
 
   const enabled = Boolean(value?.connection_id);
@@ -446,11 +492,13 @@ function CalendarSyncSection({
   if (loading) return null;
 
   return (
-    <section className="space-y-3 rounded-xl border p-4">
+    /* Styled to match `EditorCard`, but hand-rolled because its header
+       carries an action — the on/off switch for the whole section. */
+    <section className="border-border bg-card space-y-3 rounded-xl border p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold">Google Calendar</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="text-muted-foreground mt-0.5 text-xs">
             Hide times you are already busy, and put each booking on your
             calendar with a Meet link.
           </p>
@@ -469,7 +517,7 @@ function CalendarSyncSection({
                       block_busy: true,
                       create_event: true,
                       add_meet: true,
-                    },
+                    }
               )
             }
           >
@@ -479,10 +527,10 @@ function CalendarSyncSection({
       </div>
 
       {googleConnections.length === 0 ? (
-        <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+        <p className="text-muted-foreground rounded-lg border border-dashed p-3 text-xs">
           No Google account is connected to this workspace yet. Connect one
-          under <strong>Integrations → Connected apps</strong>, then come back
-          — the same connection covers Calendar and Meet.
+          under <strong>Integrations → Connected apps</strong>, then come back —
+          the same connection covers Calendar and Meet.
         </p>
       ) : (
         enabled &&
@@ -490,20 +538,27 @@ function CalendarSyncSection({
           <div className="space-y-3 border-t pt-3">
             <div className="space-y-1">
               <Label className="text-xs">Calendar account</Label>
-              <select
+              {/* The `Select` primitive, not a bare `<select>`: a native one
+                  renders the OS control, which is the only thing on this
+                  screen that ignores the app's theme. */}
+              <Select
                 value={value.connection_id}
-                onChange={(e) =>
-                  onChange({ ...value, connection_id: e.target.value })
+                onValueChange={(v) =>
+                  v && onChange({ ...value, connection_id: v })
                 }
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
               >
-                {googleConnections.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.displayName ?? c.provider}
-                    {c.status !== 'active' ? ' (needs reconnecting)' : ''}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="h-9 w-full text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {googleConnections.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.displayName ?? c.provider}
+                      {c.status !== 'active' ? ' (needs reconnecting)' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-1">
@@ -519,7 +574,7 @@ function CalendarSyncSection({
                   })
                 }
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-muted-foreground text-xs">
                 <code>primary</code> is your own calendar. For a shared one,
                 paste its id from Google Calendar settings.
               </p>
@@ -559,10 +614,10 @@ function CalendarSyncSection({
               }
             />
 
-            <p className="rounded-lg bg-muted/50 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
-              If Google is unreachable, bookings still go through — they
-              just will not appear on your calendar. Times you are busy stay
-              bookable in that case rather than the page offering nothing.
+            <p className="bg-muted/50 text-muted-foreground rounded-lg p-2.5 text-[11px] leading-relaxed">
+              If Google is unreachable, bookings still go through — they just
+              will not appear on your calendar. Times you are busy stay bookable
+              in that case rather than the page offering nothing.
             </p>
           </div>
         )
@@ -586,7 +641,7 @@ function SyncToggle({
     <div className="flex items-start justify-between gap-3">
       <div>
         <Label className="text-xs font-medium">{label}</Label>
-        <p className="text-[11px] text-muted-foreground">{hint}</p>
+        <p className="text-muted-foreground text-[11px]">{hint}</p>
       </div>
       <Switch checked={checked} onCheckedChange={onChange} />
     </div>
