@@ -146,6 +146,28 @@ export interface FormField {
   visible_when?: FieldCondition;
 }
 
+/**
+ * How the hosted page looks. Owner's choice, not the visitor's.
+ *
+ * ⚠️ Part of the PUBLIC projection — the page cannot paint a theme it
+ * cannot see. It describes appearance only and carries nothing about the
+ * tenant's internal structure, unlike `mapping`.
+ *
+ * `color_scheme` defaults to LIGHT rather than following the visitor:
+ * a hosted form is the business's page, and the app's own default mode is
+ * dark, so inheriting it rendered every public form black with the owner
+ * neither seeing nor controlling it. Mirrored (with validation) by
+ * apps/web/src/lib/forms/theme.ts.
+ */
+export interface FormTheme {
+  color_scheme: 'light' | 'dark' | 'system';
+  /** `#rrggbb`. Re-validated in the browser before it reaches any CSS. */
+  accent: string;
+  header_style: 'gradient' | 'solid' | 'bar' | 'none';
+  rounded: 'sharp' | 'soft' | 'pill';
+  hide_branding: boolean;
+}
+
 export interface FormSettings {
   submit_label: string;
   success_mode: 'message' | 'redirect';
@@ -156,6 +178,8 @@ export interface FormSettings {
   /** Reject submissions faster than this; a human cannot fill a form in 0s. */
   min_seconds: number;
   captcha: boolean;
+  /** Absent on forms predating the Appearance tab; the browser defaults it. */
+  theme?: Partial<FormTheme>;
 }
 
 export interface FormNotify {
@@ -172,7 +196,7 @@ export interface PublicForm {
   kind: 'form' | 'booking';
   /** `mapping` and `default_value` are stripped. See form-render.service. */
   fields: PublicFormField[];
-  settings: Pick<FormSettings, 'submit_label' | 'honeypot'>;
+  settings: Pick<FormSettings, 'submit_label' | 'honeypot' | 'theme'>;
 }
 
 export type PublicFormField = Omit<FormField, 'mapping'>;

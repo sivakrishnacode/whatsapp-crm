@@ -14,6 +14,7 @@ import {
   BarChart2,
   Share2,
   CalendarClock,
+  Palette,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -30,6 +31,7 @@ import FormAvailabilityPanel, {
   type Availability,
 } from '@/components/forms/form-availability-panel';
 import FormSubmissionsPanel from '@/components/forms/form-submissions-panel';
+import FormAppearancePanel from '@/components/forms/form-appearance-panel';
 
 interface FormData {
   id: string;
@@ -267,6 +269,10 @@ export default function FormBuilderPage() {
               Availability
             </TabsTrigger>
           )}
+          <TabsTrigger value="appearance" id="tab-appearance">
+            <Palette className="mr-2 h-4 w-4" />
+            Appearance
+          </TabsTrigger>
           <TabsTrigger value="share" id="tab-share">
             <Share2 className="mr-2 h-4 w-4" />
             Share
@@ -294,7 +300,11 @@ export default function FormBuilderPage() {
           value="builder"
           className="min-h-0 flex-1 overflow-hidden p-4"
         >
-          <FormBuilder fields={localFields} onChange={handleFieldsChange} />
+          <FormBuilder
+            fields={localFields}
+            onChange={handleFieldsChange}
+            theme={(form.settings as { theme?: unknown })?.theme}
+          />
         </TabsContent>
 
         <TabsContent value="settings" className="flex-1 overflow-auto p-4">
@@ -312,6 +322,26 @@ export default function FormBuilderPage() {
             onUpdate={(availability) =>
               setForm((prev) => (prev ? { ...prev, availability } : prev))
             }
+          />
+        </TabsContent>
+
+        {/* Its own tab rather than a section of Settings: it is the only
+            panel with a live preview, and it wants the width. */}
+        <TabsContent
+          value="appearance"
+          className="min-h-0 flex-1 overflow-hidden p-4"
+        >
+          <FormAppearancePanel
+            formId={form.id}
+            formName={form.name}
+            description={form.description}
+            fields={localFields}
+            submitLabel={
+              (form.settings as { submit_label?: string })?.submit_label ??
+              'Submit'
+            }
+            theme={(form.settings as { theme?: unknown })?.theme}
+            onUpdate={(updated) => setForm({ ...form, ...updated })}
           />
         </TabsContent>
 

@@ -20,6 +20,7 @@ import {
   splitIntoPages,
   type FieldCondition,
 } from '@/lib/forms/visibility';
+import type { FormTheme } from '@/lib/forms/theme';
 import { SlotPicker } from './slot-picker';
 
 // -----------------------------------------------------------------------
@@ -79,8 +80,27 @@ export interface PublicForm {
   settings: {
     submit_label: string;
     honeypot: boolean;
+    /** Appearance. Applied by FormSurface as CSS custom properties. */
+    theme?: Partial<FormTheme>;
   };
 }
+
+/**
+ * The submit/next button's colours.
+ *
+ * Read from the custom properties FormSurface sets rather than a Tailwind
+ * hue, so the button follows the owner's accent — and `--form-accent-fg`
+ * is chosen by luminance, which is what stops a yellow button shipping
+ * white text at 1.3:1.
+ *
+ * Both fall back to the token palette, so the renderer still looks right
+ * in the widget and anywhere else no surface wraps it.
+ */
+const ACCENT_BUTTON: React.CSSProperties = {
+  backgroundColor: 'var(--form-accent, var(--primary))',
+  color: 'var(--form-accent-fg, var(--primary-foreground))',
+  borderRadius: 'var(--form-radius, 0.625rem)',
+};
 
 export type SlotFetcher = (range: { from: string; to: string }) => Promise<{
   timezone: string;
@@ -382,7 +402,8 @@ export default function FormRenderer({
             type="submit"
             id="btn-submit-form"
             disabled={submitting}
-            className="w-full sm:w-auto px-8 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-medium shadow-md shadow-violet-500/20 rounded-lg transition-all"
+            className="w-full px-8 py-2.5 font-medium shadow-md transition-all hover:brightness-110 sm:w-auto"
+            style={ACCENT_BUTTON}
           >
             {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {form.settings.submit_label || 'Submit'}
@@ -394,7 +415,8 @@ export default function FormRenderer({
             type="button"
             id="btn-form-next"
             onClick={goNext}
-            className="w-full sm:w-auto px-8 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-medium shadow-md shadow-violet-500/20 rounded-lg transition-all"
+            className="w-full px-8 py-2.5 font-medium shadow-md transition-all hover:brightness-110 sm:w-auto"
+            style={ACCENT_BUTTON}
           >
             Next
             <ArrowRight className="ml-2 h-4 w-4" />
@@ -443,7 +465,7 @@ function StepProgress({ current, total }: { current: number; total: number }) {
         aria-label={`Step ${current + 1} of ${total}`}
       >
         <div
-          className="h-full rounded-full bg-gradient-to-r from-violet-600 to-indigo-600 transition-all duration-300"
+          className="h-full rounded-full bg-[var(--form-accent)] transition-all duration-300"
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -539,7 +561,7 @@ export function FieldInput({
           value={strVal}
           onChange={(e) => onChange(e.target.value)}
           className={cn(
-            'h-10 bg-background text-foreground border-input placeholder:text-muted-foreground/50 rounded-lg transition-all focus-visible:ring-2 focus-visible:ring-violet-500/20 focus-visible:border-violet-500',
+            'h-10 bg-background text-foreground border-input placeholder:text-muted-foreground/50 rounded-[var(--form-radius)] transition-all focus-visible:border-[var(--form-accent)] focus-visible:ring-2 focus-visible:ring-[var(--form-accent)]/25',
             error && 'border-destructive focus-visible:ring-destructive/20',
           )}
         />
@@ -555,7 +577,7 @@ export function FieldInput({
           onChange={(e) => onChange(e.target.value)}
           rows={4}
           className={cn(
-            'bg-background text-foreground border-input placeholder:text-muted-foreground/50 rounded-lg transition-all focus-visible:ring-2 focus-visible:ring-violet-500/20 focus-visible:border-violet-500',
+            'bg-background text-foreground border-input placeholder:text-muted-foreground/50 rounded-[var(--form-radius)] transition-all focus-visible:border-[var(--form-accent)] focus-visible:ring-2 focus-visible:ring-[var(--form-accent)]/25',
             error && 'border-destructive focus-visible:ring-destructive/20',
           )}
         />
@@ -569,7 +591,7 @@ export function FieldInput({
           value={strVal}
           onChange={(e) => onChange(e.target.value)}
           className={cn(
-            'flex h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-xs transition-all focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500',
+            'flex h-10 w-full rounded-[var(--form-radius)] border border-input bg-background px-3 py-2 text-sm text-foreground shadow-xs transition-all focus:border-[var(--form-accent)] focus:ring-2 focus:ring-[var(--form-accent)]/25 focus:outline-none',
             error && 'border-destructive focus:ring-destructive/20',
           )}
         >
@@ -594,8 +616,9 @@ export function FieldInput({
               <label
                 key={o.value}
                 className={cn(
-                  'flex items-center gap-3 rounded-lg border border-input bg-background/50 px-3.5 py-2.5 text-sm text-foreground cursor-pointer transition-all hover:bg-muted/40',
-                  isSelected && 'border-violet-500 bg-violet-500/10 font-medium text-foreground',
+                  'flex items-center gap-3 rounded-[var(--form-radius)] border border-input bg-background/50 px-3.5 py-2.5 text-sm text-foreground cursor-pointer transition-all hover:bg-muted/40',
+                  isSelected &&
+                    'border-[var(--form-accent)] bg-[var(--form-accent)]/10 font-medium text-foreground',
                 )}
               >
                 <input
@@ -604,7 +627,7 @@ export function FieldInput({
                   value={o.value}
                   checked={isSelected}
                   onChange={() => onChange(o.value)}
-                  className="h-4 w-4 accent-violet-600 text-accent-violet focus:ring-violet-500"
+                  className="h-4 w-4 accent-[var(--form-accent)]"
                 />
                 <span className="flex-1 text-foreground">{o.label}</span>
               </label>
@@ -625,8 +648,9 @@ export function FieldInput({
               <label
                 key={o.value}
                 className={cn(
-                  'flex items-center gap-3 rounded-lg border border-input bg-background/50 px-3.5 py-2.5 text-sm text-foreground cursor-pointer transition-all hover:bg-muted/40',
-                  isChecked && 'border-violet-500 bg-violet-500/10 font-medium text-foreground',
+                  'flex items-center gap-3 rounded-[var(--form-radius)] border border-input bg-background/50 px-3.5 py-2.5 text-sm text-foreground cursor-pointer transition-all hover:bg-muted/40',
+                  isChecked &&
+                    'border-[var(--form-accent)] bg-[var(--form-accent)]/10 font-medium text-foreground',
                 )}
               >
                 <input
@@ -639,7 +663,7 @@ export function FieldInput({
                       : checked.filter((v) => v !== o.value);
                     onChange(next);
                   }}
-                  className="h-4 w-4 rounded-sm accent-violet-600 text-accent-violet focus:ring-violet-500"
+                  className="h-4 w-4 rounded-sm accent-[var(--form-accent)]"
                 />
                 <span className="flex-1 text-foreground">{o.label}</span>
               </label>
@@ -658,7 +682,7 @@ export function FieldInput({
           value={strVal}
           onChange={(e) => onChange(e.target.value)}
           className={cn(
-            'h-10 bg-background text-foreground border-input rounded-lg transition-all focus-visible:ring-2 focus-visible:ring-violet-500/20 focus-visible:border-violet-500',
+            'h-10 bg-background text-foreground border-input rounded-[var(--form-radius)] transition-all focus-visible:border-[var(--form-accent)] focus-visible:ring-2 focus-visible:ring-[var(--form-accent)]/25',
             error && 'border-destructive',
           )}
         />
@@ -673,7 +697,7 @@ export function FieldInput({
           value={strVal}
           onChange={(e) => onChange(e.target.value)}
           className={cn(
-            'h-10 bg-background text-foreground border-input rounded-lg transition-all focus-visible:ring-2 focus-visible:ring-violet-500/20 focus-visible:border-violet-500',
+            'h-10 bg-background text-foreground border-input rounded-[var(--form-radius)] transition-all focus-visible:border-[var(--form-accent)] focus-visible:ring-2 focus-visible:ring-[var(--form-accent)]/25',
             error && 'border-destructive',
           )}
         />
@@ -713,12 +737,12 @@ export function FieldInput({
 
     case 'consent':
       inputEl = (
-        <label className="flex items-start gap-3 rounded-lg border border-input bg-background/50 p-3.5 text-sm text-foreground cursor-pointer transition-all hover:bg-muted/40">
+        <label className="flex items-start gap-3 rounded-[var(--form-radius)] border border-input bg-background/50 p-3.5 text-sm text-foreground cursor-pointer transition-all hover:bg-muted/40">
           <input
             type="checkbox"
             checked={Boolean(value)}
             onChange={(e) => onChange(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded-sm accent-violet-600 text-accent-violet focus:ring-violet-500"
+            className="mt-0.5 h-4 w-4 rounded-sm accent-[var(--form-accent)]"
           />
           <span className={cn('flex-1 text-sm text-foreground leading-snug', error && 'text-destructive font-medium')}>
             {field.label}
@@ -741,7 +765,7 @@ export function FieldInput({
           accept={field.accept?.join(',')}
           onChange={(e) => onChange(e.target.files?.[0] ?? null)}
           className={cn(
-            'h-10 bg-background text-foreground border-input rounded-lg file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-violet-500/10 file:text-accent-violet hover:file:bg-violet-500/20 cursor-pointer',
+            'h-10 bg-background text-foreground border-input rounded-[var(--form-radius)] file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[var(--form-accent)]/10 file:text-[var(--form-accent)] hover:file:bg-[var(--form-accent)]/20 cursor-pointer',
             error && 'border-destructive',
           )}
         />
@@ -756,11 +780,19 @@ export function FieldInput({
           onChange={(iso) => onChange(iso)}
         />
       ) : (
-        // No loader supplied — the dashboard preview, where there is no live
-        // availability to query. Says so rather than rendering an empty grid
-        // that reads as "no times available".
-        <div className="rounded-lg border border-input bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-          Times appear here once this form is published.
+        // No loader supplied — the builder canvas and preview, where there
+        // is no live availability to query. Says so rather than rendering
+        // an empty grid that reads as "no times available".
+        //
+        // It used to say "once this form is published", which was wrong on
+        // both counts: publishing has nothing to do with it, and the
+        // hosted page was ALSO reaching this branch, so a published form
+        // told visitors to wait for something already done. The hosted
+        // page now supplies a loader; this text describes the only case
+        // left, which is the builder.
+        <div className="rounded-[var(--form-radius)] border border-input bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+          Bookable times load here on the live form. Set them on the
+          Availability tab.
         </div>
       );
       break;

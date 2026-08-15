@@ -9,6 +9,21 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Plus, Trash2, Info } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -465,6 +480,10 @@ function OptionsEditor({
 }) {
   const options = field.options ?? [];
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  );
+
   const setLabel = (idx: number, label: string) => {
     const next = [...options];
     // The VALUE is left alone. It is what lands in submissions.data and
@@ -474,29 +493,42 @@ function OptionsEditor({
     onChange({ options: next });
   };
 
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = options.findIndex((o) => o.value === active.id);
+    const to = options.findIndex((o) => o.value === over.id);
+    if (from < 0 || to < 0) return;
+    // Order is the only thing that moves. Values stay put, so existing
+    // submissions and any rule keyed off one still mean what they did.
+    onChange({ options: arrayMove(options, from, to) });
+  };
+
   return (
     <div className="flex flex-col gap-1.5">
-      {options.map((opt, idx) => (
-        <div key={opt.value} className="flex items-center gap-1">
-          <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
-          <Input
-            value={opt.label}
-            className="h-8 text-xs"
-            placeholder={`Option ${idx + 1}`}
-            onChange={(e) => setLabel(idx, e.target.value)}
-          />
-          <button
-            type="button"
-            aria-label={`Remove option ${idx + 1}`}
-            onClick={() =>
-              onChange({ options: options.filter((_, i) => i !== idx) })
-            }
-            className="shrink-0 text-muted-foreground hover:text-destructive"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ))}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={options.map((o) => o.value)}
+          strategy={verticalListSortingStrategy}
+        >
+          {options.map((opt, idx) => (
+            <SortableOption
+              key={opt.value}
+              id={opt.value}
+              label={opt.label}
+              index={idx}
+              onLabelChange={(v) => setLabel(idx, v)}
+              onRemove={() =>
+                onChange({ options: options.filter((_, i) => i !== idx) })
+              }
+            />
+          ))}
+        </SortableContext>
+      </DndContext>
 
       <Button
         type="button"
@@ -519,6 +551,61 @@ function OptionsEditor({
         <Plus className="mr-1 h-3.5 w-3.5" />
         Add option
       </Button>
+    </div>
+  );
+}
+
+function SortableOption({
+  id,
+  label,
+  index,
+  onLabelChange,
+  onRemove,
+}: {
+  id: string;
+  label: string;
+  index: number;
+  onLabelChange: (value: string) => void;
+  onRemove: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn('flex items-center gap-1', isDragging && 'opacity-50')}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        aria-label={`Reorder option ${index + 1}`}
+        className="shrink-0 cursor-grab touch-none text-muted-foreground/40 hover:text-muted-foreground active:cursor-grabbing"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+      <Input
+        value={label}
+        className="h-8 text-xs"
+        placeholder={`Option ${index + 1}`}
+        onChange={(e) => onLabelChange(e.target.value)}
+      />
+      <button
+        type="button"
+        aria-label={`Remove option ${index + 1}`}
+        onClick={onRemove}
+        className="shrink-0 text-muted-foreground hover:text-destructive"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }

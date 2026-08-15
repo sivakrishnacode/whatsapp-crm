@@ -60,6 +60,7 @@ import {
   type FormBuilderField,
 } from '@/lib/forms/field-types';
 import { splitIntoPages } from '@/lib/forms/visibility';
+import { formThemeStyle, resolveFormTheme } from '@/lib/forms/theme';
 import type { FormFieldType } from './form-renderer';
 import { FieldInput } from './form-renderer';
 import FormFieldInspector from './form-field-inspector';
@@ -67,9 +68,20 @@ import FormFieldInspector from './form-field-inspector';
 interface FormBuilderProps {
   fields: FormBuilderField[];
   onChange: (fields: FormBuilderField[]) => void;
+  /**
+   * The form's saved appearance, so the canvas paints the accent and
+   * corner radius the visitor will actually see. Without it the canvas
+   * would show the default violet while the Appearance tab showed green,
+   * which is exactly the drift rendering real fields is meant to avoid.
+   */
+  theme?: unknown;
 }
 
-export default function FormBuilder({ fields, onChange }: FormBuilderProps) {
+export default function FormBuilder({
+  fields,
+  onChange,
+  theme,
+}: FormBuilderProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [dragging, setDragging] = useState<
@@ -214,6 +226,7 @@ export default function FormBuilder({ fields, onChange }: FormBuilderProps) {
 
         <Canvas
           fields={fields}
+          theme={theme}
           selected={selected}
           onSelect={setSelected}
           onRemove={removeField}
@@ -397,12 +410,14 @@ const CANVAS_DROP_ID = '__canvas__';
 
 function Canvas({
   fields,
+  theme,
   selected,
   onSelect,
   onRemove,
   onDuplicate,
 }: {
   fields: FormBuilderField[];
+  theme?: unknown;
   selected: string | null;
   onSelect: (key: string | null) => void;
   onRemove: (key: string) => void;
@@ -442,7 +457,10 @@ function Canvas({
             items={fields.map((f) => f.field_key)}
             strategy={verticalListSortingStrategy}
           >
-            <div className="flex flex-wrap gap-5 rounded-xl border bg-background p-6 shadow-sm">
+            <div
+              className="flex flex-wrap gap-5 rounded-xl border bg-background p-6 shadow-sm"
+              style={formThemeStyle(resolveFormTheme(theme))}
+            >
               {fields.map((field, idx) => (
                 <CanvasField
                   key={field.field_key}

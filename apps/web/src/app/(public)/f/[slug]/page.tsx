@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import FormRenderer from '@/components/forms/form-renderer';
+import FormSurface from '@/components/forms/form-surface';
+import { HostedBookingForm } from '@/components/forms/hosted-booking-form';
+import { resolveFormTheme } from '@/lib/forms/theme';
 
 /**
  * Where the SSR fetch for a public page should go.
@@ -68,35 +71,34 @@ export default async function HostedFormPage({ params }: Props) {
 
   if (!form) notFound();
 
+  const fields = (form.fields ?? []) as Array<{ type?: string }>;
+  const takesBookings = fields.some((f) => f?.type === 'appointment_slot');
+  const theme = resolveFormTheme(
+    (form.settings as { theme?: unknown } | undefined)?.theme,
+  );
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 py-8 md:py-16 transition-colors">
-      <div className="mx-auto max-w-2xl px-4">
-        <div className="overflow-hidden rounded-2xl bg-card border border-border/80 text-card-foreground shadow-2xl shadow-slate-900/10 dark:shadow-none transition-all">
-          {/* Header */}
-          <div className="bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-600 px-8 py-10 text-white shadow-inner">
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight">{String(form.name)}</h1>
-            {Boolean(form.description) && (
-              <p className="mt-2 text-violet-100 text-sm md:text-base leading-relaxed">
-                {String(form.description)}
-              </p>
-            )}
-          </div>
-
-          {/* Body */}
-          <div className="px-6 py-8 sm:px-10">
-            <FormRenderer
-              form={form as never}
-              source="hosted"
-              slug={slug}
-            />
-          </div>
-        </div>
-
-        {/* Branding */}
-        <p className="mt-8 text-center text-xs font-medium text-muted-foreground/70">
-          Powered by <span className="font-semibold text-foreground/80">WaCRM</span>
-        </p>
-      </div>
-    </div>
+    <FormSurface
+      theme={theme}
+      name={String(form.name)}
+      description={form.description ? String(form.description) : null}
+      booking={takesBookings}
+    >
+      {/*
+        A form carrying an `appointment_slot` field needs a slot loader,
+        and `HostedBookingForm` is the component that has one — plus the
+        booking confirmation and the 409 slot-race message. Without it the
+        time picker rendered its "no live availability" placeholder
+        forever, on a PUBLISHED form, telling the visitor to wait for
+        something that had already happened. /book/[slug] handles the
+        mirror case, so both public routes now behave the same for the
+        same form.
+      */}
+      {takesBookings ? (
+        <HostedBookingForm form={form as never} slug={slug} />
+      ) : (
+        <FormRenderer form={form as never} source="hosted" slug={slug} />
+      )}
+    </FormSurface>
   );
 }

@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { validateFormDefinition } from '../form-validate';
 import { parseAvailability, type Availability } from '../slot-engine.util';
+import { PRESENTATIONAL_TYPES } from '../form.types';
 import type {
   FormField,
   FormNotify,
@@ -142,8 +143,12 @@ export class FormsService {
     if (nextStatus === 'published') {
       const fields =
         input.fields ?? (existing.fields as unknown as FormField[]);
+      // PRESENTATIONAL_TYPES rather than the two types spelled out: a
+      // `page_break` carries no answer either, and listing types here
+      // meant adding one silently let a form of nothing but a heading and
+      // a break count as fillable.
       const answerable = fields.filter(
-        (f) => f.type !== 'heading' && f.type !== 'paragraph',
+        (f) => !PRESENTATIONAL_TYPES.includes(f.type),
       );
       if (answerable.length === 0) {
         throw new BadRequestException(
@@ -387,6 +392,10 @@ export class FormsService {
         settings: {
           submit_label: settings.submit_label,
           honeypot: settings.honeypot,
+          // Appearance is public by necessity: the hosted page cannot
+          // paint a theme it cannot see. Unlike `mapping` it says nothing
+          // about the tenant's internal structure.
+          theme: settings.theme,
         },
       },
     };

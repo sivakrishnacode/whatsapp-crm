@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { CalendarClock } from 'lucide-react';
-
+import FormSurface from '@/components/forms/form-surface';
 import { HostedBookingForm } from '@/components/forms/hosted-booking-form';
 import type { PublicForm } from '@/components/forms/form-renderer';
+import { resolveFormTheme } from '@/lib/forms/theme';
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -85,59 +85,37 @@ export default async function PublicBookingPage({ params }: Props) {
   if (!form) notFound();
 
   const takesBookings = form.fields.some((f) => f.type === 'appointment_slot');
+  const theme = resolveFormTheme(form.settings?.theme);
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8 text-slate-900 transition-colors md:py-16 dark:bg-slate-950 dark:text-slate-100">
-      <div className="mx-auto max-w-2xl px-4">
-        <div className="overflow-hidden rounded-2xl border border-border/80 bg-card text-card-foreground shadow-2xl shadow-slate-900/10 transition-all dark:shadow-none">
-          <div className="bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-600 px-8 py-10 text-white shadow-inner">
-            <div className="flex items-center gap-2 text-violet-100">
-              <CalendarClock className="h-4 w-4" />
-              <span className="text-xs font-medium tracking-wide uppercase">
-                Book a time
-              </span>
-            </div>
-            <h1 className="mt-3 text-2xl font-bold tracking-tight md:text-3xl">
-              {form.name}
-            </h1>
-            {form.description && (
-              <p className="mt-2 text-sm leading-relaxed text-violet-100 md:text-base">
-                {form.description}
-              </p>
-            )}
-          </div>
-
-          <div className="px-6 py-8 sm:px-10">
-            {takesBookings ? (
-              <HostedBookingForm form={form} slug={slug} />
-            ) : (
-              // Reached when a /book/ link is shared for a form with no slot
-              // field. Saying so beats rendering a booking-branded page that
-              // quietly behaves like a contact form.
-              <div className="py-8 text-center">
-                <p className="text-sm font-medium text-foreground">
-                  This form isn’t set up for bookings.
-                </p>
-                <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-                  It has no time picker, so there is nothing to book. You can
-                  still fill it in at its own link.
-                </p>
-                <a
-                  href={`/f/${slug}`}
-                  className="mt-4 inline-block text-xs underline underline-offset-2"
-                >
-                  Open the form
-                </a>
-              </div>
-            )}
-          </div>
+    <FormSurface
+      theme={theme}
+      name={form.name}
+      description={form.description}
+      booking={takesBookings}
+    >
+      {takesBookings ? (
+        <HostedBookingForm form={form} slug={slug} />
+      ) : (
+        // Reached when a /book/ link is shared for a form with no slot
+        // field. Saying so beats rendering a booking-branded page that
+        // quietly behaves like a contact form.
+        <div className="py-8 text-center">
+          <p className="text-sm font-medium text-foreground">
+            This form isn’t set up for bookings.
+          </p>
+          <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+            It has no time picker, so there is nothing to book. You can still
+            fill it in at its own link.
+          </p>
+          <a
+            href={`/f/${slug}`}
+            className="mt-4 inline-block text-xs underline underline-offset-2"
+          >
+            Open the form
+          </a>
         </div>
-
-        <p className="mt-8 text-center text-xs font-medium text-muted-foreground/70">
-          Powered by{' '}
-          <span className="font-semibold text-foreground/80">Converse360</span>
-        </p>
-      </div>
-    </div>
+      )}
+    </FormSurface>
   );
 }

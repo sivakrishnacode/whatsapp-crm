@@ -147,7 +147,14 @@
 /* ---- MODE: neutral surfaces ---- */
 
 :root,
-html[data-mode="dark"] {
+html[data-mode="dark"],
+/* A hosted form or booking page carries its OWNER's chosen scheme, not
+ * the app's. `DEFAULT_MODE` is dark and an anonymous visitor has no
+ * localStorage, so every public form used to fall back to dark — the
+ * business had no way to see that, let alone change it. These custom
+ * properties inherit, so declaring them on a container overrides the
+ * html-level ones for its whole subtree. See lib/forms/theme.ts. */
+[data-form-scheme="dark"] {
   /* Bound to the app's mode, not the OS preference: native form
    * controls and scrollbars must follow the picked mode, otherwise a
    * light-mode OS paints light scrollbars inside the dark UI. */
@@ -231,7 +238,8 @@ html[data-mode="dark"] {
  * the halation around glyphs) to 0.26, still comfortably AAA.
  *
  * Keep the ramp when editing: sidebar < background < card-2 < card. */
-html[data-mode="light"] {
+html[data-mode="light"],
+[data-form-scheme="light"] {
   color-scheme: light;
   --scrollbar-thumb: oklch(0.55 0.015 260 / 0.32);
   --scrollbar-thumb-hover: oklch(0.45 0.015 260 / 0.5);
