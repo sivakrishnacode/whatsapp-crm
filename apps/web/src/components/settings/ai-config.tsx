@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff } from 'lucide-react';
+import {
+  Loader2,
+  Sparkles,
+  CheckCircle2,
+  Trash2,
+  Eye,
+  EyeOff,
+  KeyRound,
+} from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 import { Button } from '@/components/ui/button';
@@ -24,6 +32,7 @@ import {
 } from '@/components/ui/select';
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiCreditModeCard } from '@/components/ai/ai-credit-mode-card';
+import { useAiCredits } from '@/hooks/use-ai-credits';
 import { AI_PROVIDER_DEFAULT_MODEL, PROVIDER_MODELS } from '@/lib/ai/defaults';
 import type { AiProvider, EmbeddingsProvider } from '@/lib/ai/types';
 
@@ -72,6 +81,29 @@ export function AiConfig({
 }: { onSaved?: () => void; hideHeading?: boolean } = {}) {
   const { accountId, accountRole, profileLoading } = useAuth();
   const canEdit = accountRole ? canEditSettings(accountRole) : false;
+  const { credits, reload: reloadCredits } = useAiCredits();
+
+  /**
+   * ⚠️ THE KEY FORM IS HIDDEN ON BUILT-IN AI, NOT LOCKED AWAY.
+   *
+   * On built-in credits the provider, the model and the embeddings key
+   * are all ours — three fields that nothing reads is how a settings
+   * screen teaches people to distrust it.
+   *
+   * The catch: `POST /ai/credits/mode` refuses to switch to `byok`
+   * without a key already stored ("there is nothing to switch to yet"),
+   * so hiding the form unconditionally would make the second option
+   * permanently unreachable — you would need a key to reveal the form
+   * that saves the key. `revealKeyForm` is the way out of that circle,
+   * and it is why this is a disclosure rather than a branch.
+   *
+   * While credits are still loading the form SHOWS: flashing a form that
+   * then collapses is better than hiding one somebody came here to use.
+   */
+  const [revealKeyForm, setRevealKeyForm] = useState(false);
+  const onBuiltIn =
+    credits?.platform_available === true && credits.credit_mode !== 'byok';
+  const showKeyForm = !onBuiltIn || revealKeyForm;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -202,6 +234,10 @@ export function AiConfig({
         if (data.warning) toast.warning(data.warning);
         else toast.success('Provider saved.');
         await fetchConfig();
+        // The mode chooser gates "your own key" on has_own_key, which it
+        // reads from the credits context — without this the option stays
+        // refused until a reload, right after the save that earned it.
+        await reloadCredits();
         onSaved?.();
       } else {
         toast.error(data.error ?? 'Failed to save.');
@@ -275,6 +311,31 @@ export function AiConfig({
             and a chooser with one choice is noise. */}
         <AiCreditModeCard canEdit={canEdit} onChanged={fetchConfig} />
 
+        {!showKeyForm && (
+          <button
+            type="button"
+            onClick={() => setRevealKeyForm(true)}
+            disabled={!canEdit}
+            className="flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-border p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted/40 disabled:opacity-60"
+          >
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-foreground">
+                {credits?.has_own_key
+                  ? 'Your provider key is saved'
+                  : 'Bring your own provider key'}
+              </span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                {credits?.has_own_key
+                  ? 'Not in use while you are on built-in AI — it is the fallback if credits run out. Open it to change or remove it.'
+                  : 'Save an OpenAI, Anthropic or Google key here, then switch above to run on it instead of credits.'}
+              </span>
+            </span>
+            <KeyRound className="size-4 shrink-0 text-muted-foreground" />
+          </button>
+        )}
+
+        {showKeyForm && (
+          <>
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -480,6 +541,8 @@ export function AiConfig({
             Save
           </Button>
         </div>
+          </>
+        )}
       </div>
     </div>
   );
