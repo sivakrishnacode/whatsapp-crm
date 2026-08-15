@@ -18,18 +18,25 @@ import type { AgentStudio } from '@/lib/agents/types';
  * The guard is keyed on accountId, not a boolean, so an in-place account
  * switch refetches instead of showing the previous workspace's agent.
  */
-export function useAgentStudio(accountId: string | null) {
+export function useAgentStudio(accountId: string | null, agentId: string) {
   const [studio, setStudio] = useState<AgentStudio | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const loadedAccountIdRef = useRef<string | null>(null);
+  const [missing, setMissing] = useState(false);
+  const loadedKeyRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/ai/agent', { cache: 'no-store' });
+      const res = await fetch(`/api/ai/agents/${agentId}`, { cache: 'no-store' });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
+        // A deleted agent is not an error to toast at somebody — the
+        // page shows "this agent is gone" and offers the list.
+        if (res.status === 404) {
+          setMissing(true);
+          return;
+        }
         toast.error(data?.error ?? 'Could not load the agent.');
         return;
       }
@@ -39,13 +46,16 @@ export function useAgentStudio(accountId: string | null) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [agentId]);
 
+  // Keyed on BOTH ids: switching agent within the same workspace must
+  // refetch, and so must switching workspace on the same agent id.
   useEffect(() => {
-    if (!accountId || loadedAccountIdRef.current === accountId) return;
-    loadedAccountIdRef.current = accountId;
+    const key = `${accountId ?? ''}:${agentId}`;
+    if (!accountId || !agentId || loadedKeyRef.current === key) return;
+    loadedKeyRef.current = key;
     void load();
-  }, [accountId, load]);
+  }, [accountId, agentId, load]);
 
   /**
    * Save a partial. Returns true on success so a caller can clear its
@@ -58,7 +68,7 @@ export function useAgentStudio(accountId: string | null) {
     ): Promise<boolean> => {
       setSaving(true);
       try {
-        const res = await fetch('/api/ai/agent', {
+        const res = await fetch(`/api/ai/agents/${agentId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -81,8 +91,44 @@ export function useAgentStudio(accountId: string | null) {
         setSaving(false);
       }
     },
-    [load],
+    [agentId, load],
   );
 
-  return { studio, loading, saving, reload: load, patch };
+  /**
+   * Replace which library documents / actions this agent may use.
+   *
+   * Separate from `patch` because it is not a column on the row: it is a
+   * pair of link tables, replaced whole inside one transaction.
+   */
+  const setLibrary = useCallback(
+    async (
+      body: { document_ids?: string[]; action_ids?: string[] },
+      opts: { successMessage?: string } = {},
+    ): Promise<boolean> => {
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/ai/agents/${agentId}/library`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          toast.error(data?.error ?? 'Could not save.');
+          return false;
+        }
+        toast.success(opts.successMessage ?? 'Saved.');
+        void load();
+        return true;
+      } catch {
+        toast.error('Could not save.');
+        return false;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [agentId, load],
+  );
+
+  return { studio, loading, saving, missing, reload: load, patch, setLibrary };
 }

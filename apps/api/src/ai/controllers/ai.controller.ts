@@ -101,10 +101,6 @@ export class AiController {
         select: {
           provider: true,
           model: true,
-          system_prompt: true,
-          is_active: true,
-          auto_reply_enabled: true,
-          auto_reply_max_per_conversation: true,
           api_key: true,
           embeddings_api_key: true,
           embeddings_provider: true,
@@ -316,12 +312,10 @@ export class AiController {
     } else {
       await this.prisma.ai_configs.create({
         data: {
-          // A first save means someone just connected a provider, so the
-          // master switch goes on (the inbox's "Draft with AI" becomes
-          // usable) while automatic replying stays off until they ask for
-          // it on the Behaviour tab. Explicit values in the body win.
-          is_active: true,
-          auto_reply_enabled: false,
+          // Connecting a provider is a WORKSPACE act now (migration 084):
+          // it says which key to spend, not whether any agent answers.
+          // Switching an agent on is a separate, deliberate decision made
+          // per agent in the studio.
           ...shared,
           account_id: account.accountId,
           created_by: account.userId,
@@ -445,7 +439,7 @@ export class AiController {
   @RequireRole('agent')
   async suggestDraft(
     @CurrentAccount() account: SupabaseAccountContext,
-    @Body() body: { conversation_id?: string },
+    @Body() body: { conversation_id?: string; agent_id?: string },
   ) {
     const conversationId = body?.conversation_id;
     if (!conversationId) {
@@ -457,7 +451,7 @@ export class AiController {
 
     const conversation = await this.prisma.conversations.findFirst({
       where: { id: conversationId, account_id: account.accountId },
-      select: { id: true, contact_id: true },
+      select: { id: true, contact_id: true, channel: true, ai_agent_id: true },
     });
     if (!conversation) {
       throw new HttpException('Conversation not found', HttpStatus.NOT_FOUND);
@@ -467,11 +461,22 @@ export class AiController {
     // rather than returning null, so the blanket catch that used to
     // report every failure as "key could not be decrypted" is gone —
     // it was hiding real errors behind a wrong diagnosis.
-    const config = await loadAiConfig(this.prisma, account.accountId).catch(
-      (err) => {
-        throw toHttp(err);
-      },
-    );
+    // Draft as whichever agent owns this thread, so the suggestion
+    // sounds like the agent the customer has been talking to. Falling
+    // back to the channel keeps drafting available on a thread the bot
+    // has never answered — an explicit `agent_id` (the inbox's agent
+    // picker) wins over both, and `loadAiConfig` pins it to the account.
+    //
+    // `requireActive: false`: drafting is a human pressing a button and
+    // reading the result, which is exactly what a switched-off agent is
+    // for while it is being set up.
+    const config = await loadAiConfig(this.prisma, account.accountId, {
+      requireActive: false,
+      agentId: body?.agent_id ?? conversation.ai_agent_id ?? null,
+      channel: conversation.channel,
+    }).catch((err) => {
+      throw toHttp(err);
+    });
 
     if (!config) {
       throw new HttpException(
@@ -602,7 +607,7 @@ export class AiController {
   @RequireRole('agent')
   async playgroundChat(
     @CurrentAccount() account: SupabaseAccountContext,
-    @Body() body: { messages?: ChatMessage[]; mode?: string },
+    @Body() body: { messages?: ChatMessage[]; mode?: string; agent_id?: string },
   ) {
     const rawMessages = body?.messages;
     if (!Array.isArray(rawMessages)) {
@@ -630,8 +635,13 @@ export class AiController {
       );
     }
 
+    // The panel always names the agent it is testing. Without an id it
+    // would resolve to whichever agent routing happens to prefer, and a
+    // test panel that answers as a different agent than the one on
+    // screen is worse than no test panel.
     const config = await loadAiConfig(this.prisma, account.accountId, {
       requireActive: false,
+      agentId: body?.agent_id ?? null,
     }).catch((err) => {
       throw toHttp(err);
     });

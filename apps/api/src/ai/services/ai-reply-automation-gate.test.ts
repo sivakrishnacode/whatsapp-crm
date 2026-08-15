@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AiReplyService } from './ai-reply.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { AgentRuntimeService } from './agent-runtime.service';
+import type { AgentResolverService } from './agent-resolver.service';
 import type { AiCreditsService } from '../credits/ai-credits.service';
 import type { ChannelSenderService } from '../../common/messaging/channel-sender.service';
 import type { Channel } from '../../common/messaging/channel';
@@ -25,8 +26,13 @@ const ACCOUNT_ID = 'acc-1';
 const CONVERSATION_ID = 'conv-1';
 const CONTACT_ID = 'contact-1';
 const OWNER_USER_ID = 'user-1';
+const AGENT_ID = 'agent-1';
 
 const CONFIG = {
+  agentId: AGENT_ID,
+  agentLabel: 'Support',
+  knowledgeDocumentIds: null,
+  actionIds: null,
   provider: 'gemini',
   model: 'gemini-3.5-flash',
   source: 'byok' as const,
@@ -115,9 +121,20 @@ function build(opts: { automations: AutomationRow[]; channel: Channel }) {
 
   const queue = { add: vi.fn().mockResolvedValue({ id: 'job-1' }) };
 
+  // Routing is not what this file tests: one active agent covers the
+  // channel, exactly as a workspace migrated from the single-agent
+  // schema does.
+  const resolver = {
+    resolveForConversation: vi
+      .fn()
+      .mockResolvedValue({ agentId: AGENT_ID, sticky: false }),
+    attach: vi.fn().mockResolvedValue(undefined),
+  } as unknown as AgentResolverService;
+
   const service = new AiReplyService(
     prisma,
     runtime,
+    resolver,
     credits,
     channelSender,
     queue as never,

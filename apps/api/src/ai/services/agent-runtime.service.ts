@@ -61,10 +61,29 @@ export class AgentRuntimeService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Load the account's enabled custom actions with headers decrypted. */
-  async loadActions(accountId: string): Promise<AgentAction[]> {
+  /**
+   * Load the enabled custom actions this agent may call, headers
+   * decrypted.
+   *
+   * `actionIds` is the agent's own selection (migration 084): null means
+   * every action in the workspace, and an empty array means none — the
+   * same distinction `knowledgeDocumentIds` draws, and for the same
+   * reason. Scoping matters more here than for knowledge: an action is a
+   * live HTTP call somebody configured, and a support agent should not
+   * be able to reach the endpoint that issues refunds.
+   */
+  async loadActions(
+    accountId: string,
+    actionIds: string[] | null = null,
+  ): Promise<AgentAction[]> {
+    if (actionIds && actionIds.length === 0) return [];
+
     const rows = await this.prisma.ai_agent_actions.findMany({
-      where: { account_id: accountId, enabled: true },
+      where: {
+        account_id: accountId,
+        enabled: true,
+        ...(actionIds ? { id: { in: actionIds } } : {}),
+      },
       orderBy: { created_at: 'asc' },
       // A model handed 40 tools picks badly and every definition costs
       // prompt tokens on the account's own bill.
@@ -213,7 +232,7 @@ export class AgentRuntimeService {
         config,
         latestUserMessage(messages),
       ),
-      this.loadActions(ctx.accountId),
+      this.loadActions(ctx.accountId, config.actionIds ?? null),
     ]);
 
     const { tools, executeTool } = this.buildToolset({ config, ctx, actions });

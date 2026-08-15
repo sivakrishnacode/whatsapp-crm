@@ -148,6 +148,8 @@ export class InstagramSendService {
     mediaUrl?: string | null;
     senderId?: string | null;
     metadata?: Record<string, unknown>;
+    /** Which AI agent wrote this, when one did (migration 084). */
+    aiAgentId?: string | null;
   }): Promise<string> {
     const row = await this.prisma.messages.create({
       data: {
@@ -162,6 +164,7 @@ export class InstagramSendService {
         // state until a messaging_seen webhook promotes it to 'read'.
         status: 'sent',
         metadata: args.metadata as Prisma.InputJsonValue | undefined,
+        ai_agent_id: args.aiAgentId ?? null,
       },
       select: { id: true },
     });
@@ -187,6 +190,7 @@ export class InstagramSendService {
     conversationId: string;
     text: string;
     senderId?: string | null;
+    aiAgentId?: string | null;
   }): Promise<IgSendOutcome> {
     const target = await this.resolveTarget(
       args.accountId,
@@ -207,6 +211,7 @@ export class InstagramSendService {
       contentType: 'text',
       contentText: args.text,
       senderId: args.senderId,
+      aiAgentId: args.aiAgentId,
       metadata: target.decision.requiresTag
         ? { ig_tag: target.decision.requiresTag }
         : undefined,

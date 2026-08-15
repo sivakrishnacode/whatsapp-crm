@@ -10,6 +10,7 @@ import { generateReply } from '../lib/generate';
 import { latestUserMessage, matchesHandoffPhrase } from '../lib/query';
 import { triggerMatches } from '../../automations/services/automation-trigger-match.util';
 import { AgentRuntimeService } from './agent-runtime.service';
+import { AgentResolverService } from './agent-resolver.service';
 import { AiCreditsService } from '../credits/ai-credits.service';
 import type { AiConfig } from '../lib/types';
 
@@ -27,6 +28,7 @@ export class AiReplyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly runtime: AgentRuntimeService,
+    private readonly resolver: AgentResolverService,
     private readonly credits: AiCreditsService,
     @Inject(forwardRef(() => ChannelSenderService))
     private readonly channelSender: ChannelSenderService,
@@ -172,7 +174,7 @@ export class AiReplyService {
 
     await this.prisma.conversations.update({
       where: { id: conversationId },
-      data: { ai_autoreply_disabled: true },
+      data: { ai_autoreply_disabled: true, ai_handoff_at: new Date() },
     });
 
     this.logger.log(
@@ -193,6 +195,7 @@ export class AiReplyService {
         conversationId,
         contactId,
         text: message,
+        aiAgentId: config.agentId,
       });
     } catch (err) {
       this.logger.error(`[ai auto-reply] handoff message failed: ${err}`);
@@ -247,8 +250,25 @@ export class AiReplyService {
     const { accountId, conversationId, contactId, configOwnerUserId } = args;
 
     try {
-      // 1. Load active AI configuration.
-      const config = await loadAiConfig(this.prisma, accountId);
+      // 1. Which agent answers this thread, and with what settings?
+      //
+      //    Routing runs BEFORE anything is loaded, because every gate
+      //    below — auto-reply, test numbers, the reply budget, the
+      //    handoff phrases — is a property of the agent that would
+      //    answer, not of the workspace. Asking them of "the workspace's
+      //    config" is what the single-agent version had to do and is
+      //    exactly what stops being true with two agents.
+      const routed = await this.resolver.resolveForConversation({
+        accountId,
+        conversationId,
+      });
+      // No active agent covers this channel. The thread stays for a
+      // human, which is the same outcome as every other gate here.
+      if (!routed) return;
+
+      const config = await loadAiConfig(this.prisma, accountId, {
+        agentId: routed.agentId,
+      });
       if (!config || !config.autoReplyEnabled) return;
 
       // 1b. Gate: credits. An empty wallet with no key of their own
@@ -282,6 +302,15 @@ export class AiReplyService {
 
       // 3. Gate: test mode.
       if (!(await this.isAllowedInTestMode(config, contactId))) return;
+
+      // 3b. Latch the thread to this agent. Done before the provider
+      //     call, not after the send: two inbound messages processed
+      //     concurrently must resolve to the SAME agent, and the latch
+      //     is what makes the second one sticky rather than a fresh
+      //     routing decision.
+      if (!routed.sticky) {
+        await this.resolver.attach({ conversationId, agentId: routed.agentId });
+      }
 
       // 4. Build the transcript.
       const messages = await buildConversationContext(
@@ -382,6 +411,7 @@ export class AiReplyService {
           conversationId,
           contactId,
           text: fallback,
+          aiAgentId: config.agentId,
         });
         return;
       }
@@ -417,6 +447,7 @@ export class AiReplyService {
         conversationId,
         contactId,
         text: finalText,
+        aiAgentId: config.agentId,
       });
     } catch (err) {
       this.logger.error(`[ai auto-reply] dispatch failed: ${err}`);

@@ -29,6 +29,7 @@ model Account {
   account_usage_monthly         account_usage_monthly[]
   users                         users                           @relation(fields: [ownerUserId], references: [id], onUpdate: NoAction)
   ai_agent_actions              ai_agent_actions[]
+  ai_agents                     ai_agents[]
   ai_configs                    ai_configs?
   ai_credit_ledger              ai_credit_ledger[]
   ai_credit_orders              ai_credit_orders[]
@@ -615,6 +616,7 @@ model users {
   account_invitations_account_invitations_created_by_user_idTousers  account_invitations[]        @relation("account_invitations_created_by_user_idTousers")
   accounts                                                           Account?
   ai_agent_actions                                                   ai_agent_actions[]
+  ai_agents                                                          ai_agents[]
   ai_configs                                                         ai_configs[]
   ai_credit_ledger                                                   ai_credit_ledger[]
   ai_credit_orders                                                   ai_credit_orders[]
@@ -699,21 +701,21 @@ model webauthn_credentials {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model account_onboarding {
-  account_id      String    @id @db.Uuid
-  goals           String[]  @default([])
-  team_size       String?
-  referral_source String?
-  referral_other  String?
+  account_id       String    @id @db.Uuid
+  goals            String[]  @default([])
+  team_size        String?
+  referral_source  String?
+  referral_other   String?
   /// NULL until the plan step succeeds — this is what the dashboard gate reads.
-  completed_at    DateTime? @db.Timestamptz(6)
+  completed_at     DateTime? @db.Timestamptz(6)
   /// Latch, not a window: the trial's dates live on user_subscriptions
   /// (migration 074). Non-null means self-service may never start another
   /// trial for this workspace — one per account, however many plans get
   /// clicked. Only an admin-panel operator can extend or restart one.
   trial_granted_at DateTime? @db.Timestamptz(6)
-  created_at      DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
-  accounts        Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @db.Timestamptz(6)
+  accounts         Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([completed_at], map: "idx_account_onboarding_completed")
   @@schema("public")
@@ -765,82 +767,156 @@ model account_invitations {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// WORKSPACE-level AI settings — one row per account (migration 084).
+/// The provider and its encrypted key, the credit mode, and the
+/// embeddings provider/model the stored vectors belong to. Everything
+/// about an AGENT lives in ai_agents, many per account.
 model ai_configs {
-  id                              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  account_id                      String   @unique @db.Uuid
-  created_by                      String?  @db.Uuid
-  provider                        String
-  model                           String
-  api_key                         String?
-  /// Legacy free-text business context, pre-069. Still appended after the
-  /// structured profile fields — every pre-069 account has everything here.
-  system_prompt                   String?
-  is_active                       Boolean  @default(false)
-  auto_reply_enabled              Boolean  @default(false)
-  auto_reply_max_per_conversation Int      @default(3)
-  created_at                      DateTime @default(now()) @db.Timestamptz(6)
-  updated_at                      DateTime @default(now()) @db.Timestamptz(6)
-  embeddings_api_key              String?
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id          String   @unique @db.Uuid
+  created_by          String?  @db.Uuid
+  provider            String
+  /// The workspace default model. An agent may override it; the
+  /// PROVIDER is never per-agent, because there is one stored key.
+  model               String
+  api_key             String?
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime @default(now()) @db.Timestamptz(6)
+  embeddings_api_key  String?
+  embeddings_provider String?
+  /// Model that produced the vectors currently stored in
+  /// ai_knowledge_chunks. Changing it invalidates them, so retrieval
+  /// filters on it and the UI asks for a reindex.
+  embeddings_model    String?
+  credit_mode         String   @default("platform")
+  accounts            Account  @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users               users?   @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+
+  @@schema("public")
+}
+
+/// One AI agent (migration 084). Many per workspace, routed by
+/// `channels` + `priority`. Holds NO credential — see ai_configs.
+model ai_agents {
+  id                              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id                      String                  @db.Uuid
+  created_by                      String?                 @db.Uuid
+  /// The label in the agent list ("Sales"). Distinct from `agent_name`,
+  /// which is what the agent calls itself to a customer ("Nila").
+  name                            String
+  /// Which channels this agent answers. EMPTY MEANS ANY — every agent
+  /// migrated from ai_configs has an empty array.
+  channels                        String[]                @default([])
+  priority                        Int                     @default(1)
+  is_active                       Boolean                 @default(false)
+  /// Model override. NULL follows ai_configs.model (or the platform
+  /// model when running on our key).
+  model                           String?
   agent_name                      String?
   greeting_message                String?
   business_website                String?
   business_description            String?
   ground_rules                    String?
   store_currency                  String?
-  tone                            String   @default("friendly")
-  response_length                 String   @default("medium")
+  tone                            String                  @default("friendly")
+  response_length                 String                  @default("medium")
   tone_instructions               String?
+  /// Legacy free-text business context, pre-069. Still appended after
+  /// the structured profile fields, never dropped.
+  system_prompt                   String?
   fallback_message                String?
-  handoff_enabled                 Boolean  @default(false)
-  handoff_trigger_phrases         String[] @default([])
+  handoff_enabled                 Boolean                 @default(false)
+  handoff_trigger_phrases         String[]                @default([])
   handoff_message                 String?
+  auto_reply_enabled              Boolean                 @default(false)
+  auto_reply_max_per_conversation Int                     @default(3)
+  /// When true the auto-reply bot answers ONLY test_numbers.
+  test_mode                       Boolean                 @default(false)
+  test_numbers                    String[]                @default([])
   /// Per-skill state keyed by the registry id in src/ai/lib/skills.ts:
   /// {"<id>":{"enabled":bool,"config":{...}}}. Code owns the list of
   /// skills; this column owns which are on.
-  skills                          Json     @default("{}")
-  /// When true the auto-reply bot answers ONLY test_numbers.
-  test_mode                       Boolean  @default(false)
-  test_numbers                    String[] @default([])
-  embeddings_provider             String?
-  /// Model that produced the vectors currently stored in
-  /// ai_knowledge_chunks. Changing it invalidates them, so retrieval
-  /// filters on it and the UI asks for a reindex.
-  embeddings_model                String?
-  credit_mode                     String   @default("platform")
-  accounts                        Account  @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users                           users?   @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  skills                          Json                    @default("{}")
+  /// TRUE = the whole workspace library. FALSE = only what is linked,
+  /// so an empty link table is never ambiguous.
+  uses_all_knowledge              Boolean                 @default(true)
+  uses_all_actions                Boolean                 @default(true)
+  created_at                      DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at                      DateTime                @default(now()) @db.Timestamptz(6)
+  accounts                        Account                 @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                           users?                  @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  knowledge_links                 ai_agent_knowledge[]
+  action_links                    ai_agent_action_links[]
+  conversations                   conversations[]
+  messages                        messages[]
 
+  @@unique([id, account_id])
+  @@index([account_id, priority, created_at], map: "ai_agents_account_idx")
+  @@index([account_id, priority], map: "ai_agents_active_idx")
+  @@schema("public")
+}
+
+/// Which library documents one agent may read, when
+/// `uses_all_knowledge` is false. `account_id` carries the composite FK
+/// that makes a cross-tenant link impossible in the database.
+model ai_agent_knowledge {
+  agent_id    String                 @db.Uuid
+  document_id String                 @db.Uuid
+  account_id  String                 @db.Uuid
+  created_at  DateTime               @default(now()) @db.Timestamptz(6)
+  agent       ai_agents              @relation(fields: [agent_id, account_id], references: [id, account_id], onDelete: Cascade, onUpdate: NoAction)
+  document    ai_knowledge_documents @relation(fields: [document_id, account_id], references: [id, account_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([agent_id, document_id])
+  @@index([document_id], map: "ai_agent_knowledge_document_idx")
+  @@schema("public")
+}
+
+/// Which custom actions one agent may call, when `uses_all_actions` is
+/// false.
+model ai_agent_action_links {
+  agent_id   String           @db.Uuid
+  action_id  String           @db.Uuid
+  account_id String           @db.Uuid
+  created_at DateTime         @default(now()) @db.Timestamptz(6)
+  agent      ai_agents        @relation(fields: [agent_id, account_id], references: [id, account_id], onDelete: Cascade, onUpdate: NoAction)
+  action     ai_agent_actions @relation(fields: [action_id, account_id], references: [id, account_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([agent_id, action_id])
+  @@index([action_id], map: "ai_agent_action_links_action_idx")
   @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model ai_agent_actions {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  account_id    String    @db.Uuid
-  created_by    String?   @db.Uuid
+  id            String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id    String                  @db.Uuid
+  created_by    String?                 @db.Uuid
   /// The tool name the model calls. [a-z][a-z0-9_]{1,48}, unique per account.
   name          String
   intent        String?
   description   String
-  method        String    @default("GET")
+  method        String                  @default("GET")
   url           String
   /// AES-256-GCM-encrypted JSON object of request headers — may hold an
   /// API key, so it is never returned to the client.
   headers_enc   String?
-  parameters    Json      @default("[]")
+  parameters    Json                    @default("[]")
   body_template Json?
-  enabled       Boolean   @default(true)
-  timeout_ms    Int       @default(8000)
-  last_used_at  DateTime? @db.Timestamptz(6)
+  enabled       Boolean                 @default(true)
+  timeout_ms    Int                     @default(8000)
+  last_used_at  DateTime?               @db.Timestamptz(6)
   last_status   Int?
   last_error    String?
-  created_at    DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime  @default(now()) @db.Timestamptz(6)
-  accounts      Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users         users?    @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  created_at    DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime                @default(now()) @db.Timestamptz(6)
+  accounts      Account                 @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users?                  @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  agent_links   ai_agent_action_links[]
 
   @@unique([account_id, name])
+  @@unique([id, account_id])
   @@index([account_id], map: "ai_agent_actions_account_idx")
   @@schema("public")
 }
@@ -888,9 +964,11 @@ model ai_knowledge_documents {
   chunk_count         Int                   @default(0)
   indexed_at          DateTime?             @db.Timestamptz(6)
   ai_knowledge_chunks ai_knowledge_chunks[]
+  agent_links         ai_agent_knowledge[]
   accounts            Account               @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users               users?                @relation(fields: [created_by], references: [id], onUpdate: NoAction)
 
+  @@unique([id, account_id])
   @@index([account_id])
   @@schema("public")
 }
@@ -1293,11 +1371,19 @@ model conversations {
   account_id            String                          @db.Uuid
   ai_autoreply_disabled Boolean                         @default(false)
   ai_reply_count        Int                             @default(0)
+  /// Which agent owns this thread. Set on the first AI reply and then
+  /// STICKY: routing consults it before channel/priority, so a thread
+  /// never changes personality mid-conversation (migration 084).
+  ai_agent_id           String?                         @db.Uuid
+  /// When the bot gave up on this thread. `ai_autoreply_disabled` says
+  /// that it stopped; this says when, which a handoff rate needs.
+  ai_handoff_at         DateTime?                       @db.Timestamptz(6)
   /// 'whatsapp' | 'instagram'. Enforced by conversations_channel_chk.
   channel               String                          @default("whatsapp")
   /// Most recent customer-sent message. Drives Instagram's 24h window.
   last_inbound_at       DateTime?                       @db.Timestamptz(6)
   ai_credit_ledger      ai_credit_ledger[]
+  ai_agent              ai_agents?                      @relation(fields: [ai_agent_id], references: [id], onUpdate: NoAction)
   accounts              Account                         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   contacts              contacts                        @relation(fields: [contact_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                 users                           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -1674,6 +1760,10 @@ model messages {
   /// Channel-specific extras: Instagram story-reply context, quick-reply
   /// payloads, attachment kinds, edit history. NULL on almost every row.
   metadata             Json?
+  /// Which agent wrote this reply, when the AI wrote it (migration 084).
+  /// NULL on every human and customer message.
+  ai_agent_id          String?             @db.Uuid
+  ai_agent             ai_agents?          @relation(fields: [ai_agent_id], references: [id], onUpdate: NoAction)
   flowRuns             FlowRun[]
   message_reactions    message_reactions[]
   conversations        conversations       @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -1777,6 +1867,9 @@ model subscription_plans {
   max_flows               Int?
   max_team_members        Int                  @default(0)
   max_storage_mb          Int                  @default(0)
+  /// Agents allowed (migration 084). NULL = unlimited, as max_flows
+  /// encodes it. Counted live from ai_agents by check_account_limit.
+  max_ai_agents           Int?
   trial_days              Int?
   features                Json?                @default("[]")
   is_active               Boolean?             @default(true)

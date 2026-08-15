@@ -1,5 +1,5 @@
-import { AgentStudio } from '@/components/agents/agent-studio';
+import { AgentsList } from '@/components/agents/agents-list';
 
 export default function AgentsPage() {
-  return <AgentStudio />;
+  return <AgentsList />;
 }

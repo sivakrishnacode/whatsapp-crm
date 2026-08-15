@@ -143,13 +143,27 @@ export async function retrieveKnowledge(
   accountId: string,
   config: Pick<
     AiConfig,
-    'embeddingsApiKey' | 'embeddingsProvider' | 'embeddingsModel'
+    | 'embeddingsApiKey'
+    | 'embeddingsProvider'
+    | 'embeddingsModel'
+    | 'knowledgeDocumentIds'
   >,
   queryText: string,
   k = 5,
 ): Promise<KnowledgeHit[]> {
   const query = queryText.trim();
   if (!query || k <= 0) return [];
+
+  // ⚠️ The agent's document selection is pushed INTO both match
+  // functions (migration 084), never applied to their results. A
+  // post-filter would silently return nothing whenever the best k chunks
+  // all belong to documents this agent may not read, and "no knowledge"
+  // and "nothing relevant" would become the same answer.
+  //
+  // null = the whole workspace corpus. An EMPTY array is not null: an
+  // agent narrowed to no documents reads no documents.
+  const documentIds = config.knowledgeDocumentIds ?? null;
+  if (documentIds && documentIds.length === 0) return [];
 
   try {
     const rows = await prisma.$queryRawUnsafe<{ count: number }[]>(
@@ -178,11 +192,12 @@ export async function retrieveKnowledge(
       });
       if (queryEmbedding) {
         const rows = await prisma.$queryRawUnsafe<MatchRow[]>(
-          'SELECT id, document_id, content FROM match_ai_knowledge_semantic($1::uuid, $2, $3::integer, $4)',
+          'SELECT id, document_id, content FROM match_ai_knowledge_semantic($1::uuid, $2, $3::integer, $4, $5::uuid[])',
           accountId,
           toVectorLiteral(queryEmbedding),
           k,
           model,
+          documentIds,
         );
         if (Array.isArray(rows)) {
           for (const row of rows) {
@@ -206,10 +221,11 @@ export async function retrieveKnowledge(
   if (picked.size < k) {
     try {
       const rows = await prisma.$queryRawUnsafe<MatchRow[]>(
-        'SELECT id, document_id, content FROM match_ai_knowledge_fts($1::uuid, $2, $3::integer)',
+        'SELECT id, document_id, content FROM match_ai_knowledge_fts($1::uuid, $2, $3::integer, $4::uuid[])',
         accountId,
         query,
         k,
+        documentIds,
       );
       if (Array.isArray(rows)) {
         for (const row of rows) {

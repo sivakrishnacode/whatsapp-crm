@@ -116,7 +116,7 @@ export function AgentPersona({
     }
     setDrafting(true);
     try {
-      const res = await fetch('/api/ai/agent/draft-from-site', {
+      const res = await fetch(`/api/ai/agents/${studio.id}/draft-from-site`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),

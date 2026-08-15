@@ -38,9 +38,13 @@ interface Turn {
  * someone's real orders), and nothing is sent to anyone.
  */
 export function AiPlayground({
+  agentId,
   onGoToSetup,
   className,
 }: {
+  /** Which agent to answer as. Named explicitly so the panel can never
+   *  test a different agent than the one on screen. */
+  agentId?: string;
   onGoToSetup?: () => void;
   className?: string;
 }) {
@@ -68,6 +72,7 @@ export function AiPlayground({
         // Only role + content — the server ignores anything else, and a
         // client must not be able to inject a fake tool result.
         body: JSON.stringify({
+          agent_id: agentId,
           messages: next.map((t) => ({ role: t.role, content: t.content })),
         }),
       });

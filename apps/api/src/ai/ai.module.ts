@@ -3,12 +3,14 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
 import { AiController } from './controllers/ai.controller';
-import { AgentController } from './controllers/agent.controller';
+import { AgentsController } from './controllers/agents.controller';
 import { AgentActionsController } from './controllers/agent-actions.controller';
 import { AiKnowledgeController } from './controllers/ai-knowledge.controller';
 import { AutomationDraftController } from './controllers/automation-draft.controller';
 import { AiReplyService } from './services/ai-reply.service';
 import { AgentConfigService } from './services/agent-config.service';
+import { AgentsService } from './services/agents.service';
+import { AgentResolverService } from './services/agent-resolver.service';
 import { AgentRuntimeService } from './services/agent-runtime.service';
 import { AgentActionsService } from './services/agent-actions.service';
 import { KnowledgeSourceService } from './services/knowledge-source.service';
@@ -31,7 +33,7 @@ import { AiCreditsModule } from './credits/ai-credits.module';
   ],
   controllers: [
     AiController,
-    AgentController,
+    AgentsController,
     AgentActionsController,
     AiKnowledgeController,
     AutomationDraftController,
@@ -40,6 +42,8 @@ import { AiCreditsModule } from './credits/ai-credits.module';
     AiReplyService,
     AiReplyProcessor,
     AgentConfigService,
+    AgentsService,
+    AgentResolverService,
     AgentRuntimeService,
     AgentActionsService,
     KnowledgeSourceService,

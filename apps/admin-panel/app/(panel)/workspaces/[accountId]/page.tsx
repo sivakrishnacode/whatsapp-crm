@@ -459,17 +459,23 @@ export default async function WorkspaceDetailPage({
                       label: 'Own key stored',
                       value: ai.hasOwnKey ? 'Yes (encrypted)' : 'No',
                     },
-                    { label: 'Agent name', value: ai.agentName ?? 'Unnamed' },
-                    { label: 'Active', value: ai.isActive ? 'Yes' : 'No' },
                     {
-                      label: 'Auto-reply',
-                      value: ai.autoReplyEnabled ? 'On' : 'Off',
+                      label: 'Agents',
+                      value: `${formatNumber(ai.agents)} built, ${formatNumber(ai.activeAgents)} switched on`,
+                    },
+                    {
+                      label: 'Answering automatically',
+                      value:
+                        ai.autoReplyAgents > 0
+                          ? `${formatNumber(ai.autoReplyAgents)} agent(s)`
+                          : 'None — drafts only',
                     },
                     {
                       label: 'Test mode',
-                      value: ai.testMode
-                        ? `On — ${ai.testNumbers.length} number(s) only`
-                        : 'Off',
+                      value:
+                        ai.testModeAgents > 0
+                          ? `${formatNumber(ai.testModeAgents)} agent(s) answering test numbers only`
+                          : 'Off',
                     },
                     {
                       label: 'Knowledge / actions',

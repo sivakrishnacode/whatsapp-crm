@@ -31,6 +31,8 @@ import {
 // ------------------------------------------------------------
 
 interface SendTextArgs {
+  /** Which AI agent wrote this, when one did (migration 084). */
+  aiAgentId?: string | null;
   /** Account-level tenancy key. Drives contact + whatsapp_config
    *  lookups so a flow authored by user A still sends through the
    *  WhatsApp number user B saved on the same account. */
@@ -268,6 +270,7 @@ export class FlowMetaSendService {
           content_text: contentText,
           message_id: waMessageId,
           status: 'sent',
+          ai_agent_id: 'aiAgentId' in input ? (input.aiAgentId ?? null) : null,
         },
       });
     } catch (err) {

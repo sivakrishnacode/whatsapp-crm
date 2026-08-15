@@ -77,6 +77,8 @@ export class WebSendService {
     contentText: string | null;
     mediaUrl?: string | null;
     metadata?: Record<string, unknown>;
+    /** Which AI agent wrote this, when one did (migration 084). */
+    aiAgentId?: string | null;
   }): Promise<WebSendOutcome> {
     const row = await this.prisma.messages.create({
       data: {
@@ -91,6 +93,7 @@ export class WebSendService {
         // report of someone else's opinion.
         status: 'sent',
         metadata: args.metadata as Prisma.InputJsonValue | undefined,
+        ai_agent_id: args.aiAgentId ?? null,
       },
       select: {
         id: true,
@@ -142,6 +145,7 @@ export class WebSendService {
     text: string;
     senderType?: 'agent' | 'ai' | 'system';
     senderId?: string | null;
+    aiAgentId?: string | null;
   }): Promise<WebSendOutcome> {
     const conversationId = await this.requireConversation(
       args.accountId,
@@ -153,6 +157,7 @@ export class WebSendService {
       senderId: args.senderId,
       contentType: 'text',
       contentText: args.text,
+      aiAgentId: args.aiAgentId,
     });
   }
 

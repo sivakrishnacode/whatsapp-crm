@@ -100,7 +100,7 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
 - ⚠️ **Supabase Storage buckets are written from the BROWSER, not the API** (`avatars`, `flow-media` 016/020, `chat-media` 023, `workspace-logos` 071). The bucket's RLS policy is therefore the _only_ gate on those writes — it must carry the authorization itself, including any role check. Account-scoped buckets all use the path convention `account-<account_id>/…` matched on the first folder segment, built in one place by `buildMediaPath()` (`apps/web/src/lib/storage/upload-media.ts`); a hand-rolled path is silently rejected. When such a URL is later persisted to a column, pin it to our own bucket _and_ the caller's own folder server-side (`common/storage/workspace-logo.util.ts`) — a free-text URL that renders in every teammate's browser is a beacon.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs`/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `app_connections` (migration 082 — OAuth app connectors), `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
+- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs` (workspace AI settings)/`ai_agents`/`ai_agent_knowledge`/`ai_agent_action_links` (migration 084 — several agents per workspace)/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `app_connections` (migration 082 — OAuth app connectors), `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
 
 ## Auth & signup
 
@@ -118,7 +118,7 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 - ⚠️ **ONE TRIAL PER WORKSPACE, EVER** (migration 074). `account_onboarding.trial_granted_at` is the latch; the window itself stays on `user_subscriptions`, which is where every consumer reads it. `startSubscription` writes the trial columns only when the latch is unset — switching plans carries the existing clock forward untouched, and a switch after it lapses lands `expired` rather than `active`. Before 074 every call wrote `trial_start_at = now()`, so clicking between Starter, Growth and Enterprise granted a fresh 15 days each time. Only an admin-panel operator can grant time after that ("Start trial" / "Extend the period by"), which is recorded in `admin_audit_log`. `OnboardingState.trialAvailable` exposes the latch to the UI.
 - ⚠️ **An Enterprise enquiry is a sales signal, not a billing change.** `POST /onboarding/enquiry` is reachable from `/welcome` (brand-new account — the hard gate means something must be provisioned) _and_ from `/pricing` (already running). It now provisions a trial only when the account is not already entitled; before that it ran the same upsert either way, so a paying Growth customer asking about Enterprise was moved onto a free Enterprise trial, their `payment_method` rewritten to `manual` while their gateway id stayed put, and their MRR silently became zero. `selectPlan` likewise refuses an `active` subscription — plan changes for a payer belong to checkout — and neither path overwrites `payment_method` when a gateway id is present.
 - ⚠️ **Enterprise is invisible to MRR.** Revenue is derived as `plan price × subscription` and there is no amount column, so a negotiated price lives only in `plan_enquiries` and contributes nothing to the admin panel's figures. The fix in practice is a **private plan row per customer** (`ENTERPRISE_ACME`, real price, `is_active = false` so nobody else is offered it) assigned to `accounts.owner_user_id` — see `apps/admin-panel/README.md`.
-- ⚠️ **Plan limits are not enforced anywhere yet.** `checkSubscriptionLimit`, `incrementUsage` and `decrementUsage` on `SubscriptionService` have no callers, nothing writes `usage_tracking`, and nothing branches on subscription status — so an `expired` or `cancelled` account keeps the full product. `check_subscription_limit` also ignores `status` and `current_period_end`, and `get_user_subscription` is keyed by _user_, so a gate built on it would block invited teammates (who have no subscription row) and pass owners. An account-scoped entitlement resolver is the prerequisite for enforcing any of it.
+- **Plan limits are enforced through ONE account-scoped resolver** (migration 075): `get_account_entitlement` / `check_account_limit`, wrapped by `EntitlementService` and applied by `EntitlementGuard`. It resolves the plan through `accounts.owner_user_id`, so an invited teammate is entitled by their workspace rather than blocked for having no subscription row of their own — the trap the per-user `check_subscription_limit` (044) fell into. Standing is three-valued: `good`, `grace` (dunning — writes still work) and `lapsed`. ⚠️ It **fails open on failure, not on lapse**: a broken lookup returns "allowed", a successful lookup that says lapsed is honoured. Two kinds of metric, stored differently: monthly FLOW (messages, broadcasts) is counted in `account_usage_monthly` because it cannot be recounted; current STATE (contacts, flows, team members, **AI agents**) is counted live from the table that already holds the truth. `SubscriptionService.checkSubscriptionLimit`/`incrementUsage` and `usage_tracking` are the superseded per-user versions and have no callers.
 - **There is exactly ONE billing surface in the product: Settings → Plan & billing (`?tab=pricing`), and it is owner-only** (`ownerOnly` on `SectionMeta`/`PanelItem` — stricter than `adminOnly`, which admins also pass). `/pricing` is the checkout it hands off to. The old `/admin/subscriptions` page and the `subscription/admin/*` Nest controller are **deleted, not moved** — see below. Cross-tenant billing administration belongs to `apps/admin-panel`.
 - `get_user_subscription()` is `SECURITY DEFINER` and therefore carries **its own authorization** (migration 067): a JWT caller may read only itself; a server connection (`auth.uid() IS NULL`, which is how apps/api connects) may read anyone. Any new SECURITY DEFINER RPC granted to `authenticated` needs the same guard — RLS is bypassed, so the function body is the only check left.
 
@@ -145,7 +145,57 @@ The app is built on the **official Meta WhatsApp Cloud API** (`https://graph.fac
 - **Also implemented across the module:** flows send (`flow-meta-send.service.ts`), template management (`controllers/whatsapp-templates.controller.ts`), media proxy (`controllers/whatsapp-media.controller.ts`), inbound webhook (`services/whatsapp-webhook.service.ts` — parses messages + delivery/read statuses), account connect/register (`services/connect-account.service.ts`).
 - **In the Postman collection but NOT yet implemented:** outbound _mark-as-read_ & _typing indicators_, QR codes, commerce settings, Payments API (SG/IN order messages), analytics, billing, block users, business compliance, deregister, business portfolio. (Read status is only _received_ via webhook, not sent.)
 
-## AI agent (`apps/api/src/ai`, `apps/web/src/app/(dashboard)/agents`)
+## AI agents (`apps/api/src/ai`, `apps/web/src/app/(dashboard)/agents`)
+
+**A workspace runs SEVERAL agents** (`ai_agents`, migration 084). The split that
+makes the rest of this section readable:
+
+- **`ai_configs` is the WORKSPACE row** — the provider and its encrypted key, the
+  credit mode, the embeddings provider/model the stored vectors are bound to. One
+  per account, and the only place a credential lives.
+- **`ai_agents` is one row per agent** — persona, voice, skills, escalation,
+  behaviour, test mode, and `model` (nullable: NULL follows the workspace default).
+  It holds **no key of any kind**, which is what makes an agent safe to duplicate.
+  Every field here used to be a column on `ai_configs`; 084 backfilled one agent per
+  existing row and dropped the originals.
+
+⚠️ **The provider is never per-agent.** There is one stored key per workspace and it
+belongs to one provider, so an agent may choose a MODEL and nothing more — and on
+platform credits not even that (one key serves every platform workspace, so a
+per-agent override would let one tenant point our credential at an expensive tier).
+
+**Routing — how an inbound message picks an agent** (`AgentResolverService`, pinned by
+`agent-resolver.service.test.ts`):
+
+1. **Stickiness first.** `conversations.ai_agent_id` is set on the first AI reply and
+   consulted before anything else. Without it, routing is re-evaluated per MESSAGE and
+   a reorder changes who the customer is talking to mid-sentence.
+2. Otherwise: active agents whose `channels` contains the conversation's channel — or
+   whose `channels` is **EMPTY, meaning any channel** — in `priority` order, first
+   wins. Empty is permissive here (unlike `automations.channels`) because every agent
+   migrated from `ai_configs` carries an empty array and must keep answering everyone.
+3. **No fallback beyond that.** An agent scoped to Instagram must not answer a
+   WhatsApp thread just because it is the only one; the thread stays for a human.
+
+**The knowledge library and custom actions stay WORKSPACE-level** — one upload, one
+embedding cost, one reindex — and each agent selects from them
+(`ai_agent_knowledge` / `ai_agent_action_links`). ⚠️ `uses_all_knowledge` /
+`uses_all_actions` are booleans **because an empty link table must not mean
+"everything"**: unticking the last document would otherwise silently re-grant the whole
+library (the same trap 076 documents for segment rules). The selection is pushed INTO
+`match_ai_knowledge_semantic` / `_fts` as `p_document_ids`, never applied to their
+results — post-filtering a top-k would make "this agent may not read those" look
+identical to "nothing relevant was found".
+
+**Attribution:** `messages.ai_agent_id` is written at INSERT time by each channel's own
+persist step (threaded through `ChannelSenderService.sendText`), and
+`conversations.ai_handoff_at` records when the bot gave up. That is what the per-agent
+numbers on the list are counted from — no counter, so no drift.
+
+**Agent count is a plan limit** (`subscription_plans.max_ai_agents`, NULL = unlimited):
+Starter 1, Growth 5, Enterprise unlimited, checked through `check_account_limit` like
+any other current-state metric. Paused agents still count — a cap you can dodge by
+pausing is not a cap.
 
 **Two ways to power it, chosen per workspace** (`ai_configs.credit_mode`, migration 072):
 
@@ -242,11 +292,22 @@ Everything below is account-scoped configuration on `ai_configs` (one row per wo
 - **Match RPCs stay `SECURITY INVOKER`** (migration 032 fixed a cross-tenant read by
   changing them from DEFINER). They are granted to `authenticated`; as DEFINER any
   signed-in user could pass a foreign `p_account_id` through PostgREST.
-- Web: `components/agents/agent-studio.tsx` — tabs are Persona / Knowledge / Skills /
-  Actions / Behaviour / Provider, and the test panel is a **drawer** so it is reachable
-  from whichever form you just edited. `?tab=` is the deep-link contract (`setup` still
-  maps to Provider). Uploads are base64 in JSON (this API has no multipart parser,
-  same as `POST /ads/media`); PDF/DOCX text is extracted with `pdf-parse` / `mammoth`.
+- **Web is a list plus a studio.** `/agents` (`components/agents/agents-list.tsx`) is a
+  LIST rather than a card grid on purpose: its order **is** the routing order, and a
+  grid that reflows by column would show that fact differently at every window width.
+  It carries the plan meter, the create dialog (blank + role templates from
+  `lib/agent-templates.ts`) and the workspace-level Provider & credits drawer.
+  `/agents/[id]` is the studio: tabs are Persona / Knowledge / Skills / Actions /
+  Behaviour / **Routing**, and the test panel is a **drawer** so it is reachable from
+  whichever form you just edited. `?tab=` is still the deep-link contract (`setup` and
+  `provider` now map to Routing, since the key moved to the workspace).
+- ⚠️ **`agent-readiness.tsx` is a MIRROR of the run-time gates**, in the order
+  `AiReplyService` checks them — it exists to answer "why is my bot silent?" without
+  reading logs. A gate added there and not here makes the checklist lie, which is worse
+  than not having one. "Drafts only" and test mode are deliberately NOT blockers: both
+  are legitimate ways to run an agent.
+- Uploads are base64 in JSON (this API has no multipart parser, same as
+  `POST /ads/media`); PDF/DOCX text is extracted with `pdf-parse` / `mammoth`.
 
 ## Meta Ads Manager (`apps/api/src/ads`, `apps/web/src/app/(dashboard)/ads`) — BUILT, UNRELEASED
 

@@ -74,6 +74,18 @@ interface BaseArgs {
 }
 
 /**
+ * Attribution for a reply an AI agent wrote (migration 084).
+ *
+ * Written at INSERT time by each channel's own persist step rather than
+ * patched on afterwards: the row is the only record that this agent
+ * answered, and a follow-up UPDATE would have to guess which of the
+ * bot messages on the thread it had just created.
+ */
+interface AiAttribution {
+  aiAgentId?: string | null;
+}
+
+/**
  * Routes an outbound message to whichever platform its conversation
  * lives on.
  *
@@ -143,7 +155,7 @@ export class ChannelSenderService {
   }
 
   async sendText(
-    args: BaseArgs & { text: string },
+    args: BaseArgs & AiAttribution & { text: string },
   ): Promise<ChannelSendResult> {
     const channel = await this.channelOf(args.accountId, args.conversationId);
 
@@ -152,6 +164,7 @@ export class ChannelSenderService {
         accountId: args.accountId,
         conversationId: args.conversationId,
         text: args.text,
+        aiAgentId: args.aiAgentId,
       });
       return { messageId: result.messageId };
     }
@@ -161,6 +174,7 @@ export class ChannelSenderService {
         accountId: args.accountId,
         conversationId: args.conversationId,
         text: args.text,
+        aiAgentId: args.aiAgentId,
       });
       return { messageId: result.messageId };
     }
@@ -170,6 +184,7 @@ export class ChannelSenderService {
       conversationId: args.conversationId,
       contactId: args.contactId,
       text: args.text,
+      aiAgentId: args.aiAgentId,
     });
     return { messageId: whatsapp_message_id };
   }

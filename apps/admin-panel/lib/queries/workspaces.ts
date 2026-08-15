@@ -161,8 +161,18 @@ const WORKSPACE_COLUMNS = Prisma.sql`
   ac.credit_mode as "creditMode",
   w.balance as "creditBalance",
   ${SPENT_30D_EXPR} as "creditsSpent30d",
-  coalesce(ac.is_active, false) as "aiActive",
-  coalesce(ac.auto_reply_enabled, false) as "autoReplyEnabled",
+  -- Since migration 084 a workspace has MANY agents, so these are
+  -- "any of them", not "the one". Existence rather than a count: the
+  -- list column is a dot, and a number nobody can act on in a list is
+  -- noise.
+  exists (
+    select 1 from ai_agents ag
+     where ag.account_id = a.id and ag.is_active
+  ) as "aiActive",
+  exists (
+    select 1 from ai_agents ag
+     where ag.account_id = a.id and ag.is_active and ag.auto_reply_enabled
+  ) as "autoReplyEnabled",
   wc.status as "whatsappStatus",
   (select count(*) from contacts c where c.account_id = a.id)::int as "contacts",
   (
@@ -283,7 +293,9 @@ export async function workspaceTotals(): Promise<WorkspaceTotals> {
       (
         select count(*) from whatsapp_config where status = 'connected'
       )::int as "whatsappConnected",
-      (select count(*) from ai_configs where is_active)::int as "aiActive",
+      (
+        select count(distinct account_id) from ai_agents where is_active
+      )::int as "aiActive",
       (
         select count(*) from ai_configs where credit_mode = 'platform'
       )::int as "onPlatformCredits",
@@ -372,11 +384,15 @@ export type WorkspaceAi = {
   model: string | null;
   creditMode: CreditMode;
   hasOwnKey: boolean;
-  isActive: boolean;
-  autoReplyEnabled: boolean;
-  testMode: boolean;
-  testNumbers: string[];
-  agentName: string | null;
+  /**
+   * Agent counts, not agent facts. A workspace has many agents since
+   * migration 084, so "is the AI on" is no longer a yes/no about one
+   * row — it is how many of several are switched on.
+   */
+  agents: number;
+  activeAgents: number;
+  autoReplyAgents: number;
+  testModeAgents: number;
   embeddingsModel: string | null;
   knowledgeDocs: number;
   customActions: number;
@@ -615,29 +631,46 @@ async function listOrders(
  * four" is how the whole key ends up in a log.
  */
 async function getAi(accountId: string): Promise<WorkspaceAi | null> {
+  // Anchored on `accounts`, not on `ai_configs`: a workspace can have
+  // agents and no config row at all (it runs on the platform key and has
+  // never pasted one), and anchoring on the config would report that
+  // workspace as having no AI whatsoever.
   const [row] = await prisma.$queryRaw<WorkspaceAi[]>(Prisma.sql`
     select
       ac.provider as "provider",
       ac.model as "model",
-      ac.credit_mode as "creditMode",
+      coalesce(ac.credit_mode, 'platform') as "creditMode",
       (ac.api_key is not null) as "hasOwnKey",
-      ac.is_active as "isActive",
-      ac.auto_reply_enabled as "autoReplyEnabled",
-      ac.test_mode as "testMode",
-      ac.test_numbers as "testNumbers",
-      ac.agent_name as "agentName",
+      (select count(*) from ai_agents ag where ag.account_id = a.id)::int
+        as "agents",
+      (
+        select count(*) from ai_agents ag
+         where ag.account_id = a.id and ag.is_active
+      )::int as "activeAgents",
+      (
+        select count(*) from ai_agents ag
+         where ag.account_id = a.id and ag.is_active and ag.auto_reply_enabled
+      )::int as "autoReplyAgents",
+      (
+        select count(*) from ai_agents ag
+         where ag.account_id = a.id and ag.test_mode
+      )::int as "testModeAgents",
       ac.embeddings_model as "embeddingsModel",
       (
         select count(*) from ai_knowledge_documents d
-         where d.account_id = ac.account_id
+         where d.account_id = a.id
       )::int as "knowledgeDocs",
       (
         select count(*) from ai_agent_actions ag
-         where ag.account_id = ac.account_id
+         where ag.account_id = a.id
       )::int as "customActions",
-      ac.updated_at as "updatedAt"
-    from ai_configs ac
-    where ac.account_id = ${accountId}::uuid
+      greatest(
+        ac.updated_at,
+        (select max(ag.updated_at) from ai_agents ag where ag.account_id = a.id)
+      ) as "updatedAt"
+    from accounts a
+    left join ai_configs ac on ac.account_id = a.id
+    where a.id = ${accountId}::uuid
   `);
   return row ?? null;
 }

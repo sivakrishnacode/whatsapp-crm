@@ -54,6 +54,18 @@ export type AgentSkills = Record<string, AgentSkillState>;
 export type AiCreditMode = 'platform' | 'byok';
 
 export interface AiConfig {
+  /**
+   * Which agent this config IS (migration 084). Null only for the
+   * implicit default a workspace gets before it has created one — see
+   * `platformOnlyConfig` in lib/config.ts.
+   */
+  agentId: string | null;
+  /** The agent's list name ("Sales"), for logs and attribution. */
+  agentLabel: string | null;
+  /** Documents this agent may read; null means the whole library. */
+  knowledgeDocumentIds: string[] | null;
+  /** Actions this agent may call; null means all of them. */
+  actionIds: string[] | null;
   provider: AiProvider;
   model: string;
   apiKey: string;

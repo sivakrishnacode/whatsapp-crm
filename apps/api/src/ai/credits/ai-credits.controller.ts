@@ -200,8 +200,6 @@ export class AiCreditsController {
           provider: 'gemini',
           model: 'gemini-3.5-flash-lite',
           credit_mode: mode,
-          is_active: true,
-          auto_reply_enabled: false,
         },
       });
     }

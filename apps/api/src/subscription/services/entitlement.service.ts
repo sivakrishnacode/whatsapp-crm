@@ -29,7 +29,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 export type Standing = 'good' | 'grace' | 'lapsed';
 
 export type LimitType =
-  'messages' | 'broadcasts' | 'contacts' | 'flows' | 'team_members' | 'storage';
+  | 'messages'
+  | 'broadcasts'
+  | 'contacts'
+  | 'flows'
+  | 'team_members'
+  | 'storage'
+  | 'ai_agents';
 
 /** Metrics that are counted as they happen (the rest are counted live). */
 export type UsageMetric = 'messages' | 'broadcasts';
@@ -47,6 +53,8 @@ export interface Entitlement {
   maxBroadcastsMonthly: number | null;
   maxFlows: number | null;
   maxTeamMembers: number | null;
+  /** Null is unlimited, as `max_flows` encodes it (migration 084). */
+  maxAiAgents: number | null;
 }
 
 export interface LimitCheck {
@@ -78,6 +86,7 @@ interface EntitlementRow {
   max_broadcasts_monthly: number | null;
   max_flows: number | null;
   max_team_members: number | null;
+  max_ai_agents: number | null;
 }
 
 interface LimitRow {
@@ -105,6 +114,7 @@ const LIMIT_LABELS: Record<LimitType, string> = {
   flows: 'active flows',
   team_members: 'team members',
   storage: 'storage',
+  ai_agents: 'AI agents',
 };
 
 @Injectable()
@@ -119,7 +129,7 @@ export class EntitlementService {
         SELECT plan_name, plan_display_name, status::text AS status, standing,
                writes_allowed, trial_end_at, current_period_end,
                max_contacts, max_messages_monthly, max_broadcasts_monthly,
-               max_flows, max_team_members
+               max_flows, max_team_members, max_ai_agents
           FROM get_account_entitlement(${accountId}::uuid)
       `;
       const row = rows[0];
@@ -138,6 +148,7 @@ export class EntitlementService {
         maxBroadcastsMonthly: row.max_broadcasts_monthly,
         maxFlows: row.max_flows,
         maxTeamMembers: row.max_team_members,
+        maxAiAgents: row.max_ai_agents,
       };
     } catch (err) {
       this.logger.error(

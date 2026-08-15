@@ -38,12 +38,79 @@ export interface SkillState {
   config: Record<string, unknown>
 }
 
+/** A conversation channel an agent can be scoped to. */
+export type AgentChannel = 'whatsapp' | 'instagram' | 'web'
+
+/** Everything an agent row on the list needs. */
+export interface AgentSummary {
+  id: string
+  name: string
+  channels: AgentChannel[]
+  priority: number
+  is_active: boolean
+  auto_reply_enabled: boolean
+  test_mode: boolean
+  test_numbers: string[]
+  agent_name: string | null
+  model: string | null
+  /** What it will actually run on, resolved as the runtime resolves it. */
+  resolved_provider: string
+  /** Null while the workspace is on platform credits — the model is ours. */
+  resolved_model: string | null
+  business_description: string | null
+  uses_all_knowledge: boolean
+  uses_all_actions: boolean
+  updated_at: string
+  stats: { replies: number; conversations: number; handoffs: number }
+}
+
+export interface AgentTemplateSummary {
+  id: string
+  label: string
+  description: string
+  /** Lucide icon name; mapped to a component in the create dialog. */
+  icon: string
+  name: string
+  skills: string[]
+}
+
+export interface AgentListResponse {
+  agents: AgentSummary[]
+  stats_window_days: number
+  workspace: {
+    configured: boolean
+    has_key: boolean
+    provider: AiProvider | null
+    model: string | null
+    credit_mode: 'platform' | 'byok'
+  }
+  limit: {
+    used: number
+    /** Null is unlimited, exactly as the plans table encodes it. */
+    max: number | null
+    reached: boolean
+    standing: 'good' | 'grace' | 'lapsed'
+  }
+  templates: AgentTemplateSummary[]
+  channels: AgentChannel[]
+}
+
 export interface AgentStudio {
+  /** Whether the WORKSPACE has somewhere to send requests. */
   configured: boolean
   has_key?: boolean
   has_embeddings_key?: boolean
-  provider?: AiProvider
-  model?: string
+  credit_mode?: 'platform' | 'byok'
+  provider?: AiProvider | null
+  /** The workspace default this agent falls back to. */
+  workspace_model?: string | null
+  /** False on platform credits: the model is ours to choose, not theirs. */
+  model_editable?: boolean
+  id: string
+  name: string
+  channels: AgentChannel[]
+  priority: number
+  model?: string | null
   is_active?: boolean
   auto_reply_enabled?: boolean
   auto_reply_max_per_conversation?: number
@@ -66,12 +133,18 @@ export interface AgentStudio {
   skills?: Record<string, SkillState>
   test_mode?: boolean
   test_numbers?: string[]
+  uses_all_knowledge: boolean
+  uses_all_actions: boolean
+  knowledge_document_ids: string[]
+  action_ids: string[]
   updated_at?: string
   skills_registry: SkillDefinition[]
   knowledge: {
     total: number
     by_status: Partial<Record<KnowledgeStatus, number>>
     needs_reindex: number
+    /** How many of the library this agent actually reads. */
+    selected: number
   }
   actions_count: number
   defaults: Record<AiProvider, string>

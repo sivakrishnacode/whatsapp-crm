@@ -16,13 +16,19 @@ import {
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-interface AiConfigStatus {
-  configured: boolean;
-  is_active?: boolean;
-  auto_reply_enabled?: boolean;
-  provider?: string;
-  model?: string;
-  auto_reply_max_per_conversation?: number;
+/** `GET /api/ai/agents` — the list, not one agent (migration 084). */
+interface AgentsStatus {
+  agents: Array<{
+    id: string;
+    name: string;
+    channels: string[];
+    is_active: boolean;
+    auto_reply_enabled: boolean;
+    resolved_provider: string;
+    resolved_model: string | null;
+    auto_reply_max_per_conversation?: number;
+  }>;
+  workspace: { configured: boolean };
 }
 
 interface Automation {
@@ -37,10 +43,15 @@ interface Automation {
  * Which agent answers an Instagram DM, and in what order.
  *
  * This page deliberately does NOT host a second AI configuration. The
- * assistant is account-level (`ai_configs` is UNIQUE per account) and
- * shared with WhatsApp — duplicating the setup form here would imply a
- * per-channel model/key that does not exist, and two forms writing one
- * row is a bug waiting to happen.
+ * agents are workspace-level and shared with WhatsApp — duplicating the
+ * setup form here would imply a per-channel model and key that do not
+ * exist, and two forms writing one row is a bug waiting to happen.
+ *
+ * Since migration 084 a workspace has several agents, so what this page
+ * reports is which of them would answer an Instagram DM: an agent scoped
+ * to Instagram, or one scoped to no channel at all (which means every
+ * channel). The FIRST such agent in routing order is the one that
+ * answers, which is why only that one is named.
  *
  * What is genuinely Instagram-specific is the *behaviour*: the reply
  * window, echo suppression, and which handler wins. That is what this
@@ -48,7 +59,7 @@ interface Automation {
  * on and links to the shared editors.
  */
 export function InstagramDmAgents() {
-  const [ai, setAi] = useState<AiConfigStatus | null>(null);
+  const [ai, setAi] = useState<AgentsStatus | null>(null);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -56,7 +67,7 @@ export function InstagramDmAgents() {
     let cancelled = false;
     (async () => {
       const [aiRes, autoRes] = await Promise.allSettled([
-        fetch('/api/ai/config', { cache: 'no-store' }).then((r) => r.json()),
+        fetch('/api/ai/agents', { cache: 'no-store' }).then((r) => r.json()),
         fetch('/api/automations', { cache: 'no-store' }).then((r) => r.json()),
       ]);
       if (cancelled) return;
@@ -81,7 +92,15 @@ export function InstagramDmAgents() {
     );
   }
 
-  const aiLive = Boolean(ai?.configured && ai?.is_active && ai?.auto_reply_enabled);
+  // The agent an Instagram DM would actually reach: active, and either
+  // scoped to Instagram or scoped to nothing (= every channel). The list
+  // arrives in routing order, so the first match is the one that answers.
+  const igAgent = ai?.agents.find(
+    (a) =>
+      a.is_active &&
+      (a.channels.length === 0 || a.channels.includes('instagram')),
+  );
+  const aiLive = Boolean(igAgent?.auto_reply_enabled);
 
   // The engines that can answer an inbound DM, in the order the webhook
   // consults them. Message-producing automations are the ones that
@@ -145,19 +164,21 @@ export function InstagramDmAgents() {
             live={aiLive}
             href="/agents"
             description={
-              !ai?.configured
-                ? 'Not set up yet. The AI assistant answers anything the rules above did not.'
+              !igAgent
+                ? (ai?.agents.length ?? 0) === 0
+                  ? 'No agents yet. An agent answers anything the rules above did not.'
+                  : 'No active agent covers Instagram — the agents you have are scoped to other channels.'
                 : aiLive
-                  ? `${ai.model ?? ai.provider ?? 'Configured'} · replies at most ${ai.auto_reply_max_per_conversation ?? 3} times per conversation.`
-                  : 'Configured but auto-reply is off, so it will not answer DMs on its own.'
+                  ? `${igAgent.name} · ${igAgent.resolved_model ?? 'built-in AI'} · replies at most ${igAgent.auto_reply_max_per_conversation ?? 3} times per conversation.`
+                  : `${igAgent.name} covers Instagram, but auto-reply is off — it drafts rather than answering.`
             }
           />
         </ol>
 
         <p className="mt-4 text-xs text-muted-foreground">
-          These are shared with WhatsApp — one assistant, one set of rules,
-          working across both channels. Changing them here changes them
-          everywhere.
+          Agents and rules are shared with WhatsApp. An agent scoped to no
+          channel answers all of them; scope one to Instagram to give DMs
+          their own voice.
         </p>
       </div>
 

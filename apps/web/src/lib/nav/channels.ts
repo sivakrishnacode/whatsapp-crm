@@ -389,7 +389,10 @@ const WEB_PANEL: PanelGroup[] = [
         // claiming it here made the rail's own AI Agents row resolve to the
         // Web channel panel instead of itself. `nav-config.test.ts` catches
         // exactly this.
-        href: '/agents?tab=knowledge',
+        // Since migration 084 knowledge is a workspace library that each
+        // agent selects from, so there is no single agent to deep-link
+        // into — the list is the honest destination.
+        href: '/agents',
       },
     ],
   },

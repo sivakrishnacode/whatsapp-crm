@@ -27,9 +27,16 @@ import { cn } from '@/lib/utils';
 import { useCan } from '@/hooks/use-can';
 import {
   KNOWLEDGE_STATUS_LABELS,
+  type AgentStudio,
   type KnowledgeDocument,
   type KnowledgeList,
 } from '@/lib/agents/types';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  LibraryScope,
+  SelectionBar,
+  useLibrarySelection,
+} from './library-scope';
 
 type Mode = null | 'paste' | 'crawl' | 'upload';
 
@@ -55,8 +62,25 @@ const SOURCE_ICON = {
  * document whose embedding call failed looked saved while being invisible
  * to semantic search, which reaches support as "the AI ignores my docs".
  */
-export function AgentKnowledge({ onChanged }: { onChanged?: () => void }) {
-  const canEdit = useCan('edit-settings');
+export function AgentKnowledge({
+  studio,
+  canEdit: canEditProp,
+  onChanged,
+  onSaveSelection,
+  onUseAll,
+}: {
+  studio: AgentStudio;
+  canEdit?: boolean;
+  onChanged?: () => void;
+  /** Replace which documents THIS agent reads. */
+  onSaveSelection: (documentIds: string[]) => Promise<boolean>;
+  /** Go back to "every document in the workspace". */
+  onUseAll: () => Promise<boolean> | void;
+}) {
+  const canEditFallback = useCan('edit-settings');
+  const canEdit = canEditProp ?? canEditFallback;
+  const selection = useLibrarySelection(studio.knowledge_document_ids);
+  const [savingScope, setSavingScope] = useState(false);
   const [data, setData] = useState<KnowledgeList | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -234,8 +258,41 @@ export function AgentKnowledge({ onChanged }: { onChanged?: () => void }) {
     );
   }
 
+  const picking = !studio.uses_all_knowledge;
+
   return (
     <div className="space-y-5">
+      {/* Which of the shared library this agent may read. First, because
+          it changes what every row below means. */}
+      <LibraryScope
+        noun="documents"
+        usesAll={studio.uses_all_knowledge}
+        selectedCount={selection.selected.length}
+        totalCount={docs.length}
+        canEdit={canEdit}
+        saving={savingScope}
+        onUseAll={async () => {
+          setSavingScope(true);
+          await onUseAll();
+          selection.clean();
+          setSavingScope(false);
+        }}
+        onUseSelected={async () => {
+          setSavingScope(true);
+          // Narrowing starts from everything rather than from nothing:
+          // "only these" immediately after "everything" should mean the
+          // list you are looking at, not an agent that suddenly knows
+          // nothing at all.
+          await onSaveSelection(
+            selection.selected.length > 0
+              ? selection.selected
+              : docs.map((d) => d.id),
+          );
+          selection.clean();
+          setSavingScope(false);
+        }}
+      />
+
       {/* Retrieval mode — the single most confusing thing about a
           knowledge base is whether it searches by meaning or by keyword. */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
@@ -351,6 +408,15 @@ export function AgentKnowledge({ onChanged }: { onChanged?: () => void }) {
 
             return (
               <li key={doc.id} className="flex items-start gap-3 p-4">
+                {picking && (
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={selection.selected.includes(doc.id)}
+                    disabled={!canEdit}
+                    onCheckedChange={() => selection.toggle(doc.id)}
+                    aria-label={`Let this agent read ${doc.title}`}
+                  />
+                )}
                 <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 
                 <button
@@ -424,6 +490,21 @@ export function AgentKnowledge({ onChanged }: { onChanged?: () => void }) {
             );
           })}
         </ul>
+      )}
+
+      {picking && selection.dirty && (
+        <SelectionBar
+          count={selection.selected.length}
+          noun="documents"
+          saving={savingScope}
+          onCancel={selection.reset}
+          onSave={async () => {
+            setSavingScope(true);
+            const ok = await onSaveSelection(selection.selected);
+            if (ok) selection.clean();
+            setSavingScope(false);
+          }}
+        />
       )}
 
       {!canEdit && (

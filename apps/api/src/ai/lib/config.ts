@@ -20,20 +20,27 @@ import type {
 const TONES: AgentTone[] = ['friendly', 'professional', 'concise', 'playful'];
 const LENGTHS: ResponseLength[] = ['short', 'medium', 'long'];
 
-/** Every column the runtime needs. Kept in one place so the three
- *  callers (draft, playground, auto-reply bot) cannot drift apart. */
-const CONFIG_SELECT = {
+/** The workspace row: the credential and what it is bound to. */
+const WORKSPACE_SELECT = {
   provider: true,
   model: true,
   api_key: true,
   credit_mode: true,
-  system_prompt: true,
-  is_active: true,
-  auto_reply_enabled: true,
-  auto_reply_max_per_conversation: true,
   embeddings_api_key: true,
   embeddings_provider: true,
   embeddings_model: true,
+} as const;
+
+/** Every agent column the runtime needs. Kept in one place so the three
+ *  callers (draft, playground, auto-reply bot) cannot drift apart. */
+const AGENT_SELECT = {
+  id: true,
+  name: true,
+  model: true,
+  is_active: true,
+  auto_reply_enabled: true,
+  auto_reply_max_per_conversation: true,
+  system_prompt: true,
   agent_name: true,
   greeting_message: true,
   business_website: true,
@@ -50,6 +57,8 @@ const CONFIG_SELECT = {
   skills: true,
   test_mode: true,
   test_numbers: true,
+  uses_all_knowledge: true,
+  uses_all_actions: true,
 } as const;
 
 /** Column values come from a CHECK-constrained column, but a bad row (or
@@ -147,6 +156,10 @@ function resolveSource(args: {
  */
 function platformOnlyConfig(balance: number): AiConfig {
   return {
+    agentId: null,
+    agentLabel: null,
+    knowledgeDocumentIds: null,
+    actionIds: null,
     provider: 'gemini',
     model: platformModel(),
     apiKey: platformApiKey()!,
@@ -187,34 +200,163 @@ function platformOnlyConfig(balance: number): AiConfig {
   };
 }
 
+/**
+ * Which agent should answer here?
+ *
+ * ⚠️ ORDER IS THE FEATURE, and it is the same order in both directions:
+ *
+ *   1. An explicit `agentId` — the studio, the playground, and a job
+ *      that already decided. Pinned to the account, because the id
+ *      arrives from a request body and Prisma bypasses RLS.
+ *   2. The channel, in `priority` order. An EMPTY `channels` array means
+ *      "any channel", which is what every agent migrated from
+ *      `ai_configs` carries — so a workspace that never touches routing
+ *      keeps exactly the behaviour it had.
+ *   3. Nothing else. No "first agent we find" fallback: an agent scoped
+ *      to Instagram must not answer a WhatsApp thread because it happens
+ *      to be the only one. Silence is recoverable; the wrong agent
+ *      talking to a customer is not.
+ *
+ * Stickiness (`conversations.ai_agent_id`) is resolved by the CALLER,
+ * which is the only place that knows the conversation — see
+ * `AgentResolverService`. It passes the result here as `agentId`.
+ */
+async function selectAgent(
+  prisma: PrismaService,
+  accountId: string,
+  opts: {
+    agentId?: string | null;
+    channel?: string | null;
+    requireActive: boolean;
+  },
+) {
+  const { agentId, channel, requireActive } = opts;
+
+  if (agentId) {
+    return prisma.ai_agents.findFirst({
+      where: { id: agentId, account_id: accountId },
+      select: AGENT_SELECT,
+    });
+  }
+
+  return prisma.ai_agents.findFirst({
+    where: {
+      account_id: accountId,
+      ...(requireActive ? { is_active: true } : {}),
+      ...(channel
+        ? {
+            OR: [
+              { channels: { isEmpty: true } },
+              { channels: { has: channel } },
+            ],
+          }
+        : {}),
+    },
+    orderBy: [{ priority: 'asc' }, { created_at: 'asc' }],
+    select: AGENT_SELECT,
+  });
+}
+
+/** The agent's own library selection, or null for "the whole library". */
+async function loadScoping(
+  prisma: PrismaService,
+  agent: { id: string; uses_all_knowledge: boolean; uses_all_actions: boolean },
+): Promise<Pick<AiConfig, 'knowledgeDocumentIds' | 'actionIds'>> {
+  const [docs, actions] = await Promise.all([
+    agent.uses_all_knowledge
+      ? Promise.resolve(null)
+      : prisma.ai_agent_knowledge.findMany({
+          where: { agent_id: agent.id },
+          select: { document_id: true },
+        }),
+    agent.uses_all_actions
+      ? Promise.resolve(null)
+      : prisma.ai_agent_action_links.findMany({
+          where: { agent_id: agent.id },
+          select: { action_id: true },
+        }),
+  ]);
+
+  return {
+    // An empty array is NOT null here: an agent that has narrowed its
+    // library to nothing reads nothing, and quietly widening that back
+    // to the whole workspace would be the opposite of what was asked.
+    knowledgeDocumentIds: docs ? docs.map((d) => d.document_id) : null,
+    actionIds: actions ? actions.map((a) => a.action_id) : null,
+  };
+}
+
+export interface LoadAiConfigOptions {
+  /** Skip agents that are switched off. Default true. */
+  requireActive?: boolean;
+  /** Answer as THIS agent. Pinned to the account before it is trusted. */
+  agentId?: string | null;
+  /** Route by conversation channel when no agentId is given. */
+  channel?: string | null;
+}
+
 export async function loadAiConfig(
   prisma: PrismaService,
   accountId: string,
-  opts: { requireActive?: boolean } = {},
+  opts: LoadAiConfigOptions = {},
 ): Promise<AiConfig | null> {
-  const { requireActive = true } = opts;
-  const config = await prisma.ai_configs.findUnique({
-    where: { account_id: accountId },
-    select: CONFIG_SELECT,
-  });
+  const { requireActive = true, agentId = null, channel = null } = opts;
 
-  const creditMode = asCreditMode(config?.credit_mode);
+  const [workspace, agent] = await Promise.all([
+    prisma.ai_configs.findUnique({
+      where: { account_id: accountId },
+      select: WORKSPACE_SELECT,
+    }),
+    selectAgent(prisma, accountId, { agentId, channel, requireActive }),
+  ]);
+
+  const creditMode = asCreditMode(workspace?.credit_mode);
   const balance = await readBalance(prisma, accountId);
 
-  // No row at all is no longer "AI is unavailable": a workspace that has
-  // never opened the agent screen still has welcome credits and can be
-  // drafted for. Only the absence of ANY usable key means unavailable.
-  if (!config) {
+  // No agent at all is no longer "AI is unavailable": a workspace that
+  // has never opened the agent screen still has welcome credits and can
+  // be drafted for. Only the absence of ANY usable key means
+  // unavailable. A workspace whose agents are all switched off gets the
+  // same treatment — drafting on request is not answering customers.
+  if (!agent) {
     if (!platformApiKey()) return null;
+    if (workspace?.api_key) {
+      // They pay their own provider, so use their key rather than
+      // spending credits they did not choose to spend.
+      try {
+        return {
+          ...platformOnlyConfig(balance),
+          provider: (workspace.provider as AiProvider) ?? 'gemini',
+          model: workspace.model,
+          apiKey: decrypt(workspace.api_key),
+          source: 'byok',
+          creditMode,
+        };
+      } catch {
+        // Fall through to the platform key: this path is only ever a
+        // draft-on-request, and a broken stored key should not take the
+        // whole feature away.
+      }
+    }
     return platformOnlyConfig(balance);
   }
 
-  if (requireActive && !config.is_active) return null;
+  if (requireActive && !agent.is_active) return null;
+
+  const config = agent;
+  const scoping = await loadScoping(prisma, agent);
+
+  // ⚠️ Spreading the two rows together would be wrong here: BOTH carry a
+  // `model` column and the agent's is NULL by default, meaning "follow
+  // the workspace". A spread would resolve that to null and every agent
+  // would silently lose its model.
+  const workspaceModel = workspace?.model ?? null;
+  const agentModel = agent.model?.trim() || null;
 
   let ownKey: string | null = null;
-  if (config.api_key) {
+  if (workspace?.api_key) {
     try {
-      ownKey = decrypt(config.api_key);
+      ownKey = decrypt(workspace.api_key);
     } catch {
       // A key that will not decrypt is not a key. Surfacing it as
       // "unconfigured" would be a lie; letting it fall through to the
@@ -239,9 +381,9 @@ export async function loadAiConfig(
   if (source === 'platform' && !platformKey) return null;
 
   let embeddingsApiKey: string | null = null;
-  if (config.embeddings_api_key) {
+  if (workspace?.embeddings_api_key) {
     try {
-      embeddingsApiKey = decrypt(config.embeddings_api_key);
+      embeddingsApiKey = decrypt(workspace.embeddings_api_key);
     } catch {
       console.error(
         `[ai config] embeddings key for account ${accountId} could not be decrypted — check ENCRYPTION_KEY; semantic search is disabled until it is re-entered.`,
@@ -264,8 +406,19 @@ export async function loadAiConfig(
   }
 
   return {
-    provider: onPlatform ? 'gemini' : (config.provider as AiProvider),
-    model: onPlatform ? platformModel() : config.model,
+    agentId: agent.id,
+    agentLabel: agent.name,
+    ...scoping,
+    provider: onPlatform
+      ? 'gemini'
+      : ((workspace?.provider as AiProvider) ?? 'openai'),
+    // The agent's model when it has one, else the workspace default. On
+    // the platform key it is neither: one key serves every platform
+    // workspace, so the model is ours to choose and a per-agent override
+    // would let one tenant point our credential at an expensive tier.
+    model: onPlatform
+      ? platformModel()
+      : (agentModel ?? workspaceModel ?? platformModel()),
     apiKey: onPlatform ? platformKey! : ownKey!,
     source,
     creditMode,
@@ -277,10 +430,10 @@ export async function loadAiConfig(
     embeddingsApiKey,
     embeddingsProvider: lendPlatformEmbeddings
       ? 'gemini'
-      : asEmbeddingsProvider(config.embeddings_provider),
+      : asEmbeddingsProvider(workspace?.embeddings_provider),
     embeddingsModel: lendPlatformEmbeddings
       ? platformEmbeddingsModel()
-      : config.embeddings_model,
+      : (workspace?.embeddings_model ?? null),
     profile: {
       agentName: config.agent_name,
       greetingMessage: config.greeting_message,

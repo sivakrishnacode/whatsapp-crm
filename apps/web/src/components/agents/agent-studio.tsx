@@ -1,14 +1,16 @@
 'use client';
 
 import { useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  Bot,
+  ArrowLeft,
   BookOpen,
-  KeyRound,
+  Bot,
   Loader2,
   MessageSquare,
   Plug,
+  Route,
   SlidersHorizontal,
   Sparkles,
   Zap,
@@ -34,57 +36,73 @@ import { AgentSkills } from './agent-skills';
 import { AgentKnowledge } from './agent-knowledge';
 import { AgentActions } from './agent-actions';
 import { AgentBehaviour } from './agent-behaviour';
+import { AgentRouting } from './agent-routing';
+import { AgentReadiness, type StudioTab } from './agent-readiness';
 import { AiPlayground } from './ai-playground';
-import { AiConfig } from '@/components/settings/ai-config';
 
-type Tab = 'persona' | 'knowledge' | 'skills' | 'actions' | 'behaviour' | 'provider';
-
-const TAB_QUERY: Record<string, Tab> = {
+const TAB_QUERY: Record<string, StudioTab> = {
   persona: 'persona',
   knowledge: 'knowledge',
   skills: 'skills',
   actions: 'actions',
   behaviour: 'behaviour',
-  provider: 'provider',
-  // The Web channel panel and older links point at these.
-  setup: 'provider',
+  routing: 'routing',
+  // The Web channel panel and older links point at these. `setup` used
+  // to mean the provider key, which is now a workspace setting reached
+  // from the agent list — Routing is the nearest thing that is still
+  // about this agent.
+  setup: 'routing',
+  provider: 'routing',
   playground: 'persona',
 };
 
 /**
  * ============================================================
- * Agent Studio.
+ * Agent Studio — one agent.
  *
  * The tabs follow the order someone actually builds an agent in — who it
  * is, what it knows, what it can do, what it can reach, when it stops,
- * what powers it — rather than grouping by which table a field lives in.
+ * where it answers — rather than grouping by which table a field lives
+ * in.
+ *
+ * The header carries a READINESS CHECKLIST rather than a status word
+ * alone, because "why is my bot silent?" is the question this screen
+ * exists to answer and the reasons are spread across five tabs. It
+ * mirrors the run-time gates exactly (see agent-readiness.tsx).
  *
  * The test panel is a drawer, not a tab: you want to try a change
  * immediately after making it, and a tab would mean leaving the form you
  * just edited. It is reachable from every tab for the same reason.
  * ============================================================
  */
-export function AgentStudio() {
+export function AgentStudio({ agentId }: { agentId: string }) {
+  const router = useRouter();
   const { accountId, accountRole, profileLoading } = useAuth();
   const canEdit = accountRole ? canEditSettings(accountRole) : false;
-  const { studio, loading, saving, reload, patch } = useAgentStudio(accountId);
+  const { studio, loading, saving, missing, reload, patch, setLibrary } =
+    useAgentStudio(accountId, agentId);
 
-  // `?tab=` is the deep-link contract — the Web channel's "Knowledge
-  // Base" row points here, and so do older `?tab=setup` links.
   const searchParams = useSearchParams();
   const requested = TAB_QUERY[searchParams.get('tab') ?? ''];
 
-  const [tab, setTab] = useState<Tab>(requested ?? 'persona');
+  const [tab, setTab] = useState<StudioTab>(requested ?? 'persona');
   const [testOpen, setTestOpen] = useState(false);
-  const [autoTabbed, setAutoTabbed] = useState(false);
 
-  // With no key there is nothing worth doing on any other tab, so land on
-  // Provider — once, and never over an explicit link or a tab the user
-  // has since clicked. Adjusted during render rather than in an effect,
-  // which would flash the wrong tab first.
-  if (!autoTabbed && !requested && studio && !studio.configured) {
-    setAutoTabbed(true);
-    setTab('provider');
+  if (missing) {
+    return (
+      <div className="mx-auto max-w-4xl py-16 text-center">
+        <p className="text-sm font-medium text-foreground">
+          That agent no longer exists.
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          It may have been deleted by someone else in your workspace.
+        </p>
+        <Button className="mt-4" variant="outline" onClick={() => router.push('/agents')}>
+          <ArrowLeft className="size-4" />
+          Back to agents
+        </Button>
+      </div>
+    );
   }
 
   if (loading || profileLoading || !studio) {
@@ -103,12 +121,20 @@ export function AgentStudio() {
     // full-width text input on a 1080p monitor is unreadable. The cap sits
     // on the root so the header, the tab bar and all six panels line up.
     <div className="mx-auto max-w-4xl">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <Link
+        href="/agents"
+        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="size-4" />
+        All agents
+      </Link>
+
+      <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Bot className="size-6 text-primary" />
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              {studio.agent_name?.trim() || 'AI agent'}
+              {studio.name?.trim() || 'AI agent'}
             </h1>
             <Badge
               variant={status.variant}
@@ -129,9 +155,13 @@ export function AgentStudio() {
         </Button>
       </div>
 
+      <div className="mt-4">
+        <AgentReadiness studio={studio} onGoToTab={setTab} />
+      </div>
+
       <Tabs
         value={tab}
-        onValueChange={(v) => setTab(v as Tab)}
+        onValueChange={(v) => setTab(v as StudioTab)}
         className="mt-6"
       >
         <TabsList className="flex-wrap">
@@ -140,9 +170,9 @@ export function AgentStudio() {
           </TabsTrigger>
           <TabsTrigger value="knowledge">
             <BookOpen className="size-4" /> Knowledge
-            {studio.knowledge.total > 0 && (
+            {studio.knowledge.selected > 0 && (
               <span className="ml-1 text-xs text-muted-foreground">
-                {studio.knowledge.total}
+                {studio.knowledge.selected}
               </span>
             )}
           </TabsTrigger>
@@ -160,56 +190,75 @@ export function AgentStudio() {
           <TabsTrigger value="behaviour">
             <SlidersHorizontal className="size-4" /> Behaviour
           </TabsTrigger>
-          <TabsTrigger value="provider">
-            <KeyRound className="size-4" /> Provider
+          <TabsTrigger value="routing">
+            <Route className="size-4" /> Routing
           </TabsTrigger>
         </TabsList>
-
-        {!studio.configured && tab !== 'provider' && (
-          <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-accent-amber">
-            This workspace has no AI provider key yet, so nothing here is live.
-            Add one on the Provider tab — Converse360 calls the provider with
-            your key, so there are no per-seat AI fees.
-          </p>
-        )}
 
         <TabsContent value="persona" className="mt-4">
           <AgentPersona
             studio={studio}
-            canEdit={canEdit && studio.configured}
+            canEdit={canEdit}
             saving={saving}
             onSave={patch}
           />
         </TabsContent>
 
         <TabsContent value="knowledge" className="mt-4">
-          <AgentKnowledge onChanged={reload} />
+          <AgentKnowledge
+            studio={studio}
+            canEdit={canEdit}
+            onChanged={reload}
+            onSaveSelection={(documentIds) =>
+              setLibrary(
+                { document_ids: documentIds },
+                { successMessage: 'Knowledge selection saved.' },
+              )
+            }
+            onUseAll={() => patch({ uses_all_knowledge: true })}
+          />
         </TabsContent>
 
         <TabsContent value="skills" className="mt-4">
           <AgentSkills
             studio={studio}
-            canEdit={canEdit && studio.configured}
+            canEdit={canEdit}
             saving={saving}
             onSave={patch}
           />
         </TabsContent>
 
         <TabsContent value="actions" className="mt-4">
-          <AgentActions onChanged={reload} />
+          <AgentActions
+            studio={studio}
+            canEdit={canEdit}
+            onChanged={reload}
+            onSaveSelection={(actionIds) =>
+              setLibrary(
+                { action_ids: actionIds },
+                { successMessage: 'Action selection saved.' },
+              )
+            }
+            onUseAll={() => patch({ uses_all_actions: true })}
+          />
         </TabsContent>
 
         <TabsContent value="behaviour" className="mt-4">
           <AgentBehaviour
             studio={studio}
-            canEdit={canEdit && studio.configured}
+            canEdit={canEdit}
             saving={saving}
             onSave={patch}
           />
         </TabsContent>
 
-        <TabsContent value="provider" className="mt-4">
-          <AiConfig onSaved={reload} />
+        <TabsContent value="routing" className="mt-4">
+          <AgentRouting
+            studio={studio}
+            canEdit={canEdit}
+            saving={saving}
+            onSave={patch}
+          />
         </TabsContent>
       </Tabs>
 
@@ -221,19 +270,20 @@ export function AgentStudio() {
           <SheetHeader className="border-b border-border">
             <SheetTitle className="flex items-center gap-2">
               <MessageSquare className="size-4 text-primary" />
-              Test your agent
+              Test {studio.name}
             </SheetTitle>
             <SheetDescription>
-              Same prompt, knowledge and tools as the live agent. No customer is
-              attached, and nothing is sent.
+              Same prompt, knowledge and tools as this agent uses live. No
+              customer is attached, and nothing is sent.
             </SheetDescription>
           </SheetHeader>
 
           <AiPlayground
+            agentId={agentId}
             className="min-h-0 flex-1"
             onGoToSetup={() => {
               setTestOpen(false);
-              setTab('provider');
+              setTab('routing');
             }}
           />
         </SheetContent>
@@ -244,7 +294,7 @@ export function AgentStudio() {
 
 /**
  * One honest sentence about what the agent is doing right now. The
- * ordering matters: "no key" beats "paused" beats "test mode" beats
+ * ordering matters: "no key" beats "off" beats "test mode" beats
  * "drafts only", because that is the order in which each fact stops the
  * agent from answering a customer.
  */
@@ -254,6 +304,7 @@ function resolveStatus(studio: {
   auto_reply_enabled?: boolean;
   test_mode?: boolean;
   test_numbers?: string[];
+  channels?: string[];
 }): {
   label: string;
   hint: string;
@@ -263,7 +314,7 @@ function resolveStatus(studio: {
   if (!studio.configured) {
     return {
       label: 'Not connected',
-      hint: 'Add an AI provider key to bring the agent to life.',
+      hint: 'This workspace has no provider key stored, so nothing can run. Add one under Provider & credits.',
       variant: 'outline',
     };
   }
@@ -274,6 +325,12 @@ function resolveStatus(studio: {
       variant: 'secondary',
     };
   }
+
+  const where =
+    studio.channels && studio.channels.length > 0
+      ? studio.channels.join(', ')
+      : 'every connected channel';
+
   if (!studio.auto_reply_enabled) {
     return {
       label: 'Drafts only',
@@ -292,7 +349,7 @@ function resolveStatus(studio: {
   }
   return {
     label: 'Live',
-    hint: 'Answering inbound messages automatically on every connected channel.',
+    hint: `Answering inbound messages automatically on ${where}.`,
     variant: 'default',
     className: 'bg-green-600 text-white',
   };

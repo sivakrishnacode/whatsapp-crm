@@ -34,7 +34,14 @@ import type {
   ActionParameter,
   ActionParamLocation,
   AgentAction,
+  AgentStudio,
 } from '@/lib/agents/types';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  LibraryScope,
+  SelectionBar,
+  useLibrarySelection,
+} from './library-scope';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 const LOCATIONS: ActionParamLocation[] = ['query', 'body', 'path'];
@@ -75,8 +82,25 @@ const emptyDraft = (): Draft => ({
  * header NAMES are set, which is enough to know whether credentials are
  * configured without handing them to a browser.
  */
-export function AgentActions({ onChanged }: { onChanged?: () => void }) {
-  const canEdit = useCan('edit-settings');
+export function AgentActions({
+  studio,
+  canEdit: canEditProp,
+  onChanged,
+  onSaveSelection,
+  onUseAll,
+}: {
+  studio: AgentStudio;
+  canEdit?: boolean;
+  onChanged?: () => void;
+  /** Replace which actions THIS agent may call. */
+  onSaveSelection: (actionIds: string[]) => Promise<boolean>;
+  /** Go back to "every action in the workspace". */
+  onUseAll: () => Promise<boolean> | void;
+}) {
+  const canEditFallback = useCan('edit-settings');
+  const canEdit = canEditProp ?? canEditFallback;
+  const selection = useLibrarySelection(studio.action_ids);
+  const [savingScope, setSavingScope] = useState(false);
   const [actions, setActions] = useState<AgentAction[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -215,8 +239,39 @@ export function AgentActions({ onChanged }: { onChanged?: () => void }) {
     );
   }
 
+  const picking = !studio.uses_all_actions;
+
   return (
     <div className="space-y-4">
+      {/* Which of the shared actions this agent may call. Scoping matters
+          more here than for knowledge: an action is a live call to a real
+          system, and a support agent has no business reaching the
+          endpoint that issues refunds. */}
+      <LibraryScope
+        noun="actions"
+        usesAll={studio.uses_all_actions}
+        selectedCount={selection.selected.length}
+        totalCount={actions.length}
+        canEdit={canEdit}
+        saving={savingScope}
+        onUseAll={async () => {
+          setSavingScope(true);
+          await onUseAll();
+          selection.clean();
+          setSavingScope(false);
+        }}
+        onUseSelected={async () => {
+          setSavingScope(true);
+          await onSaveSelection(
+            selection.selected.length > 0
+              ? selection.selected
+              : actions.map((a) => a.id),
+          );
+          selection.clean();
+          setSavingScope(false);
+        }}
+      />
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
           Let the agent call your own APIs — check stock in your ERP, look up a
@@ -246,6 +301,15 @@ export function AgentActions({ onChanged }: { onChanged?: () => void }) {
           {actions.map((action) => (
             <li key={action.id} className="rounded-xl border border-border bg-card p-4">
               <div className="flex items-start gap-3">
+                {picking && (
+                  <Checkbox
+                    className="mt-1"
+                    checked={selection.selected.includes(action.id)}
+                    disabled={!canEdit}
+                    onCheckedChange={() => selection.toggle(action.id)}
+                    aria-label={`Let this agent call ${action.name}`}
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
@@ -321,6 +385,21 @@ export function AgentActions({ onChanged }: { onChanged?: () => void }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {picking && selection.dirty && (
+        <SelectionBar
+          count={selection.selected.length}
+          noun="actions"
+          saving={savingScope}
+          onCancel={selection.reset}
+          onSave={async () => {
+            setSavingScope(true);
+            const ok = await onSaveSelection(selection.selected);
+            if (ok) selection.clean();
+            setSavingScope(false);
+          }}
+        />
       )}
     </div>
   );
