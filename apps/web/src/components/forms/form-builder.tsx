@@ -42,11 +42,9 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Copy,
   CornerDownRight,
-  Eye,
   EyeOff,
   GripVertical,
   Palette as PaletteIcon,
-  Pencil,
   Plus,
   Search,
   SlidersHorizontal,
@@ -54,6 +52,7 @@ import {
 } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import {
   FIELD_GROUP_ORDER,
@@ -64,11 +63,7 @@ import {
   type FormBuilderField,
 } from '@/lib/forms/field-types';
 import { splitIntoPages } from '@/lib/forms/visibility';
-import {
-  formSchemeAttr,
-  formThemeStyle,
-  type FormTheme,
-} from '@/lib/forms/theme';
+import type { FormTheme } from '@/lib/forms/theme';
 import type { FormFieldType } from './form-renderer';
 import FormRenderer, { FieldInput } from './form-renderer';
 import FormFieldInspector from './form-field-inspector';
@@ -110,7 +105,17 @@ export default function FormBuilder({
   description,
   submitLabel,
 }: FormBuilderProps) {
-  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
+  /**
+   * Whether the form's own inputs accept typing.
+   *
+   * NOT a second view — the canvas is one canvas, on its real page
+   * background, either way. This is the one thing that genuinely cannot
+   * be both at once: a click on a text box either selects the field to
+   * edit it or puts a cursor in it. So it is a switch on the canvas
+   * rather than a mode that reshuffles the screen, and the palette and
+   * inspector stay exactly where they were.
+   */
+  const [live, setLive] = useState(false);
   const [inspector, setInspector] = useState<'field' | 'design'>('field');
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -247,82 +252,69 @@ export default function FormBuilder({
       onDragEnd={handleDragEnd}
       onDragCancel={() => setDragging(null)}
     >
-      <div className="flex h-full min-h-0 flex-col gap-3">
-        <Toolbar mode={mode} onModeChange={setMode} />
+      <div className="flex h-full min-h-0 gap-4">
+        <Palette
+          query={query}
+          onQueryChange={setQuery}
+          onAdd={(type) => insertAt(type, fields.length)}
+        />
 
-        <div className="flex min-h-0 flex-1 gap-4">
-          {/* The palette is meaningless while previewing — there is
-              nothing to drag onto a working form. */}
-          {mode === 'edit' && (
-            <Palette
-              query={query}
-              onQueryChange={setQuery}
-              onAdd={(type) => insertAt(type, fields.length)}
-            />
-          )}
+        <Canvas
+          fields={fields}
+          theme={theme}
+          formName={formName}
+          description={description}
+          submitLabel={submitLabel}
+          live={live}
+          onLiveChange={setLive}
+          selected={selected}
+          onSelect={setSelected}
+          onRemove={removeField}
+          onDuplicate={duplicateField}
+        />
 
-          {mode === 'edit' ? (
-            <Canvas
-              fields={fields}
-              theme={theme}
-              selected={selected}
-              onSelect={setSelected}
-              onRemove={removeField}
-              onDuplicate={duplicateField}
+        <aside className="hidden w-80 shrink-0 flex-col overflow-hidden rounded-xl border bg-card xl:flex">
+          {/* Field and Design are two halves of one inspector rather than
+              two tabs of the editor: both describe the thing on the
+              canvas, and switching between them should not move you off
+              it. */}
+          <div className="flex flex-none gap-1 border-b p-2">
+            <InspectorTab
+              active={inspector === 'field'}
+              onClick={() => setInspector('field')}
+              icon={SlidersHorizontal}
+              label="Field"
             />
-          ) : (
-            <LivePreview
-              fields={fields}
-              theme={theme}
-              formName={formName}
-              description={description}
-              submitLabel={submitLabel}
+            <InspectorTab
+              active={inspector === 'design'}
+              onClick={() => setInspector('design')}
+              icon={PaletteIcon}
+              label="Design"
             />
-          )}
+          </div>
 
-          <aside className="hidden w-80 shrink-0 flex-col overflow-hidden rounded-xl border bg-card xl:flex">
-            {/* Field and Design are two halves of one inspector rather
-                than two tabs of the editor: both describe the thing on
-                the canvas, and switching between them should not move
-                you off it. */}
-            <div className="flex flex-none gap-1 border-b p-2">
-              <InspectorTab
-                active={inspector === 'field'}
-                onClick={() => setInspector('field')}
-                icon={SlidersHorizontal}
-                label="Field"
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {inspector === 'design' ? (
+              <FormDesignControls theme={theme} onChange={onThemeChange} />
+            ) : selectedField ? (
+              <FormFieldInspector
+                key={selectedField.field_key}
+                field={selectedField}
+                precedingFields={fields.slice(0, selectedIndex)}
+                onChange={(patch) =>
+                  updateField(selectedField.field_key, patch)
+                }
               />
-              <InspectorTab
-                active={inspector === 'design'}
-                onClick={() => setInspector('design')}
-                icon={PaletteIcon}
-                label="Design"
-              />
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {inspector === 'design' ? (
-                <FormDesignControls theme={theme} onChange={onThemeChange} />
-              ) : selectedField ? (
-                <FormFieldInspector
-                  key={selectedField.field_key}
-                  field={selectedField}
-                  precedingFields={fields.slice(0, selectedIndex)}
-                  onChange={(patch) =>
-                    updateField(selectedField.field_key, patch)
-                  }
-                />
-              ) : (
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  Select a field to change its label, make it required, save
-                  it to a contact, or show it only when an earlier answer
-                  matches. <strong>Design</strong> sets the colours and
-                  layout of the whole form.
-                </p>
-              )}
-            </div>
-          </aside>
-        </div>
+            ) : (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Select a field to change its label, make it required, save it
+                to a contact, or show it only when an earlier answer matches.{' '}
+                <strong>Design</strong> sets the colours and layout of the
+                whole form.
+              </p>
+            )}
+          </div>
+        </aside>
       </div>
 
       {/* Follows the cursor. Without it a palette drag looks like nothing
@@ -347,49 +339,6 @@ export default function FormBuilder({
 // -----------------------------------------------------------------------
 // Toolbar / preview
 // -----------------------------------------------------------------------
-
-function Toolbar({
-  mode,
-  onModeChange,
-}: {
-  mode: 'edit' | 'preview';
-  onModeChange: (m: 'edit' | 'preview') => void;
-}) {
-  return (
-    <div className="flex flex-none items-center gap-2">
-      <div className="flex rounded-lg border bg-card p-0.5">
-        {(
-          [
-            { value: 'edit', label: 'Edit', icon: Pencil },
-            { value: 'preview', label: 'Preview', icon: Eye },
-          ] as const
-        ).map((m) => (
-          <button
-            key={m.value}
-            type="button"
-            id={`builder-mode-${m.value}`}
-            onClick={() => onModeChange(m.value)}
-            className={cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-              mode === m.value
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            <m.icon className="h-3.5 w-3.5" />
-            {m.label}
-          </button>
-        ))}
-      </div>
-
-      <p className="text-[11px] text-muted-foreground">
-        {mode === 'edit'
-          ? 'Click a field to edit it. Drag to reorder.'
-          : 'The form as a visitor sees it. Submitting is disabled.'}
-      </p>
-    </div>
-  );
-}
 
 function InspectorTab({
   active,
@@ -417,52 +366,6 @@ function InspectorTab({
       <Icon className="h-3.5 w-3.5" />
       {label}
     </button>
-  );
-}
-
-/**
- * The form on its real page background, working.
- *
- * `FormSurface` + `FormRenderer` — the exact pair the hosted page uses —
- * so this is the form rather than a picture of it. `preview` on the
- * renderer is what stops a submission being recorded from the editor.
- */
-function LivePreview({
-  fields,
-  theme,
-  formName,
-  description,
-  submitLabel,
-}: {
-  fields: FormBuilderField[];
-  theme: FormTheme;
-  formName: string;
-  description: string | null;
-  submitLabel: string;
-}) {
-  return (
-    <div className="min-w-0 flex-1 overflow-y-auto rounded-xl border">
-      <FormSurface
-        theme={theme}
-        name={formName}
-        description={description}
-        preview
-        booking={fields.some((f) => f.type === 'appointment_slot')}
-      >
-        <FormRenderer
-          form={{
-            id: 'preview',
-            name: formName,
-            description,
-            slug: 'preview',
-            kind: 'form',
-            fields,
-            settings: { submit_label: submitLabel, honeypot: false },
-          }}
-          preview
-        />
-      </FormSurface>
-    </div>
   );
 }
 
@@ -598,6 +501,11 @@ const CANVAS_DROP_ID = '__canvas__';
 function Canvas({
   fields,
   theme,
+  formName,
+  description,
+  submitLabel,
+  live,
+  onLiveChange,
   selected,
   onSelect,
   onRemove,
@@ -605,6 +513,11 @@ function Canvas({
 }: {
   fields: FormBuilderField[];
   theme: FormTheme;
+  formName: string;
+  description: string | null;
+  submitLabel: string;
+  live: boolean;
+  onLiveChange: (v: boolean) => void;
   selected: string | null;
   onSelect: (key: string | null) => void;
   onRemove: (key: string) => void;
@@ -612,14 +525,6 @@ function Canvas({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: CANVAS_DROP_ID });
 
-  // Already resolved by the page, so the canvas and the preview cannot
-  // disagree about what the theme is.
-  const resolvedTheme = theme;
-
-  // Only to label the step dividers. Membership is positional, so this
-  // needs no conditional evaluation — everything between two breaks is one
-  // step whatever the rules say.
-  //
   // Empty pages are dropped for the same reason the renderer drops them:
   // a break with nothing after it produces no step, and counting one here
   // would promise a "Step 3 of 3" that never appears.
@@ -629,61 +534,101 @@ function Canvas({
   );
 
   return (
-    <div className="min-w-0 flex-1 overflow-y-auto rounded-xl border bg-muted/20">
-      <div
-        ref={setNodeRef}
-        className={cn(
-          'mx-auto min-h-full w-full max-w-3xl p-6 transition-colors',
-          isOver && 'bg-primary/5',
-        )}
-        onClick={(e) => {
-          // Clicking the backdrop deselects; clicking a field must not.
-          if (e.target === e.currentTarget) onSelect(null);
-        }}
-      >
-        {fields.length === 0 ? (
-          <EmptyCanvas />
-        ) : (
-          <SortableContext
-            items={fields.map((f) => f.field_key)}
-            strategy={verticalListSortingStrategy}
-          >
-            {/*
-              The card carries the form's OWN scheme, not the dashboard's.
-              `formThemeStyle` alone set the accent and radius but left the
-              colour tokens inherited, so a light form was drawn black
-              inside a dark dashboard — the one thing a WYSIWYG canvas must
-              not do. `data-form-scheme` overrides the token custom
-              properties for this subtree exactly as it does on the hosted
-              page, so the card matches what a visitor sees while the
-              surrounding editor chrome stays in the dashboard's theme.
-            */}
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-muted/20">
+      <div className="flex flex-none items-center gap-3 border-b bg-card/60 px-4 py-2">
+        <p className="text-[11px] text-muted-foreground">
+          {live
+            ? 'Typing in the form. Submitting is disabled.'
+            : 'Click a field to edit it. Drag to reorder.'}
+        </p>
+        <label className="ml-auto flex cursor-pointer items-center gap-2">
+          <span className="text-[11px] font-medium text-muted-foreground">
+            Try it
+          </span>
+          <Switch
+            id="builder-try-it"
+            checked={live}
+            onCheckedChange={onLiveChange}
+          />
+        </label>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {/*
+          The page chrome is here in BOTH states, not just a preview mode.
+          The canvas is the form on its real background — header banner,
+          accent, branding — so there is nothing to switch to in order to
+          "see how it looks", and the only thing `live` changes is whether
+          the inputs take a cursor.
+        */}
+        <FormSurface
+          theme={theme}
+          name={formName}
+          description={description}
+          preview
+          booking={fields.some((f) => f.type === 'appointment_slot')}
+        >
+          {live ? (
+            <FormRenderer
+              // Remounted when the field list changes so a rule or a new
+              // field is reflected immediately rather than after the
+              // renderer's own state catches up.
+              key={fields.map((f) => f.field_key).join('|')}
+              form={{
+                id: 'preview',
+                name: formName,
+                description,
+                slug: 'preview',
+                kind: 'form',
+                fields,
+                settings: { submit_label: submitLabel, honeypot: false },
+              }}
+              preview
+            />
+          ) : (
             <div
-              className="flex flex-wrap gap-5 rounded-xl border bg-background p-6 text-foreground shadow-sm"
-              data-form-scheme={formSchemeAttr(resolvedTheme)}
-              style={formThemeStyle(resolvedTheme)}
+              ref={setNodeRef}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) onSelect(null);
+              }}
+              className={cn(
+                'min-h-[16rem] rounded-lg transition-colors',
+                isOver && 'bg-primary/5 outline-2 outline-dashed outline-primary/40',
+              )}
             >
-              {fields.map((field, idx) => (
-                <CanvasField
-                  key={field.field_key}
-                  field={field}
-                  stepNumber={
-                    field.type === 'page_break'
-                      ? fields
-                          .slice(0, idx)
-                          .filter((f) => f.type === 'page_break').length + 2
-                      : undefined
-                  }
-                  totalSteps={pageCount}
-                  selected={selected === field.field_key}
-                  onSelect={() => onSelect(field.field_key)}
-                  onRemove={() => onRemove(field.field_key)}
-                  onDuplicate={() => onDuplicate(field.field_key)}
-                />
-              ))}
+              {fields.length === 0 ? (
+                <EmptyCanvas />
+              ) : (
+                <SortableContext
+                  items={fields.map((f) => f.field_key)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="flex flex-wrap gap-5">
+                    {fields.map((field, idx) => (
+                      <CanvasField
+                        key={field.field_key}
+                        field={field}
+                        stepNumber={
+                          field.type === 'page_break'
+                            ? fields
+                                .slice(0, idx)
+                                .filter((f) => f.type === 'page_break').length +
+                              2
+                            : undefined
+                        }
+                        totalSteps={pageCount}
+                        selected={selected === field.field_key}
+                        onSelect={() => onSelect(field.field_key)}
+                        onRemove={() => onRemove(field.field_key)}
+                        onDuplicate={() => onDuplicate(field.field_key)}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              )}
             </div>
-          </SortableContext>
-        )}
+          )}
+        </FormSurface>
       </div>
     </div>
   );
