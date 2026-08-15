@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { CalendarCheck, Copy, ExternalLink } from 'lucide-react';
+import { CalendarCheck, Copy, ExternalLink, Video } from 'lucide-react';
 import { toast } from 'sonner';
 
 import FormRenderer, {
@@ -15,6 +15,8 @@ interface BookingConfirmation {
   ends_at: string;
   timezone: string;
   manage_url: string;
+  /** Present only when the form creates Google Meet links. */
+  meeting_url?: string | null;
 }
 
 /**
@@ -145,6 +147,36 @@ function Confirmation({ booking }: { booking: BookingConfirmation }) {
         <p className="mt-1 text-sm text-muted-foreground">{when}</p>
         <p className="text-xs text-muted-foreground">({booking.timezone})</p>
       </div>
+
+      {booking.meeting_url && (
+        // Above the manage link on purpose: joining the call is what the
+        // customer came for, and a link they have to hunt for at the
+        // bottom of a confirmation is a call they turn up late to.
+        <a
+          href={booking.meeting_url}
+          target="_blank"
+          rel="noreferrer"
+          className="flex w-full max-w-sm items-center gap-3 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40"
+        >
+          <span
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+            style={{
+              backgroundColor: 'var(--form-accent, var(--primary))',
+              color: 'var(--form-accent-fg, var(--primary-foreground))',
+            }}
+          >
+            <Video className="h-4 w-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-foreground">
+              Join with Google Meet
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {booking.meeting_url.replace(/^https?:\/\//, '')}
+            </span>
+          </span>
+        </a>
+      )}
 
       <div className="w-full max-w-sm rounded-xl border border-border bg-muted/30 p-4 text-left">
         <p className="text-xs font-medium text-foreground">

@@ -639,11 +639,25 @@ describe('validateSubmission — named formats', () => {
 
   it('blocks consumer mailboxes for `business_email`', () => {
     const business = validateSubmission(
-      [field({ field_key: 'e', type: 'email', label: 'Work email', format: 'business_email' })],
+      [
+        field({
+          field_key: 'e',
+          type: 'email',
+          label: 'Work email',
+          format: 'business_email',
+        }),
+      ],
       { e: 'siva@acme.co' },
     );
     const free = validateSubmission(
-      [field({ field_key: 'e', type: 'email', label: 'Work email', format: 'business_email' })],
+      [
+        field({
+          field_key: 'e',
+          type: 'email',
+          label: 'Work email',
+          format: 'business_email',
+        }),
+      ],
       { e: 'siva@gmail.com' },
     );
     expect(business.ok).toBe(true);
@@ -669,10 +683,7 @@ describe('validateSubmission — named formats', () => {
     // An optional field left blank must not fail its format check — that
     // would make every formatted field required by accident.
     expect(
-      validateSubmission(
-        [field({ field_key: 'q', format: 'digits' })],
-        {},
-      ).ok,
+      validateSubmission([field({ field_key: 'q', format: 'digits' })], {}).ok,
     ).toBe(true);
   });
 });

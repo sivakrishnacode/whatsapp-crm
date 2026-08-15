@@ -78,7 +78,7 @@ const FORMAT_RULES: Record<
     message: 'should be letters only',
   },
   letters_spaces: {
-    test: (v) => /^[\p{L}\p{M}][\p{L}\p{M} '\-]*$/u.test(v),
+    test: (v) => /^[\p{L}\p{M}][\p{L}\p{M} '-]*$/u.test(v),
     message: 'should be letters, spaces, apostrophes and hyphens only',
   },
   alphanumeric: {
@@ -92,7 +92,10 @@ const FORMAT_RULES: Record<
   no_links: {
     // Spam control for free-text boxes. Deliberately blunt: it looks for
     // a scheme or a bare host, not for a valid URL.
-    test: (v) => !/(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|io|ru|xyz|top|link)\b)/i.test(v),
+    test: (v) =>
+      !/(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|io|ru|xyz|top|link)\b)/i.test(
+        v,
+      ),
     message: 'should not contain links',
   },
   url: {

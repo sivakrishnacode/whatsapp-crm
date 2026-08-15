@@ -51,6 +51,8 @@ export interface SubmitFormResult {
     ends_at: string;
     timezone: string;
     manage_url: string;
+    /** Google Meet link, when the form creates one. Null otherwise. */
+    meeting_url: string | null;
   };
 }
 
@@ -184,6 +186,7 @@ export class FormSubmitService {
           ends_at: reserved.ends_at,
           timezone: reserved.timezone,
           manage_url: reserved.manage_url,
+          meeting_url: reserved.meeting_url,
         };
       }
     }

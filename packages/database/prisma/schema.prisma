@@ -2254,6 +2254,12 @@ model form_bookings {
   /// the booking from form_bookings_no_overlap (group bookings overlap by
   /// design) and it is counted transactionally instead.
   capacity_group  Boolean           @default(false)
+  /// Google Calendar event created for this booking, when the form syncs.
+  /// NULL when sync is off OR the call failed — calendar sync is
+  /// best-effort and must never be able to lose a booking (migration 085).
+  calendar_event_id String?
+  /// Google Meet link created with that event. Shown on the confirmation.
+  meeting_url       String?
   accounts        Account           @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   contacts        contacts?         @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
   conversations   conversations?    @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
@@ -2263,6 +2269,7 @@ model form_bookings {
   @@index([form_id, starts_at], map: "idx_form_bookings_form_starts")
   @@index([account_id, starts_at(sort: Desc)], map: "idx_form_bookings_account_starts")
   @@index([contact_id, starts_at(sort: Desc)], map: "idx_form_bookings_contact", where: raw("(contact_id IS NOT NULL)"))
+  @@index([calendar_event_id], map: "form_bookings_calendar_event_idx", where: raw("(calendar_event_id IS NOT NULL)"))
   @@schema("public")
 }
 

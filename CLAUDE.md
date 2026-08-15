@@ -583,9 +583,78 @@ keyed by `field_key`.
   hidden field's default has to be applied SERVER-side in the validator; the
   browser never sees it.
 - The editor is **full-screen (`fixed inset-0`)** like the automation editor,
-  for the same reason: three columns that all want vertical room.
+  for the same reason: three columns that all want vertical room. Tabs are
+  Builder / Settings / Availability / **Appearance** / Share / Submissions /
+  Preview, and Submissions renders INSIDE it rather than navigating away.
+- ⚠️ **A hosted form's colour scheme defaults to LIGHT, not the app's.**
+  `DEFAULT_MODE` (lib/themes.ts) is `dark` and an anonymous visitor has no
+  `converse360.mode` in localStorage, so every public form rendered black
+  with the owner neither seeing nor controlling it. `lib/forms/theme.ts` owns
+  the decision; the scheme is applied by overriding the token custom
+  properties on a container (`[data-form-scheme]`, added to the existing
+  `html[data-mode]` selectors in globals.css — no duplicated token lists),
+  and `system` is resolved against `prefers-color-scheme` by a
+  beforeInteractive script because *inheriting* `html[data-mode]` is the bug.
+- ⚠️ **`accent` is validated as `#rrggbb` by `safeAccent`, the only reader.**
+  It is interpolated into a `style` attribute on a public page, so a
+  permissive parse is CSS injection. Button text is black or white by WCAG
+  luminance (`accentForeground`), which is what stops a light accent
+  shipping white-on-yellow.
+- **`FormSurface` is the one page chrome** for `/f/[slug]`, `/book/[slug]`
+  and the Appearance preview. The two public routes had a copy each and had
+  already drifted (one said "Powered by WaCRM", the other "Converse360").
+- ⚠️ **A form with an `appointment_slot` needs a SLOT LOADER, and `/f/` had
+  none.** Only `/book/` passed `fetchSlots`, so a published booking form
+  served at its own link showed "Times appear here once this form is
+  published" forever. Both routes now use `HostedBookingForm` when the form
+  takes bookings. The remaining placeholder text describes the only case
+  left, which is the builder canvas.
+- **`format` is a FIXED ENUM, never a user-supplied regex** (`FORMAT_RULES`).
+  A customer-authored pattern executed server-side on visitor input is a DoS
+  vector — catastrophic backtracking stalls the event loop for every tenant,
+  Node cannot time a regex out, and capping input length does not help. The
+  letter classes include `\p{M}` as well as `\p{L}`: Indic, Arabic and
+  Vietnamese build a letter from a base plus combining marks, so `\p{L}`
+  alone accepts "Jose" and rejects "இரா".
 - Submitting fires the `form_submitted` automation trigger and the
   `form.submitted` webhook — see the channel-less warning above.
+
+### Google Calendar & Meet on booking forms (migration 085)
+
+Booking forms can read the owner's Google calendar for busy times and put
+each booking on it with a Meet link, through the existing
+`app_connections` OAuth connection (082) — **one Google connection per
+workspace already covers Sheets, Gmail, Calendar and Meet**, so nothing
+here mints a second.
+
+- **Config lives in `forms.availability.calendar`**, not its own table: it
+  IS availability configuration, and `parseAvailability` stays the single
+  gate on a malformed one. Only the RESULT needs columns —
+  `form_bookings.calendar_event_id` / `meeting_url`.
+- ⚠️ **Every call is BEST-EFFORT and must never lose a booking.**
+  `BookingCalendarService` swallows its own failures: `busyIntervals`
+  returns nothing to subtract, the event methods return null. Both columns
+  are nullable and `calendar_event_id` has no unique constraint, because a
+  duplicate event is something a human deletes whereas a constraint
+  violation would roll back a booking already confirmed to a customer.
+- ⚠️ **Busy lookup fails OPEN, deliberately.** Offering a slot the owner is
+  busy for is a human apology; failing closed would offer NO times, which
+  is a booking page that silently stops taking bookings and is invisible
+  until someone asks why nobody booked this week.
+- **Google busy blocks are merged into the same list as our own bookings**
+  before `computeSlots`, so buffers, capacity and minimum notice keep
+  applying with no second code path.
+- ⚠️ **`connection_id` is author-supplied data, not authority** — same trap
+  as `segment_id` in an automation step config, bigger prize. Every use
+  goes through `ConnectorExecutionService.run({ accountId, ... })`, whose
+  `getAccessToken` filters `app_connections` by `account_id`.
+- The event is created **after** the booking row commits (creating it first
+  would leave an event for a booking that lost the slot race), and it is
+  **awaited** unlike `fanOut`, because the Meet link is part of the
+  confirmation the customer is about to see.
+- `FormsModule` imports `ConnectionsModule` WITHOUT `forwardRef` —
+  `ConnectionsModule` imports nothing, so it cannot be part of a cycle.
+  Module wiring is not caught by typecheck; boot the container.
 
 ## Queues (`apps/api/src/queue`, BullMQ + Redis)
 

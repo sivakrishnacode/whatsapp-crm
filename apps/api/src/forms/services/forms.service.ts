@@ -392,9 +392,7 @@ export class FormsService {
         // stripping it would only stop the prefill working.
         fields: fields.map(({ mapping, default_value, ...rest }) => {
           void mapping;
-          return rest.type === 'hidden'
-            ? rest
-            : { ...rest, default_value };
+          return rest.type === 'hidden' ? rest : { ...rest, default_value };
         }),
         settings: {
           submit_label: settings.submit_label,
