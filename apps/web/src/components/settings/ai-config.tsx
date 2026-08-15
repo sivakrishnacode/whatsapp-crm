@@ -60,7 +60,16 @@ const EMBEDDINGS_LABEL: Record<EmbeddingsProvider, string> = {
  * provider directly with this key, so there are no per-seat AI fees and
  * the conversation never passes through a third party of ours.
  */
-export function AiConfig({ onSaved }: { onSaved?: () => void } = {}) {
+export function AiConfig({
+  onSaved,
+  /**
+   * Drop the panel heading. For hosts that already title this form —
+   * the agents screen opens it in a modal whose own title says
+   * "Provider & credits", and two stacked headings read as a rendering
+   * bug rather than as emphasis.
+   */
+  hideHeading = false,
+}: { onSaved?: () => void; hideHeading?: boolean } = {}) {
   const { accountId, accountRole, profileLoading } = useAuth();
   const canEdit = accountRole ? canEditSettings(accountRole) : false;
 
@@ -246,10 +255,12 @@ export function AiConfig({ onSaved }: { onSaved?: () => void } = {}) {
 
   return (
     <div>
-      <SettingsPanelHead
-        title="Provider & key"
-        description="What powers AI-drafted replies in the inbox, the auto-reply agent and the test panel. Use our built-in AI and pay per use, or bring your own OpenAI, Anthropic or Google key — Converse360 then calls the provider directly with it, so there are no per-seat AI fees and your conversations are not routed through anyone else."
-      />
+      {!hideHeading && (
+        <SettingsPanelHead
+          title="Provider & key"
+          description="What powers AI-drafted replies in the inbox, the auto-reply agent and the test panel. Use our built-in AI and pay per use, or bring your own OpenAI, Anthropic or Google key — Converse360 then calls the provider directly with it, so there are no per-seat AI fees and your conversations are not routed through anyone else."
+        />
+      )}
 
       {!canEdit && (
         <p className="mb-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">

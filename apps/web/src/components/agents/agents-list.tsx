@@ -36,13 +36,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
 import { InstagramIcon, WhatsAppIcon } from '@/components/channels/channel-icons';
 import { AiConfig } from '@/components/settings/ai-config';
 import { useAuth } from '@/hooks/use-auth';
@@ -217,33 +210,34 @@ export function AgentsList() {
         onCreate={onCreate}
       />
 
-      <Sheet open={providerOpen} onOpenChange={setProviderOpen}>
-        {/*
-          Wider than the studio's test drawer on purpose: this one holds
-          the provider form, whose two-column model/key row is unreadable
-          when it wraps. Capped at 3xl to match the width AiConfig gives
-          itself in Settings, so the same form is not two different
-          shapes in two places.
-        */}
-        <SheetContent
-          side="right"
-          className="w-full overflow-y-auto sm:max-w-2xl lg:max-w-3xl"
-        >
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
+      {/*
+        A centred modal rather than a side drawer: this is a form you
+        stop and fill in — two key fields and a mode choice — not a
+        reference panel you consult while editing something else behind
+        it. The drawer shape belongs to the studio's test chat, where
+        seeing the form underneath IS the point.
+
+        Capped at 3xl, the width AiConfig gives itself in Settings, so
+        the same form is not two different shapes in two places. The body
+        scrolls inside the modal rather than the modal growing past the
+        viewport on a laptop.
+      */}
+      <Dialog open={providerOpen} onOpenChange={setProviderOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl lg:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
               <KeyRound className="size-4 text-primary" />
               Provider &amp; credits
-            </SheetTitle>
-            <SheetDescription>
-              One setting for the whole workspace. Every agent runs on this key,
-              so changing it here changes it for all of them.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="px-4 pb-6">
-            <AiConfig onSaved={() => undefined} />
-          </div>
-        </SheetContent>
-      </Sheet>
+            </DialogTitle>
+            <DialogDescription>
+              What powers AI-drafted replies, the auto-reply agent and the test
+              panel — one setting for the whole workspace, so changing it here
+              changes it for every agent.
+            </DialogDescription>
+          </DialogHeader>
+          <AiConfig hideHeading onSaved={() => undefined} />
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!pendingDelete}
