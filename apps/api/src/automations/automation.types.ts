@@ -71,6 +71,31 @@ export const TRIGGER_CHANNEL_LOCK: Partial<
   // never fire for the most common case.
 };
 
+/**
+ * Triggers whose event carries NO channel, so a channel scope on the
+ * automation is meaningless and `AutomationDispatchService` ignores it.
+ *
+ * The dispatcher resolves a missing `context.channel` to DEFAULT_CHANNEL
+ * (WhatsApp), which is right for the WhatsApp webhook that predates the
+ * field and wrong for these: `FormSubmitService.fanOut` and
+ * `BookingService.fanOut` genuinely have no channel to report. Without
+ * this set, an automation scoped to "Web" — the intuitive choice for a
+ * website form — would be compared against `whatsapp` and never fire,
+ * permanently and with nothing logged.
+ *
+ * The builder now hides the channel picker for these
+ * (`channelless` in canvas/trigger-inspector.tsx), but automations saved
+ * before that carry a scope nobody can see or clear any more, so honouring
+ * it here would strand them. Mirrored by CHANNELLESS_TRIGGERS in
+ * apps/web/src/components/automations/automation-builder.tsx.
+ */
+export const CHANNELLESS_TRIGGERS: ReadonlySet<string> = new Set([
+  'form_submitted',
+  'appointment_booked',
+  'appointment_cancelled',
+  'appointment_rescheduled',
+]);
+
 export type AutomationStepType =
   | 'send_message'
   | 'send_template'

@@ -1,424 +1,655 @@
 'use client';
 
-import { useState } from 'react';
-import { DndContext, closestCenter, DragEndEvent } from '@dnd-kit/core';
+/**
+ * The form builder: palette | live canvas | inspector.
+ *
+ * THE CANVAS IS THE REAL FORM
+ *   Field previews are rendered by `FieldInput` — the very component the
+ *   hosted page, the embed and the widget use — inside a non-interactive
+ *   shell. A builder that draws its own approximation of a field drifts
+ *   from the published form silently, and the first person to notice is a
+ *   customer looking at a live page. Half-width fields therefore sit side
+ *   by side here exactly as they will publicly, because it is the same
+ *   flex-wrap container doing it.
+ *
+ * ONE DndContext, TWO KINDS OF DRAG
+ *   Dragging from the palette INSERTS at the drop position; dragging a
+ *   field on the canvas MOVES it. Both end in `handleDragEnd`, told apart
+ *   by `active.data.current.kind`. Appending on click stays available
+ *   because dragging is the slower way to do the common thing.
+ */
+
+import { useMemo, useRef, useState } from 'react';
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  closestCenter,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
 import {
   SortableContext,
-  verticalListSortingStrategy,
-  useSortable,
   arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
+  Copy,
+  CornerDownRight,
+  EyeOff,
   GripVertical,
-  Trash2,
   Plus,
-  Type,
-  AlignLeft,
-  Mail,
-  Phone,
-  Hash,
-  ChevronDown,
-  CheckSquare,
-  Circle,
-  Calendar,
-  Clock,
-  Star,
-  Heading1,
-  AlignCenter,
-  ToggleLeft,
-  Paperclip,
+  Search,
+  Trash2,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
-import type { FormFieldType, PublicFormField } from './form-renderer';
-
-// -----------------------------------------------------------------------
-// Field type palette
-// -----------------------------------------------------------------------
-
-interface FieldTypeDef {
-  type: FormFieldType;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  group: string;
-}
-
-const FIELD_TYPES: FieldTypeDef[] = [
-  { type: 'text', label: 'Short text', icon: Type, group: 'Input' },
-  { type: 'textarea', label: 'Long text', icon: AlignLeft, group: 'Input' },
-  { type: 'email', label: 'Email', icon: Mail, group: 'Input' },
-  { type: 'phone', label: 'Phone', icon: Phone, group: 'Input' },
-  { type: 'number', label: 'Number', icon: Hash, group: 'Input' },
-  { type: 'select', label: 'Dropdown', icon: ChevronDown, group: 'Choice' },
-  { type: 'radio', label: 'Radio', icon: Circle, group: 'Choice' },
-  { type: 'multiselect', label: 'Checkbox list', icon: CheckSquare, group: 'Choice' },
-  { type: 'date', label: 'Date', icon: Calendar, group: 'Date/Time' },
-  { type: 'time', label: 'Time', icon: Clock, group: 'Date/Time' },
-  { type: 'rating', label: 'Rating', icon: Star, group: 'Special' },
-  { type: 'consent', label: 'Consent', icon: ToggleLeft, group: 'Special' },
-  { type: 'file', label: 'File upload', icon: Paperclip, group: 'Special' },
-  { type: 'heading', label: 'Heading', icon: Heading1, group: 'Layout' },
-  { type: 'paragraph', label: 'Paragraph', icon: AlignCenter, group: 'Layout' },
-];
-
-// -----------------------------------------------------------------------
-// Props
-// -----------------------------------------------------------------------
+import {
+  FIELD_GROUP_ORDER,
+  FIELD_TYPES,
+  fieldTypeDef,
+  makeFieldKey,
+  type FieldTypeDef,
+  type FormBuilderField,
+} from '@/lib/forms/field-types';
+import { splitIntoPages } from '@/lib/forms/visibility';
+import type { FormFieldType } from './form-renderer';
+import { FieldInput } from './form-renderer';
+import FormFieldInspector from './form-field-inspector';
 
 interface FormBuilderProps {
-  fields: PublicFormField[];
-  onChange: (fields: PublicFormField[]) => void;
+  fields: FormBuilderField[];
+  onChange: (fields: FormBuilderField[]) => void;
 }
-
-// -----------------------------------------------------------------------
-// Main builder
-// -----------------------------------------------------------------------
 
 export default function FormBuilder({ fields, onChange }: FormBuilderProps) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [dragging, setDragging] = useState<
+    { kind: 'palette'; def: FieldTypeDef } | { kind: 'field'; key: string } | null
+  >(null);
 
-  const addField = (type: FormFieldType) => {
-    const newField: PublicFormField = {
-      field_key: `field_${Math.random().toString(36).slice(2, 8)}`,
+  // Distance before a drag starts, so clicking a field to select it does
+  // not register as a two-pixel drag.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const takenKeys = useMemo(
+    () => new Set(fields.map((f) => f.field_key)),
+    [fields],
+  );
+
+  const buildField = (type: FormFieldType): FormBuilderField => {
+    const def = fieldTypeDef(type);
+    const label = def?.label ?? type;
+    return {
+      field_key: makeFieldKey(label, takenKeys),
       type,
-      label: FIELD_TYPES.find((f) => f.type === type)?.label ?? type,
+      label: type === 'page_break' ? 'Page break' : label,
       required: false,
       width: 'full',
-      ...(type === 'select' || type === 'radio' || type === 'multiselect'
-        ? { options: [{ value: 'option_1', label: 'Option 1' }] }
+      ...(def?.choice
+        ? {
+            options: [
+              { value: 'option_1', label: 'Option 1' },
+              { value: 'option_2', label: 'Option 2' },
+            ],
+          }
         : {}),
       ...(type === 'rating' ? { scale: 5 } : {}),
     };
-    const next = [...fields, newField];
-    onChange(next);
-    setSelected(newField.field_key);
   };
 
-  const updateField = (key: string, patch: Partial<PublicFormField>) => {
-    onChange(fields.map((f) => (f.field_key === key ? { ...f, ...patch } : f)));
+  const insertAt = (type: FormFieldType, index: number) => {
+    const created = buildField(type);
+    const next = [...fields];
+    next.splice(index, 0, created);
+    onChange(next);
+    setSelected(created.field_key);
+  };
+
+  const updateField = (key: string, patch: Partial<FormBuilderField>) => {
+    onChange(
+      fields.map((f) => (f.field_key === key ? { ...f, ...patch } : f)),
+    );
   };
 
   const removeField = (key: string) => {
-    onChange(fields.filter((f) => f.field_key !== key));
+    // Any rule pointing at the removed field goes with it. Left behind, it
+    // would name a field that no longer exists, which the server refuses
+    // at save time — with the error on a field the author did not touch.
+    onChange(
+      fields
+        .filter((f) => f.field_key !== key)
+        .map((f) =>
+          f.visible_when?.field_key === key
+            ? { ...f, visible_when: undefined }
+            : f,
+        ),
+    );
     if (selected === key) setSelected(null);
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      const oldIdx = fields.findIndex((f) => f.field_key === active.id);
-      const newIdx = fields.findIndex((f) => f.field_key === over.id);
-      onChange(arrayMove(fields, oldIdx, newIdx));
-    }
+  const duplicateField = (key: string) => {
+    const idx = fields.findIndex((f) => f.field_key === key);
+    if (idx < 0) return;
+    const source = fields[idx];
+    const copy: FormBuilderField = {
+      ...source,
+      field_key: makeFieldKey(source.label || source.type, takenKeys),
+      // The copy keeps its own answers, so a rule that pointed at the
+      // original still points at the original — carrying it over would
+      // make two fields appear and disappear together for no stated
+      // reason.
+      visible_when: source.visible_when,
+    };
+    const next = [...fields];
+    next.splice(idx + 1, 0, copy);
+    onChange(next);
+    setSelected(copy.field_key);
   };
 
-  const selectedField = fields.find((f) => f.field_key === selected);
+  const handleDragStart = (event: DragStartEvent) => {
+    const data = event.active.data.current as
+      | { kind: 'palette'; def: FieldTypeDef }
+      | { kind: 'field' }
+      | undefined;
+    if (data?.kind === 'palette') setDragging({ kind: 'palette', def: data.def });
+    else setDragging({ kind: 'field', key: String(event.active.id) });
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setDragging(null);
+    const { active, over } = event;
+    if (!over) return;
+
+    const data = active.data.current as
+      | { kind: 'palette'; def: FieldTypeDef }
+      | { kind: 'field' }
+      | undefined;
+
+    // Where the pointer landed: on a field (insert before it) or on the
+    // canvas itself (append).
+    const overIndex =
+      over.id === CANVAS_DROP_ID
+        ? fields.length
+        : fields.findIndex((f) => f.field_key === over.id);
+
+    if (data?.kind === 'palette') {
+      insertAt(data.def.type, overIndex < 0 ? fields.length : overIndex);
+      return;
+    }
+
+    if (active.id === over.id || overIndex < 0) return;
+    const from = fields.findIndex((f) => f.field_key === active.id);
+    if (from < 0) return;
+    onChange(arrayMove(fields, from, overIndex));
+  };
+
+  const selectedIndex = fields.findIndex((f) => f.field_key === selected);
+  const selectedField = selectedIndex >= 0 ? fields[selectedIndex] : null;
 
   return (
-    <div className="flex gap-4 min-h-[600px]">
-      {/* Palette */}
-      <div className="w-52 flex-shrink-0 rounded-lg border bg-card p-3">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Add field
-        </p>
-        {Object.entries(
-          FIELD_TYPES.reduce<Record<string, FieldTypeDef[]>>((acc, f) => {
-            (acc[f.group] ??= []).push(f);
-            return acc;
-          }, {}),
-        ).map(([group, items]) => (
-          <div key={group} className="mb-3">
-            <p className="mb-1 text-xs text-muted-foreground">{group}</p>
-            <div className="flex flex-col gap-1">
-              {items.map((ft) => (
-                <button
-                  key={ft.type}
-                  type="button"
-                  id={`add-field-${ft.type}`}
-                  onClick={() => addField(ft.type)}
-                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
-                >
-                  <ft.icon className="h-3.5 w-3.5 text-muted-foreground" />
-                  {ft.label}
-                </button>
-              ))}
-            </div>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setDragging(null)}
+    >
+      <div className="flex h-full min-h-0 gap-4">
+        <Palette
+          query={query}
+          onQueryChange={setQuery}
+          onAdd={(type) => insertAt(type, fields.length)}
+        />
+
+        <Canvas
+          fields={fields}
+          selected={selected}
+          onSelect={setSelected}
+          onRemove={removeField}
+          onDuplicate={duplicateField}
+        />
+
+        <aside className="hidden w-80 shrink-0 flex-col overflow-hidden rounded-xl border bg-card xl:flex">
+          <div className="border-b px-4 py-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {selectedField ? 'Field settings' : 'Settings'}
+            </h2>
           </div>
-        ))}
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {selectedField ? (
+              <FormFieldInspector
+                key={selectedField.field_key}
+                field={selectedField}
+                precedingFields={fields.slice(0, selectedIndex)}
+                onChange={(patch) =>
+                  updateField(selectedField.field_key, patch)
+                }
+              />
+            ) : (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Select a field on the left to change its label, make it
+                required, save it to a contact, or show it only when an
+                earlier answer matches.
+              </p>
+            )}
+          </div>
+        </aside>
       </div>
 
-      {/* Canvas */}
-      <div className="flex-1 rounded-lg border bg-card p-4">
-        {fields.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-            <Plus className="h-8 w-8" />
-            <p className="text-sm">Add a field from the left panel</p>
+      {/* Follows the cursor. Without it a palette drag looks like nothing
+          is happening until the drop lands. */}
+      <DragOverlay dropAnimation={null}>
+        {dragging?.kind === 'palette' ? (
+          <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-card px-3 py-2 text-sm shadow-lg">
+            <dragging.def.icon className="h-4 w-4 text-primary" />
+            {dragging.def.label}
           </div>
-        ) : (
-          <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext
-              items={fields.map((f) => f.field_key)}
-              strategy={verticalListSortingStrategy}
-            >
-              <div className="flex flex-col gap-2">
-                {fields.map((field) => (
-                  <SortableFieldRow
-                    key={field.field_key}
-                    field={field}
-                    selected={selected === field.field_key}
-                    onClick={() =>
-                      setSelected(
-                        selected === field.field_key ? null : field.field_key,
-                      )
-                    }
-                    onRemove={() => removeField(field.field_key)}
-                  />
-                ))}
-              </div>
-            </SortableContext>
-          </DndContext>
-        )}
-      </div>
-
-      {/* Inspector */}
-      {selectedField && (
-        <div className="w-64 flex-shrink-0 rounded-lg border bg-card p-4">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Field settings
-          </p>
-          <FieldInspector
-            field={selectedField}
-            onChange={(patch) => updateField(selectedField.field_key, patch)}
-          />
-        </div>
-      )}
-    </div>
+        ) : dragging?.kind === 'field' ? (
+          <div className="rounded-lg border border-primary/40 bg-card px-3 py-2 text-sm shadow-lg">
+            {fields.find((f) => f.field_key === dragging.key)?.label ??
+              'Field'}
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }
 
 // -----------------------------------------------------------------------
-// Sortable field row
+// Palette
 // -----------------------------------------------------------------------
 
-function SortableFieldRow({
-  field,
-  selected,
-  onClick,
-  onRemove,
+function Palette({
+  query,
+  onQueryChange,
+  onAdd,
 }: {
-  field: PublicFormField;
-  selected: boolean;
-  onClick: () => void;
-  onRemove: () => void;
+  query: string;
+  onQueryChange: (q: string) => void;
+  onAdd: (type: FormFieldType) => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: field.field_key });
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const matches = q
+      ? FIELD_TYPES.filter(
+          (f) =>
+            f.label.toLowerCase().includes(q) ||
+            f.type.includes(q) ||
+            f.hint.toLowerCase().includes(q),
+        )
+      : FIELD_TYPES;
+
+    return FIELD_GROUP_ORDER.map((group) => ({
+      group,
+      items: matches.filter((f) => f.group === group),
+    })).filter((g) => g.items.length > 0);
+  }, [query]);
+
+  return (
+    <aside className="flex w-56 shrink-0 flex-col overflow-hidden rounded-xl border bg-card">
+      <div className="border-b p-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            id="field-search"
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder="Search fields"
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {groups.length === 0 ? (
+          <p className="px-1 py-4 text-center text-xs text-muted-foreground">
+            No field type matches &ldquo;{query}&rdquo;.
+          </p>
+        ) : (
+          groups.map(({ group, items }) => (
+            <div key={group} className="mb-4 last:mb-0">
+              <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                {group}
+              </p>
+              <div className="flex flex-col gap-0.5">
+                {items.map((def) => (
+                  <PaletteItem key={def.type} def={def} onAdd={onAdd} />
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <p className="border-t px-3 py-2 text-[10px] leading-relaxed text-muted-foreground/70">
+        Drag onto the form, or click to add at the end.
+      </p>
+    </aside>
+  );
+}
+
+function PaletteItem({
+  def,
+  onAdd,
+}: {
+  def: FieldTypeDef;
+  onAdd: (type: FormFieldType) => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `palette-${def.type}`,
+    data: { kind: 'palette', def },
+  });
+
+  // dnd-kit swallows the click that ends a drag, but a drag that never
+  // moved still fires one. Tracking the press position keeps "click to
+  // append" working without it firing after a real drag.
+  const pressed = useRef<{ x: number; y: number } | null>(null);
+
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      id={`add-field-${def.type}`}
+      title={def.hint}
+      {...attributes}
+      {...listeners}
+      onPointerDown={(e) => {
+        pressed.current = { x: e.clientX, y: e.clientY };
+        listeners?.onPointerDown?.(e);
+      }}
+      onClick={(e) => {
+        const start = pressed.current;
+        pressed.current = null;
+        if (
+          start &&
+          Math.hypot(e.clientX - start.x, e.clientY - start.y) > 5
+        )
+          return;
+        onAdd(def.type);
+      }}
+      className={cn(
+        'flex w-full cursor-grab items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted active:cursor-grabbing',
+        isDragging && 'opacity-40',
+      )}
+    >
+      <def.icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className="truncate">{def.label}</span>
+    </button>
+  );
+}
+
+// -----------------------------------------------------------------------
+// Canvas
+// -----------------------------------------------------------------------
+
+const CANVAS_DROP_ID = '__canvas__';
+
+function Canvas({
+  fields,
+  selected,
+  onSelect,
+  onRemove,
+  onDuplicate,
+}: {
+  fields: FormBuilderField[];
+  selected: string | null;
+  onSelect: (key: string | null) => void;
+  onRemove: (key: string) => void;
+  onDuplicate: (key: string) => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: CANVAS_DROP_ID });
+
+  // Only to label the step dividers. Membership is positional, so this
+  // needs no conditional evaluation — everything between two breaks is one
+  // step whatever the rules say.
+  //
+  // Empty pages are dropped for the same reason the renderer drops them:
+  // a break with nothing after it produces no step, and counting one here
+  // would promise a "Step 3 of 3" that never appears.
+  const pageCount = Math.max(
+    splitIntoPages(fields).filter((p) => p.length > 0).length,
+    1,
+  );
+
+  return (
+    <div className="min-w-0 flex-1 overflow-y-auto rounded-xl border bg-muted/20">
+      <div
+        ref={setNodeRef}
+        className={cn(
+          'mx-auto min-h-full w-full max-w-3xl p-6 transition-colors',
+          isOver && 'bg-primary/5',
+        )}
+        onClick={(e) => {
+          // Clicking the backdrop deselects; clicking a field must not.
+          if (e.target === e.currentTarget) onSelect(null);
+        }}
+      >
+        {fields.length === 0 ? (
+          <EmptyCanvas />
+        ) : (
+          <SortableContext
+            items={fields.map((f) => f.field_key)}
+            strategy={verticalListSortingStrategy}
+          >
+            <div className="flex flex-wrap gap-5 rounded-xl border bg-background p-6 shadow-sm">
+              {fields.map((field, idx) => (
+                <CanvasField
+                  key={field.field_key}
+                  field={field}
+                  stepNumber={
+                    field.type === 'page_break'
+                      ? fields
+                          .slice(0, idx)
+                          .filter((f) => f.type === 'page_break').length + 2
+                      : undefined
+                  }
+                  totalSteps={pageCount}
+                  selected={selected === field.field_key}
+                  onSelect={() => onSelect(field.field_key)}
+                  onRemove={() => onRemove(field.field_key)}
+                  onDuplicate={() => onDuplicate(field.field_key)}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyCanvas() {
+  return (
+    <div className="flex h-72 flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-background/50 text-center">
+      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+        <Plus className="h-5 w-5 text-muted-foreground" />
+      </div>
+      <p className="text-sm font-medium">Drag a field here</p>
+      <p className="max-w-xs text-xs text-muted-foreground">
+        Or click one in the palette. What you build here is exactly what
+        your visitors will see.
+      </p>
+    </div>
+  );
+}
+
+function CanvasField({
+  field,
+  stepNumber,
+  totalSteps,
+  selected,
+  onSelect,
+  onRemove,
+  onDuplicate,
+}: {
+  field: FormBuilderField;
+  stepNumber?: number;
+  totalSteps: number;
+  selected: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+  onDuplicate: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: field.field_key, data: { kind: 'field' } });
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
   };
 
+  const isHalf = field.width === 'half' && field.type !== 'page_break';
+
   return (
     <div
       ref={setNodeRef}
       style={style}
+      onClick={onSelect}
       className={cn(
-        'group flex items-center gap-2 rounded-md border p-3 cursor-pointer transition-colors',
-        selected ? 'border-primary/60 bg-primary/5' : 'hover:border-muted-foreground/30',
-        isDragging && 'opacity-50',
+        'group relative cursor-pointer rounded-lg border border-transparent p-2 transition-colors',
+        isHalf ? 'w-full sm:w-[calc(50%-0.625rem)]' : 'w-full',
+        selected
+          ? 'border-primary/50 bg-primary/[0.03] ring-1 ring-primary/20'
+          : 'hover:border-border hover:bg-muted/30',
+        isDragging && 'opacity-40',
       )}
-      onClick={onClick}
     >
-      <button
-        type="button"
-        {...attributes}
-        {...listeners}
-        className="cursor-grab touch-none text-muted-foreground opacity-0 group-hover:opacity-100"
-        onClick={(e) => e.stopPropagation()}
+      {/* Hover/selected chrome. Absolutely positioned so it never changes
+          the field's own layout — the canvas has to measure like the real
+          form or half-width pairs would not line up. */}
+      <div
+        className={cn(
+          'absolute -top-2.5 right-2 z-10 flex items-center gap-0.5 rounded-md border bg-card px-1 py-0.5 shadow-sm transition-opacity',
+          selected
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100',
+        )}
       >
-        <GripVertical className="h-4 w-4" />
-      </button>
-
-      <div className="flex flex-1 flex-col gap-0.5">
-        <span className="text-sm font-medium">{field.label}</span>
-        <div className="flex items-center gap-1">
-          <Badge variant="outline" className="text-xs py-0">
-            {field.type}
-          </Badge>
-          {field.required && (
-            <span className="text-xs text-destructive">required</span>
-          )}
-        </div>
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          aria-label={`Reorder ${field.label}`}
+          onClick={(e) => e.stopPropagation()}
+          className="cursor-grab touch-none rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label={`Duplicate ${field.label}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDuplicate();
+          }}
+          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          id={`remove-field-${field.field_key}`}
+          aria-label={`Remove ${field.label}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       </div>
 
-      <button
-        type="button"
-        id={`remove-field-${field.field_key}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove();
-        }}
-        className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
-      >
-        <Trash2 className="h-4 w-4" />
-      </button>
+      <FieldBadges field={field} />
+
+      {field.type === 'page_break' ? (
+        <PageBreakPreview step={stepNumber ?? 2} total={totalSteps} />
+      ) : field.type === 'hidden' ? (
+        <HiddenPreview field={field} />
+      ) : (
+        /* The real renderer, made inert. `pointer-events-none` is what
+           stops a click landing in the input instead of selecting the
+           field, and `inert` keeps the preview out of the tab order — the
+           builder's own controls are the interactive ones. */
+        <div className="pointer-events-none select-none" inert>
+          <FieldInput
+            field={field}
+            value={undefined}
+            error={undefined}
+            onChange={() => {}}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-// -----------------------------------------------------------------------
-// Field inspector (right panel)
-// -----------------------------------------------------------------------
-
-function FieldInspector({
-  field,
-  onChange,
-}: {
-  field: PublicFormField;
-  onChange: (patch: Partial<PublicFormField>) => void;
-}) {
-  const isChoice =
-    field.type === 'select' ||
-    field.type === 'radio' ||
-    field.type === 'multiselect';
+/** Rule and mapping markers — the two settings with invisible effects. */
+function FieldBadges({ field }: { field: FormBuilderField }) {
+  const badges: string[] = [];
+  if (field.visible_when?.field_key) badges.push('conditional');
+  if (field.mapping) badges.push(`→ ${mappingLabel(field.mapping)}`);
+  if (badges.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Label */}
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="inspector-label">Label</Label>
-        <Input
-          id="inspector-label"
-          value={field.label}
-          onChange={(e) => onChange({ label: e.target.value })}
-        />
+    <div className="mb-1.5 flex flex-wrap items-center gap-1">
+      {badges.map((b) => (
+        <span
+          key={b}
+          className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-accent-violet"
+        >
+          {b === 'conditional' && <CornerDownRight className="h-2.5 w-2.5" />}
+          {b}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function mappingLabel(mapping: string): string {
+  if (mapping.startsWith('custom:')) return 'custom field';
+  return mapping;
+}
+
+function PageBreakPreview({ step, total }: { step: number; total: number }) {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <div className="h-px flex-1 border-t border-dashed border-primary/40" />
+      <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+        Step {step} of {total}
+      </span>
+      <div className="h-px flex-1 border-t border-dashed border-primary/40" />
+    </div>
+  );
+}
+
+function HiddenPreview({ field }: { field: FormBuilderField }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-dashed bg-muted/30 px-3 py-2.5">
+      <EyeOff className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium">{field.label}</p>
+        <p className="truncate text-[11px] text-muted-foreground">
+          Hidden — filled from <code>?{field.field_key}=</code> in the URL
+        </p>
       </div>
-
-      {/* Placeholder */}
-      {!['heading', 'paragraph', 'consent', 'rating', 'file', 'date', 'time'].includes(
-        field.type,
-      ) && (
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="inspector-placeholder">Placeholder</Label>
-          <Input
-            id="inspector-placeholder"
-            value={field.placeholder ?? ''}
-            onChange={(e) => onChange({ placeholder: e.target.value })}
-          />
-        </div>
-      )}
-
-      {/* Help text */}
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="inspector-help">Help text</Label>
-        <Input
-          id="inspector-help"
-          value={field.help_text ?? ''}
-          onChange={(e) => onChange({ help_text: e.target.value })}
-        />
-      </div>
-
-      {/* Required */}
-      {!['heading', 'paragraph'].includes(field.type) && (
-        <div className="flex items-center justify-between">
-          <Label htmlFor="inspector-required">Required</Label>
-          <Switch
-            id="inspector-required"
-            checked={field.required ?? false}
-            onCheckedChange={(v) => onChange({ required: v })}
-          />
-        </div>
-      )}
-
-      {/* Width */}
-      <div className="flex flex-col gap-1">
-        <Label>Width</Label>
-        <div className="flex gap-2">
-          {(['full', 'half'] as const).map((w) => (
-            <button
-              key={w}
-              type="button"
-              onClick={() => onChange({ width: w })}
-              className={cn(
-                'flex-1 rounded-md border py-1 text-xs',
-                field.width === w
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'hover:bg-muted',
-              )}
-            >
-              {w === 'full' ? 'Full width' : 'Half width'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Options for choice fields */}
-      {isChoice && (
-        <div className="flex flex-col gap-2">
-          <Label>Options</Label>
-          {field.options?.map((opt, idx) => (
-            <div key={opt.value} className="flex gap-1">
-              <Input
-                value={opt.label}
-                onChange={(e) => {
-                  const opts = [...(field.options ?? [])];
-                  opts[idx] = { ...opts[idx], label: e.target.value };
-                  onChange({ options: opts });
-                }}
-                placeholder={`Option ${idx + 1}`}
-                className="text-sm"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const opts = field.options?.filter((_, i) => i !== idx);
-                  onChange({ options: opts });
-                }}
-                className="text-muted-foreground hover:text-destructive"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const key = `option_${Math.random().toString(36).slice(2, 6)}`;
-              const opts = [
-                ...(field.options ?? []),
-                { value: key, label: `Option ${(field.options?.length ?? 0) + 1}` },
-              ];
-              onChange({ options: opts });
-            }}
-          >
-            <Plus className="mr-1 h-3.5 w-3.5" />
-            Add option
-          </Button>
-        </div>
-      )}
-
-      {/* Rating scale */}
-      {field.type === 'rating' && (
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="inspector-scale">Scale (stars)</Label>
-          <Input
-            id="inspector-scale"
-            type="number"
-            min={3}
-            max={10}
-            value={field.scale ?? 5}
-            onChange={(e) => onChange({ scale: Number(e.target.value) })}
-          />
-        </div>
-      )}
     </div>
   );
 }

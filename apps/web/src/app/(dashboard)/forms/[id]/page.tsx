@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 
 // Lazily imported builder components
 import FormBuilder from '@/components/forms/form-builder';
+import type { FormBuilderField } from '@/lib/forms/field-types';
 import FormSettingsPanel from '@/components/forms/form-settings-panel';
 import FormSharePanel from '@/components/forms/form-share-panel';
 import FormAvailabilityPanel, {
@@ -36,7 +37,7 @@ interface FormData {
   slug: string;
   kind: 'form' | 'booking';
   status: 'draft' | 'published' | 'archived';
-  fields: unknown[];
+  fields: FormBuilderField[];
   settings: Record<string, unknown>;
   notify: Record<string, unknown>;
   /** NULL = takes no bookings. Set on the Availability tab. */
@@ -53,7 +54,7 @@ export default function FormBuilderPage() {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [localFields, setLocalFields] = useState<unknown[]>([]);
+  const [localFields, setLocalFields] = useState<FormBuilderField[]>([]);
   const [activeTab, setActiveTab] = useState('builder');
 
   /**
@@ -61,8 +62,9 @@ export default function FormBuilderPage() {
    * slot field reveals the Availability tab immediately rather than after a
    * save-and-reload.
    */
-  const hasSlotField = (localFields.length ? localFields : (form?.fields ?? []))
-    .some((f) => (f as { type?: string })?.type === 'appointment_slot');
+  const hasSlotField = (
+    localFields.length ? localFields : (form?.fields ?? [])
+  ).some((f) => f?.type === 'appointment_slot');
 
   useEffect(() => {
     const load = async () => {
@@ -82,7 +84,7 @@ export default function FormBuilderPage() {
     load();
   }, [id, router]);
 
-  const handleFieldsChange = useCallback((fields: unknown[]) => {
+  const handleFieldsChange = useCallback((fields: FormBuilderField[]) => {
     setLocalFields(fields);
     setDirty(true);
   }, []);
@@ -140,7 +142,7 @@ export default function FormBuilderPage() {
 
   if (loading || !form) {
     return (
-      <div className="flex h-64 items-center justify-center">
+      <div className="bg-background fixed inset-0 flex items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
@@ -149,9 +151,20 @@ export default function FormBuilderPage() {
   const isPublished = form.status === 'published';
 
   return (
-    <div className="flex h-full flex-col">
+    /*
+     * Full viewport, escaping the dashboard's rail, panel and header —
+     * the same `fixed inset-0` the automation editor uses.
+     *
+     * Building a form is a canvas job: the palette, the form itself and
+     * the settings panel are three columns that all want vertical room,
+     * and inside the shell's scrolling `<main>` they were sharing width
+     * with navigation nobody needs while dragging a field. The back arrow
+     * in the header is the way out, which is why it is the first thing in
+     * the bar.
+     */
+    <div className="bg-background fixed inset-0 z-40 flex flex-col">
       {/* Top bar */}
-      <div className="flex items-center gap-3 border-b px-4 py-3">
+      <div className="flex flex-shrink-0 items-center gap-3 border-b px-4 py-3">
         <Button
           id="btn-back-to-forms"
           variant="ghost"
@@ -224,7 +237,7 @@ export default function FormBuilderPage() {
         onValueChange={setActiveTab}
         className="flex flex-1 flex-col overflow-hidden"
       >
-        <TabsList className="mx-4 mt-3 self-start">
+        <TabsList className="mx-4 mt-3 flex-shrink-0 self-start">
           <TabsTrigger value="builder" id="tab-builder">
             <Settings2 className="mr-2 h-4 w-4" />
             Builder
@@ -265,14 +278,14 @@ export default function FormBuilderPage() {
           )}
         </TabsList>
 
+        {/* `overflow-hidden`, not `auto`: the builder is three columns that
+            scroll independently, and an outer scrollbar would move the
+            palette and the inspector off screen together with the form. */}
         <TabsContent
           value="builder"
-          className="flex-1 overflow-auto p-4"
+          className="min-h-0 flex-1 overflow-hidden p-4"
         >
-          <FormBuilder
-            fields={localFields as never}
-            onChange={handleFieldsChange}
-          />
+          <FormBuilder fields={localFields} onChange={handleFieldsChange} />
         </TabsContent>
 
         <TabsContent value="settings" className="flex-1 overflow-auto p-4">

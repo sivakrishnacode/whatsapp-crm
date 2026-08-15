@@ -1,6 +1,8 @@
 import {
+  FIELD_CONDITION_OPERATORS,
   FORM_FIELD_TYPES,
   PRESENTATIONAL_TYPES,
+  computeFieldVisibility,
   type FieldError,
   type FormField,
   type FormFieldType,
@@ -70,6 +72,8 @@ export function validateFormDefinition(fields: unknown): DefinitionIssue[] {
   }
 
   const seenKeys = new Set<string>();
+  /** Headings, paragraphs and page breaks — nothing to key a rule off. */
+  const presentationalKeys = new Set<string>();
 
   fields.forEach((raw, index) => {
     if (!raw || typeof raw !== 'object') {
@@ -137,6 +141,48 @@ export function validateFormDefinition(fields: unknown): DefinitionIssue[] {
         message: 'Mapping must be a string.',
       });
     }
+
+    // Conditional visibility. Every problem here is one that would
+    // otherwise surface as a field that never appears, or one that appears
+    // and cannot be satisfied — both of which look like a broken form
+    // rather than a broken rule, on a URL the customer has already shared.
+    if (field.visible_when !== undefined) {
+      const rule = field.visible_when;
+      const issue = (message: string) =>
+        issues.push({ index, field_key: field.field_key ?? null, message });
+
+      if (!rule || typeof rule !== 'object') {
+        issue('Visibility rule must be an object.');
+      } else if (!rule.field_key || typeof rule.field_key !== 'string') {
+        issue('Visibility rule must name a field.');
+      } else if (
+        !(FIELD_CONDITION_OPERATORS as readonly string[]).includes(
+          rule.operator,
+        )
+      ) {
+        issue(`Unknown visibility operator "${String(rule.operator)}".`);
+      } else if (rule.field_key === field.field_key) {
+        issue('A field cannot depend on itself.');
+      } else if (!seenKeys.has(rule.field_key)) {
+        // `seenKeys` holds only the fields ALREADY walked, so this single
+        // check rejects both a reference to a field that does not exist
+        // and a reference to one further down the form. The latter can
+        // never be answered in time — decisively so once a page break
+        // sits between them — and forbidding it is also what makes
+        // dependency cycles impossible by construction.
+        issue(
+          `Visibility rule points at "${rule.field_key}", which must be a field above this one.`,
+        );
+      } else if (presentationalKeys.has(rule.field_key)) {
+        issue(
+          `Visibility rule points at "${rule.field_key}", which has no answer to test.`,
+        );
+      }
+    }
+
+    if (field.field_key && PRESENTATIONAL_TYPES.includes(field.type)) {
+      presentationalKeys.add(field.field_key);
+    }
   });
 
   return issues;
@@ -153,8 +199,17 @@ export function validateSubmission(
   const errors: FieldError[] = [];
   const data: Record<string, unknown> = {};
 
+  // Conditional fields are resolved BEFORE anything is checked, because a
+  // question the visitor never saw must neither be required of them nor
+  // recorded against them. Both halves matter: skipping the requirement
+  // alone would still let a stale answer through — someone who picks
+  // "Other", types a reason, then switches back to a standard option must
+  // not have that reason filed as their answer.
+  const visible = computeFieldVisibility(fields, input);
+
   for (const field of fields) {
     if (PRESENTATIONAL_TYPES.includes(field.type)) continue;
+    if (visible[field.field_key] === false) continue;
 
     const raw = input[field.field_key];
     const result = coerceField(field, raw);
@@ -192,8 +247,20 @@ function isBlank(value: unknown): boolean {
   );
 }
 
-function coerceField(field: FormField, raw: unknown): CoerceResult {
+function coerceField(field: FormField, input: unknown): CoerceResult {
   const label = field.label || field.field_key;
+
+  // A hidden field's default fills in for an absent value.
+  //
+  // It has to happen HERE rather than in the renderer because
+  // `default_value` is stripped from the public projection — it can name
+  // internal campaign structure, so the browser never sees it and cannot
+  // apply it. The query parameter still wins when present; the default is
+  // what a visitor arriving without one is recorded as.
+  const raw =
+    isBlank(input) && field.type === 'hidden' && field.default_value
+      ? field.default_value
+      : input;
 
   if (isBlank(raw)) {
     // `consent` is required-by-nature: an unticked consent box is a "no",

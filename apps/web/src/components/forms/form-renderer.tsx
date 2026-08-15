@@ -1,13 +1,25 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, CheckCircle2, AlertCircle, Star } from 'lucide-react';
+import {
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  Star,
+  ArrowLeft,
+  ArrowRight,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import {
+  computeFieldVisibility,
+  splitIntoPages,
+  type FieldCondition,
+} from '@/lib/forms/visibility';
 import { SlotPicker } from './slot-picker';
 
 // -----------------------------------------------------------------------
@@ -37,6 +49,7 @@ export type FormFieldType =
   | 'consent'
   | 'heading'
   | 'paragraph'
+  | 'page_break'
   | 'appointment_slot';
 
 export interface PublicFormField {
@@ -52,6 +65,8 @@ export interface PublicFormField {
   max?: number;
   scale?: number;
   accept?: string[];
+  /** Show only when this rule holds. See lib/forms/visibility.ts. */
+  visible_when?: FieldCondition;
 }
 
 export interface PublicForm {
@@ -143,6 +158,42 @@ export default function FormRenderer({
   const [submitted, setSubmitted] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [startTime] = useState(Date.now());
+  const [pageIndex, setPageIndex] = useState(0);
+
+  /**
+   * Which fields are on screen right now.
+   *
+   * Recomputed from `answers` on every keystroke rather than stored, so a
+   * rule can never go stale against the answer it watches. Mirrors what
+   * the server does before it validates — see lib/forms/visibility.ts.
+   */
+  const visibility = useMemo(
+    () => computeFieldVisibility(form.fields, answers),
+    [form.fields, answers],
+  );
+
+  /**
+   * Pages, after conditional fields are removed.
+   *
+   * Filtering BEFORE splitting is what lets a page that has been emptied
+   * by a rule disappear instead of rendering as a blank step with a Next
+   * button — the visitor would have no idea what they were being asked to
+   * confirm. Hidden inputs are dropped here too; they are submitted from
+   * `initialAnswers`, never rendered.
+   */
+  const pages = useMemo(() => {
+    const shown = form.fields.filter(
+      (f) => f.type !== 'hidden' && visibility[f.field_key] !== false,
+    );
+    return splitIntoPages(shown).filter((page) => page.length > 0);
+  }, [form.fields, visibility]);
+
+  // A rule can empty the page the visitor is standing on, so the index is
+  // clamped at read time rather than trusted.
+  const totalPages = Math.max(pages.length, 1);
+  const currentPage = Math.min(pageIndex, totalPages - 1);
+  const isMultiPage = totalPages > 1;
+  const isLastPage = currentPage >= totalPages - 1;
 
   // Initialise hidden defaults
   const initialAnswers: Record<string, unknown> = {};
@@ -162,10 +213,24 @@ export default function FormRenderer({
     });
   };
 
-  const validate = (): boolean => {
+  /**
+   * Check required answers.
+   *
+   * Scoped to a field list so it can serve both "may I advance a page?"
+   * and "may I submit?". A field hidden by a rule is never in the list it
+   * is handed — `pages` is built from `visibility` — which is what keeps
+   * this in step with the server, where the same fields are skipped.
+   */
+  const validateFields = (fields: PublicFormField[]): boolean => {
     const errs: Record<string, string> = {};
-    form.fields.forEach((f) => {
-      if (f.type === 'heading' || f.type === 'paragraph' || f.type === 'hidden') return;
+    fields.forEach((f) => {
+      if (
+        f.type === 'heading' ||
+        f.type === 'paragraph' ||
+        f.type === 'page_break' ||
+        f.type === 'hidden'
+      )
+        return;
       if (!f.required) return;
       const val = answers[f.field_key];
       const empty =
@@ -179,18 +244,53 @@ export default function FormRenderer({
     return Object.keys(errs).length === 0;
   };
 
+  const goNext = () => {
+    if (!validateFields(pages[currentPage] ?? [])) return;
+    setPageIndex(currentPage + 1);
+    // A long step leaves the next one scrolled past its own first
+    // question, which reads as a form that skipped something.
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+  };
+
+  const goBack = () => {
+    // Deliberately no validation on the way back: someone returning to fix
+    // an answer must not be blocked by the one they were fixing.
+    setErrors({});
+    setPageIndex(Math.max(currentPage - 1, 0));
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (preview) {
       toast.info('Preview mode — submission disabled');
       return;
     }
-    if (!validate()) return;
+    // Every page, not just the last: a rule can reveal a required field on
+    // a step already walked past, and only the server would catch it.
+    if (!validateFields(pages.flat())) {
+      // Send them to the first step that actually has the problem, or the
+      // error is reported on a page they cannot see.
+      const firstBad = pages.findIndex((page) =>
+        page.some((f) => f.required && isBlankAnswer(answers[f.field_key])),
+      );
+      if (firstBad >= 0 && firstBad !== currentPage) setPageIndex(firstBad);
+      return;
+    }
 
     setSubmitting(true);
     try {
+      // Only what was actually on screen is sent. A stale answer to a
+      // question a rule later hid must not be filed against the contact —
+      // the server drops it too, and these two agreeing is what stops a
+      // submission being rejected for a field the visitor never saw.
+      const visibleAnswers: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(answers)) {
+        if (visibility[key] !== false) visibleAnswers[key] = value;
+      }
+
       const payload: FormSubmitPayload = {
-        answers: { ...initialAnswers, ...answers },
+        answers: { ...initialAnswers, ...visibleAnswers },
         spam: { elapsedMs: Date.now() - startTime },
       };
 
@@ -231,11 +331,16 @@ export default function FormRenderer({
     );
   }
 
-  const visibleFields = form.fields.filter((f) => f.type !== 'hidden');
-
   return (
-    <form onSubmit={handleSubmit} className="flex flex-wrap gap-6">
-      {visibleFields.map((field) => (
+    <form
+      onSubmit={handleSubmit}
+      className={cn('flex flex-wrap', compact ? 'gap-4' : 'gap-6')}
+    >
+      {isMultiPage && (
+        <StepProgress current={currentPage} total={totalPages} />
+      )}
+
+      {(pages[currentPage] ?? []).map((field) => (
         <FieldInput
           key={field.field_key}
           field={field}
@@ -258,18 +363,91 @@ export default function FormRenderer({
         />
       )}
 
-      <div className="w-full pt-2">
-        <Button
-          type="submit"
-          id="btn-submit-form"
-          disabled={submitting}
-          className="w-full sm:w-auto px-8 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-medium shadow-md shadow-violet-500/20 rounded-lg transition-all"
-        >
-          {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {form.settings.submit_label || 'Submit'}
-        </Button>
+      <div className="flex w-full items-center gap-3 pt-2">
+        {isMultiPage && currentPage > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            id="btn-form-back"
+            onClick={goBack}
+            className="rounded-lg px-5 py-2.5"
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        )}
+
+        {isLastPage ? (
+          <Button
+            type="submit"
+            id="btn-submit-form"
+            disabled={submitting}
+            className="w-full sm:w-auto px-8 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-medium shadow-md shadow-violet-500/20 rounded-lg transition-all"
+          >
+            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {form.settings.submit_label || 'Submit'}
+          </Button>
+        ) : (
+          /* type="button", so Enter in a text input cannot submit a
+             half-finished multi-page form. */
+          <Button
+            type="button"
+            id="btn-form-next"
+            onClick={goNext}
+            className="w-full sm:w-auto px-8 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-medium shadow-md shadow-violet-500/20 rounded-lg transition-all"
+          >
+            Next
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        )}
       </div>
     </form>
+  );
+}
+
+/** True for the shapes an unanswered field can take. */
+function isBlankAnswer(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    value === '' ||
+    (Array.isArray(value) && value.length === 0)
+  );
+}
+
+/**
+ * Step counter and bar for a multi-page form.
+ *
+ * Both the number and the bar: the bar alone leaves "how much is left?"
+ * to be estimated from a few pixels, which is the question that decides
+ * whether someone starts filling the thing in at all.
+ */
+function StepProgress({ current, total }: { current: number; total: number }) {
+  const pct = ((current + 1) / total) * 100;
+  return (
+    <div className="w-full">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">
+          Step {current + 1} of {total}
+        </span>
+        <span className="text-xs text-muted-foreground/70">
+          {Math.round(pct)}%
+        </span>
+      </div>
+      <div
+        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuenow={current + 1}
+        aria-valuemin={1}
+        aria-valuemax={total}
+        aria-label={`Step ${current + 1} of ${total}`}
+      >
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-violet-600 to-indigo-600 transition-all duration-300"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -286,7 +464,15 @@ interface FieldInputProps {
   onChange: (value: unknown) => void;
 }
 
-function FieldInput({
+/**
+ * Exported for the builder's canvas, which renders it read-only inside a
+ * selection shell.
+ *
+ * That is the whole point of sharing it: a builder that draws its own
+ * approximation of a field drifts from the published form silently, and
+ * the first person to notice is a customer looking at a live page.
+ */
+export function FieldInput({
   field,
   value,
   error,

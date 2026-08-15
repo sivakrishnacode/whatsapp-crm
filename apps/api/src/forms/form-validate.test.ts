@@ -331,3 +331,232 @@ describe('parseMapping', () => {
     expect(parseMapping('id')).toBeNull();
   });
 });
+
+// ============================================================
+// Conditional visibility (visible_when)
+// ============================================================
+
+describe('validateFormDefinition — visibility rules', () => {
+  it('accepts a rule pointing at an earlier field', () => {
+    expect(
+      validateFormDefinition([
+        field({
+          field_key: 'how',
+          type: 'select',
+          label: 'How?',
+          options: [{ value: 'other', label: 'Other' }],
+        }),
+        field({
+          field_key: 'detail',
+          label: 'Tell us more',
+          visible_when: {
+            field_key: 'how',
+            operator: 'equals',
+            value: 'other',
+          },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('rejects a forward reference', () => {
+    // A field further down cannot be answered in time — decisively so once
+    // a page break sits between them. Rejecting it here is also what makes
+    // dependency cycles impossible by construction.
+    const issues = validateFormDefinition([
+      field({
+        field_key: 'detail',
+        visible_when: { field_key: 'how', operator: 'equals', value: 'other' },
+      }),
+      field({ field_key: 'how' }),
+    ]);
+    expect(issues[0].message).toContain('must be a field above this one');
+  });
+
+  it('rejects a self-reference', () => {
+    const issues = validateFormDefinition([
+      field({
+        field_key: 'loop',
+        visible_when: { field_key: 'loop', operator: 'equals', value: 'x' },
+      }),
+    ]);
+    expect(issues[0].message).toContain('cannot depend on itself');
+  });
+
+  it('rejects a rule keyed off a presentational field', () => {
+    const issues = validateFormDefinition([
+      field({ field_key: 'hdr', type: 'heading', label: 'Section' }),
+      field({
+        field_key: 'q',
+        visible_when: { field_key: 'hdr', operator: 'is_not_empty' },
+      }),
+    ]);
+    expect(issues[0].message).toContain('no answer to test');
+  });
+
+  it('rejects an unknown operator', () => {
+    const issues = validateFormDefinition([
+      field({ field_key: 'a' }),
+      field({
+        field_key: 'b',
+        visible_when: { field_key: 'a', operator: 'sorta' as never },
+      }),
+    ]);
+    expect(issues[0].message).toContain('Unknown visibility operator');
+  });
+
+  it('does not require a label on a page break', () => {
+    expect(
+      validateFormDefinition([field({ type: 'page_break', label: '' })]),
+    ).toEqual([]);
+  });
+});
+
+describe('validateSubmission — conditional fields', () => {
+  const form = [
+    field({
+      field_key: 'how',
+      type: 'select',
+      label: 'How did you hear?',
+      options: [
+        { value: 'other', label: 'Other' },
+        { value: 'friend', label: 'A friend' },
+      ],
+    }),
+    field({
+      field_key: 'detail',
+      label: 'Please specify',
+      required: true,
+      visible_when: { field_key: 'how', operator: 'equals', value: 'other' },
+    }),
+  ];
+
+  it('does not require a required field the visitor never saw', () => {
+    // The whole point. Without this the form is unsubmittable: the browser
+    // skips the hidden field, the server demands it, and the error is
+    // painted onto an input that is not on screen.
+    const result = validateSubmission(form, { how: 'friend' });
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('still requires it once the rule is met', () => {
+    const result = validateSubmission(form, { how: 'other' });
+    expect(result.ok).toBe(false);
+    expect(result.errors[0].field_key).toBe('detail');
+  });
+
+  it('drops a stale answer to a field that ended up hidden', () => {
+    // Someone picks Other, types a reason, then changes their mind. The
+    // reason must not be filed as their answer.
+    const result = validateSubmission(form, {
+      how: 'friend',
+      detail: 'left over from before',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.data).not.toHaveProperty('detail');
+  });
+
+  it('hides a field whose parent is itself hidden', () => {
+    const chained = [
+      ...form,
+      field({
+        field_key: 'deeper',
+        label: 'And then?',
+        required: true,
+        visible_when: {
+          field_key: 'detail',
+          operator: 'is_not_empty',
+        },
+      }),
+    ];
+    // `detail` is hidden, so `deeper` must be too — even though the stale
+    // `detail` answer below would satisfy the rule on its own.
+    const result = validateSubmission(chained, {
+      how: 'friend',
+      detail: 'stale',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.data).not.toHaveProperty('deeper');
+  });
+
+  it('shows a field whose rule is absent', () => {
+    const result = validateSubmission(
+      [field({ field_key: 'plain', required: true })],
+      {},
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('matches a multiselect answer as "is one of the ticked boxes"', () => {
+    const multi = [
+      field({
+        field_key: 'topics',
+        type: 'multiselect',
+        label: 'Topics',
+        options: [
+          { value: 'billing', label: 'Billing' },
+          { value: 'tech', label: 'Tech' },
+        ],
+      }),
+      field({
+        field_key: 'invoice',
+        label: 'Invoice number',
+        required: true,
+        visible_when: {
+          field_key: 'topics',
+          operator: 'equals',
+          value: 'billing',
+        },
+      }),
+    ];
+    expect(validateSubmission(multi, { topics: ['tech'] }).ok).toBe(true);
+    expect(validateSubmission(multi, { topics: ['billing'] }).ok).toBe(false);
+  });
+
+  it('treats a rule on a form saved before rules existed as visible', () => {
+    // Unknown reference — shown rather than hidden, because a field nobody
+    // can see is the worse of the two failures.
+    const result = validateSubmission(
+      [
+        field({
+          field_key: 'q',
+          required: true,
+          visible_when: { field_key: 'gone', operator: 'equals', value: 'x' },
+        }),
+      ],
+      {},
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('validateSubmission — hidden field defaults', () => {
+  const hidden = field({
+    field_key: 'utm_source',
+    type: 'hidden',
+    label: 'Source',
+    default_value: 'direct',
+  });
+
+  it('fills in the default when the visitor arrived without the query param', () => {
+    // Applied server-side because `default_value` is stripped from the
+    // public projection — the browser never sees it and cannot apply it.
+    const result = validateSubmission([hidden], {});
+    expect(result.data.utm_source).toBe('direct');
+  });
+
+  it('lets a real value win over the default', () => {
+    const result = validateSubmission([hidden], { utm_source: 'newsletter' });
+    expect(result.data.utm_source).toBe('newsletter');
+  });
+
+  it('leaves a hidden field with no default absent rather than empty', () => {
+    const result = validateSubmission(
+      [field({ field_key: 'plain', type: 'hidden', label: 'Plain' })],
+      {},
+    );
+    expect(result.ok).toBe(true);
+    expect(result.data).not.toHaveProperty('plain');
+  });
+});

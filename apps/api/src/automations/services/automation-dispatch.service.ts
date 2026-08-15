@@ -7,6 +7,7 @@ import { AutomationStepExecutorService } from './automation-step-executor.servic
 import { triggerMatches } from './automation-trigger-match.util';
 import { toChannel } from '../../common/messaging/channel';
 import { AUTOMATION_TRIGGER_QUEUE } from '../../queue/queue.constants';
+import { CHANNELLESS_TRIGGERS } from '../automation.types';
 import type {
   AutomationContext,
   AutomationDispatchInput,
@@ -101,11 +102,15 @@ export class AutomationDispatchService {
       // owns that default rather than each call site guessing.
       const eventChannel = toChannel(input.context?.channel);
 
+      // Some events have no channel AT ALL, and for those the default
+      // above is an artefact rather than a fact — see CHANNELLESS_TRIGGERS.
+      const channelScoped = !CHANNELLESS_TRIGGERS.has(input.triggerType);
+
       for (const automation of automations) {
         // Channel scoping. An EMPTY `channels` array means "no
         // restriction" — the default, and what every automation
         // predating the column carries — so this only ever narrows.
-        if (automation.channels.length > 0) {
+        if (channelScoped && automation.channels.length > 0) {
           if (!automation.channels.includes(eventChannel)) {
             continue;
           }

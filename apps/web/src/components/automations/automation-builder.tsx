@@ -216,6 +216,11 @@ function BuilderShell({ initial }: { initial: BuilderInitial }) {
               const lock = TRIGGER_CHANNEL_LOCK[t];
               patch('trigger_type', t);
               if (lock) patch('channels', [lock]);
+              // A channel-less trigger hides the picker, so any scope left
+              // over from the previous trigger would sit there unseen and
+              // silently stop the automation firing. Clearing it is what
+              // makes hiding the picker safe.
+              else if (CHANNELLESS_TRIGGERS.has(t)) patch('channels', []);
             }}
             onTriggerConfigChange={(c) => patch('trigger_config', c)}
           onChannelsChange={(c) => patch('channels', c)}
@@ -239,5 +244,23 @@ const TRIGGER_CHANNEL_LOCK: Partial<Record<AutomationTriggerType, string>> = {
   instagram_story_reply: 'instagram',
   web_chat_started: 'web',
 };
+
+/**
+ * Triggers whose event carries no channel, so a channel scope can only
+ * silence them.
+ *
+ * Mirrors `channelless` on TRIGGER_OPTIONS in canvas/trigger-inspector.tsx,
+ * which hides the picker; this clears whatever the picker left behind.
+ * Neither `FormSubmitService.fanOut` nor `BookingService.fanOut` sets
+ * `context.channel`, so the dispatcher's `toChannel(undefined)` resolves
+ * these to DEFAULT_CHANNEL — any explicit scope that is not WhatsApp
+ * therefore matches nothing, permanently and with nothing logged.
+ */
+const CHANNELLESS_TRIGGERS = new Set<AutomationTriggerType>([
+  'form_submitted',
+  'appointment_booked',
+  'appointment_cancelled',
+  'appointment_rescheduled',
+]);
 
 export { STEP_META };

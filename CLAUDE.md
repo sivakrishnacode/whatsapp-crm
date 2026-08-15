@@ -100,7 +100,7 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
 - ⚠️ **Supabase Storage buckets are written from the BROWSER, not the API** (`avatars`, `flow-media` 016/020, `chat-media` 023, `workspace-logos` 071). The bucket's RLS policy is therefore the _only_ gate on those writes — it must carry the authorization itself, including any role check. Account-scoped buckets all use the path convention `account-<account_id>/…` matched on the first folder segment, built in one place by `buildMediaPath()` (`apps/web/src/lib/storage/upload-media.ts`); a hand-rolled path is silently rejected. When such a URL is later persisted to a column, pin it to our own bucket _and_ the caller's own folder server-side (`common/storage/workspace-logo.util.ts`) — a free-text URL that renders in every teammate's browser is a beacon.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs` (workspace AI settings)/`ai_agents`/`ai_agent_knowledge`/`ai_agent_action_links` (migration 084 — several agents per workspace)/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `app_connections` (migration 082 — OAuth app connectors), `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
+- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `forms`/`form_submissions`/`form_bookings` (migrations 054/055 — the form builder), `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs` (workspace AI settings)/`ai_agents`/`ai_agent_knowledge`/`ai_agent_action_links` (migration 084 — several agents per workspace)/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `app_connections` (migration 082 — OAuth app connectors), `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
 
 ## Auth & signup
 
@@ -532,6 +532,60 @@ the editor works the way it does.
 - **Colour is per CATEGORY, not per step type** (24 hues is noise), and
   `stepColors().line` — not `solid` — paints every stroke and glyph: the raw
   hue measures 2.53:1 on a light card, under WCAG 1.4.11's 3:1.
+- ⚠️ **Some triggers carry NO channel, and scoping one silences it**
+  (`CHANNELLESS_TRIGGERS`): `form_submitted` and the three `appointment_*`.
+  `FormSubmitService.fanOut` / `BookingService.fanOut` set no
+  `context.channel`, so the dispatcher's `toChannel(undefined)` resolves them
+  to WhatsApp — picking "Web" for a website form, the intuitive answer, meant
+  it never fired, permanently and with nothing logged. The dispatcher now
+  IGNORES `channels` for these (automations saved earlier carry a scope
+  nobody can see any more), the inspector hides the picker
+  (`channelless` on `TRIGGER_OPTIONS`), and switching to one clears whatever
+  the picker left behind. Three places, all mirrors of one list.
+
+## Forms — builder, conditional logic and steps (migrations 054/055)
+
+A form is a **JSON list of fields** on `forms.fields`, so a new field type or
+field property is a code change with no migration. `form_submissions.data` is
+keyed by `field_key`.
+
+- ⚠️ **`field_key` is the identity and is generated ONCE.** It keys
+  `submissions.data`, so it must survive the label being reworded — the
+  builder mints it from the first label (`makeFieldKey`) and never
+  regenerates it. The inspector shows it read-only; an export column nobody
+  can find is worse than a slightly ugly one.
+- ⚠️ **Conditional visibility is enforced in TWO places that must agree.**
+  `computeFieldVisibility` in `apps/api/src/forms/form.types.ts` is the
+  authority; `apps/web/src/lib/forms/visibility.ts` mirrors it for the
+  renderer and the builder. When they disagree the form becomes
+  **unsubmittable**: the browser hides a required field, the server demands
+  it, and the error lands on an input that is not on screen. Pinned on both
+  sides (`form-validate.test.ts`, `visibility.test.ts`).
+- ⚠️ **A hidden field is not a blank one.** The validator neither requires nor
+  STORES a field a rule hid — dropping the stale answer matters as much as
+  skipping the requirement, or someone who picks "Other", types a reason and
+  then changes their mind has that reason filed against them.
+- **Rules point BACKWARDS only** (`visible_when.field_key` must name an
+  earlier field). That single rule makes cycles impossible by construction
+  instead of by cycle detection, and it is the only arrangement a rule can be
+  satisfied under once page breaks exist. Rejected at save time.
+- **`page_break` is a presentational field**, not a container: steps are
+  positional, everything between two breaks is one step, and `splitIntoPages`
+  drops empty pages so a rule that empties a step removes it rather than
+  rendering a blank one with a Next button.
+- ⚠️ **The builder canvas renders the REAL `FieldInput`** from
+  `form-renderer.tsx`, inert inside a selection shell. A builder that draws
+  its own approximation of a field drifts from the published form silently,
+  and the first person to notice is a customer on a live page. It is also why
+  half-width fields pair up correctly in the canvas — same flex container.
+- **`mapping` and `default_value` are stripped from the public projection**
+  (`toPublicProjection`) — they describe the tenant's own CRM structure. So a
+  hidden field's default has to be applied SERVER-side in the validator; the
+  browser never sees it.
+- The editor is **full-screen (`fixed inset-0`)** like the automation editor,
+  for the same reason: three columns that all want vertical room.
+- Submitting fires the `form_submitted` automation trigger and the
+  `form.submitted` webhook — see the channel-less warning above.
 
 ## Queues (`apps/api/src/queue`, BullMQ + Redis)
 

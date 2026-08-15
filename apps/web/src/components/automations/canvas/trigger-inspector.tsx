@@ -26,6 +26,20 @@ export const TRIGGER_OPTIONS: {
   label: string;
   hint: string;
   channelLock?: string;
+  /**
+   * The event carries no channel at all, so scoping by channel can only
+   * ever silence the automation.
+   *
+   * A form submission and a booking happen on a public page, and neither
+   * `FormSubmitService.fanOut` nor `BookingService.fanOut` puts a
+   * `channel` on the context. `toChannel(undefined)` then falls through to
+   * DEFAULT_CHANNEL — so picking "Web" for a website form, which is the
+   * intuitive choice, makes it match `whatsapp` and never fire, with
+   * nothing logged. Picking WhatsApp "works" only by coincidence of that
+   * default. A picker whose every deliberate answer is wrong is worse than
+   * no picker, so these show a note instead.
+   */
+  channelless?: boolean;
 }[] = [
   {
     value: 'new_message_received',
@@ -58,16 +72,25 @@ export const TRIGGER_OPTIONS: {
     value: 'form_submitted',
     label: 'Form submitted',
     hint: 'Any form, or one you choose. Not tied to a channel.',
+    channelless: true,
   },
   {
     value: 'appointment_booked',
     label: 'Appointment booked',
     hint: 'Someone books a slot',
+    channelless: true,
   },
   {
     value: 'appointment_cancelled',
     label: 'Appointment cancelled',
     hint: 'Someone cancels a booking',
+    channelless: true,
+  },
+  {
+    value: 'appointment_rescheduled',
+    label: 'Appointment rescheduled',
+    hint: 'Someone moves a booking to a new time',
+    channelless: true,
   },
   {
     value: 'web_chat_started',
@@ -123,6 +146,7 @@ export function TriggerInspector({
   const { tags, forms, appointmentTypes } = useAutomationResources();
   const option = TRIGGER_OPTIONS.find((o) => o.value === triggerType);
   const channelLock = option?.channelLock;
+  const channelless = option?.channelless ?? false;
 
   return (
     <aside
@@ -175,6 +199,19 @@ export function TriggerInspector({
           </select>
         </FieldBlock>
 
+        {/* Hidden entirely for a channel-less trigger — see `channelless`
+            on TRIGGER_OPTIONS. Rendering a disabled picker would still
+            invite the question; saying why there is nothing to choose
+            answers it. */}
+        {channelless ? (
+          <FieldBlock label="Channels">
+            <p className="border-border bg-muted/50 text-muted-foreground rounded-lg border px-2.5 py-2 text-[11px] leading-relaxed">
+              This trigger has no channel — it fires from a public page, not
+              a conversation. It runs for every channel, and there is nothing
+              to narrow.
+            </p>
+          </FieldBlock>
+        ) : (
         <FieldBlock
           label="Channels"
           hint={
@@ -222,6 +259,7 @@ export function TriggerInspector({
             </div>
           )}
         </FieldBlock>
+        )}
 
         {KEYWORD_TRIGGERS.has(triggerType) && (
           <>
