@@ -2,7 +2,6 @@ import type { ComponentType } from 'react';
 import {
   BarChart3,
   Bot,
-  Boxes,
   Calendar,
   Clock,
   FileText,
@@ -329,7 +328,7 @@ const INSTAGRAM_PANEL: PanelGroup[] = [
 
 const WEB_PANEL: PanelGroup[] = [
   {
-    label: 'Action',
+    label: 'Setup',
     items: [
       {
         id: 'web-settings',
@@ -337,6 +336,21 @@ const WEB_PANEL: PanelGroup[] = [
         icon: Settings,
         href: '/channels/web/settings',
       },
+    ],
+  },
+  {
+    /*
+     * The widget and forms are two different products that happen to
+     * share a channel, so they get a group each.
+     *
+     * They were one "Action" list, which read as four unrelated rows and
+     * gave no hint that Behaviour belongs to the widget rather than to
+     * forms — it configures the widget's pre-chat, business hours and
+     * offline message, which is exactly the thing a reader has to guess
+     * from a flat list.
+     */
+    label: 'Chat widget',
+    items: [
       {
         id: 'web-widget',
         label: 'Web Widget',
@@ -349,6 +363,11 @@ const WEB_PANEL: PanelGroup[] = [
         icon: Clock,
         href: '/channels/web/behaviour',
       },
+    ],
+  },
+  {
+    label: 'Forms & bookings',
+    items: [
       {
         id: 'web-forms',
         label: 'Forms',
@@ -369,33 +388,6 @@ const WEB_PANEL: PanelGroup[] = [
       },
     ],
   },
-
-  {
-    label: 'Assets',
-    items: [
-      {
-        id: 'web-knowledge',
-        label: 'Knowledge Base',
-        icon: Boxes,
-        // Points at the shared AI surface, not a page under /channels/web.
-        // One corpus answers WhatsApp, Instagram and web alike — a
-        // channel-scoped copy would imply a scope it does not have, and would
-        // need a second copy the day Instagram wants one. Same reasoning as
-        // Automations moving out of the WhatsApp panel.
-        //
-        // Deliberately NO `matchPaths: ['/agents']`, unlike the Flows row in
-        // the WhatsApp panel. `/flows` is only ever reached from that panel,
-        // but `/agents` is a PRIMARY RAIL destination in its own right —
-        // claiming it here made the rail's own AI Agents row resolve to the
-        // Web channel panel instead of itself. `nav-config.test.ts` catches
-        // exactly this.
-        // Since migration 084 knowledge is a workspace library that each
-        // agent selects from, so there is no single agent to deep-link
-        // into — the list is the honest destination.
-        href: '/agents',
-      },
-    ],
-  },
   {
     label: 'Analytics',
     items: [
@@ -408,6 +400,16 @@ const WEB_PANEL: PanelGroup[] = [
     ],
   },
 ];
+
+/*
+ * Knowledge Base used to sit here under "Assets", pointing at `/agents`.
+ *
+ * Removed rather than moved: it was never a web thing. One corpus answers
+ * WhatsApp, Instagram and web alike, `/agents` is already a primary-rail
+ * destination in its own right, and a row that leaves the channel it
+ * appears in is a navigation dead end — you land somewhere the panel
+ * cannot highlight. AI Agents & Bots on the rail is the honest route.
+ */
 
 export const CHANNELS: Record<ChannelId, ChannelDef> = {
   whatsapp: {
