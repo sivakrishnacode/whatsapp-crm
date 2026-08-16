@@ -555,12 +555,17 @@ function FlowCanvasInner() {
           minZoom={0.2}
           maxZoom={1.5}
         >
-          {/* Dot grid, matching the design's faint canvas backdrop. */}
+          {/* The dot grid. It reads as a WORK SURFACE — without a
+              visible one a full-screen editor is a blank sheet, and in
+              light mode that sheet is pure glare. `--canvas-grid` is a
+              real step darker than the canvas in both themes; the old
+              `--border` on `--card-2` was a ~0.08 lightness difference,
+              i.e. invisible on anything but a good monitor up close. */}
           <Background
             variant={BackgroundVariant.Dots}
-            gap={22}
-            size={1.4}
-            color="var(--border)"
+            gap={20}
+            size={1.6}
+            color="var(--canvas-grid)"
           />
           <Controls
             className="!border-border !bg-card [&_button]:!border-border [&_button]:!bg-card [&_button:hover]:!bg-muted [&_button_svg]:!fill-foreground !overflow-hidden !rounded-xl !border !shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)]"

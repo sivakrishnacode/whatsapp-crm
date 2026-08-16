@@ -1,6 +1,6 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -105,6 +105,11 @@
    * --card-2) as Tailwind utilities: bg-card-2, bg-primary-soft,
    * bg-primary-soft-2, hover:bg-primary-hover. */
   --color-card-2: var(--card-2);
+  /* The editor canvas (flows). Its own surface rather than --card-2:
+   * a canvas must sit BELOW the panels floating on it, and card-2 is
+   * near-white in light mode (glare) and lighter than --card in dark
+   * mode (backwards). See the token pair below. */
+  --color-canvas: var(--canvas);
   --color-primary-hover: var(--primary-hover);
   --color-primary-soft: var(--primary-soft);
   --color-primary-soft-2: var(--primary-soft-2);
@@ -165,6 +170,11 @@ html[data-mode="dark"],
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.18 0.01 260);
   --card-2: oklch(0.205 0.01 260);
+  /* Darker than --card, so node cards and the side panels lift off the
+   * canvas instead of sinking into it — card-2 (0.205) was lighter than
+   * the panels it was supposed to sit behind. */
+  --canvas: oklch(0.155 0.01 260);
+  --canvas-grid: oklch(0.265 0.012 260);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.18 0.01 260);
   --popover-foreground: oklch(0.985 0 0);
@@ -237,9 +247,13 @@ html[data-mode="dark"],
  * Text softens from L 0.21 (≈17:1, well past AAA and the source of
  * the halation around glyphs) to 0.26, still comfortably AAA.
  *
- * Keep the ramp when editing: sidebar < background < card-2 < card. */
-html[data-mode="light"],
-[data-form-scheme="light"] {
+ * Keep the ramp when editing:
+ *   canvas < sidebar < background < card-2 < card.
+ * `canvas` is deliberately the deepest surface — it is the one the
+ * editors' panels and node cards float ON, and the only one that ever
+ * fills the whole viewport, so it is where glare is worst. */
+html[data-mode='light'],
+[data-form-scheme='light'] {
   color-scheme: light;
   --scrollbar-thumb: oklch(0.55 0.015 260 / 0.32);
   --scrollbar-thumb-hover: oklch(0.45 0.015 260 / 0.5);
@@ -247,6 +261,13 @@ html[data-mode="light"],
   --foreground: oklch(0.26 0.012 260);
   --card: oklch(0.995 0.002 260);
   --card-2: oklch(0.978 0.004 260);
+  /* Canvas: a full step below the panels (0.995) so a full-screen
+   * editor is not one uninterrupted sheet of white. The grid is what
+   * makes it read as a work surface rather than an empty page, so it
+   * carries real contrast against the canvas — the old value was
+   * --border (0.9) on 0.978, which is invisible past arm's length. */
+  --canvas: oklch(0.935 0.006 260);
+  --canvas-grid: oklch(0.845 0.01 260);
   --card-foreground: oklch(0.26 0.012 260);
   --popover: oklch(0.995 0.002 260);
   --popover-foreground: oklch(0.26 0.012 260);
@@ -308,7 +329,7 @@ html[data-mode="light"],
 /* ---- ACCENT: primary color ---- */
 
 :root,
-html[data-theme="violet"] {
+html[data-theme='violet'] {
   --primary: oklch(0.526 0.247 293);
   --primary-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.6 0.22 293);
@@ -321,7 +342,7 @@ html[data-theme="violet"] {
   --sidebar-ring: oklch(0.526 0.247 293);
 }
 
-html[data-theme="emerald"] {
+html[data-theme='emerald'] {
   --primary: oklch(0.62 0.16 162);
   --primary-foreground: oklch(0.16 0.02 162);
   --primary-hover: oklch(0.68 0.15 162);
@@ -335,7 +356,7 @@ html[data-theme="emerald"] {
   --sidebar-ring: oklch(0.62 0.16 162);
 }
 
-html[data-theme="cobalt"] {
+html[data-theme='cobalt'] {
   --primary: oklch(0.585 0.2 254);
   --primary-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.66 0.18 254);
@@ -349,7 +370,7 @@ html[data-theme="cobalt"] {
   --sidebar-ring: oklch(0.585 0.2 254);
 }
 
-html[data-theme="amber"] {
+html[data-theme='amber'] {
   --primary: oklch(0.745 0.16 65);
   --primary-foreground: oklch(0.18 0.03 65);
   --primary-hover: oklch(0.8 0.15 65);
@@ -363,7 +384,7 @@ html[data-theme="amber"] {
   --sidebar-ring: oklch(0.745 0.16 65);
 }
 
-html[data-theme="rose"] {
+html[data-theme='rose'] {
   --primary: oklch(0.645 0.22 16);
   --primary-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.71 0.2 16);

@@ -179,7 +179,7 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
                 />
               )}
 
-              <div className="bg-card-2 relative min-w-0 flex-1">
+              <div className="bg-canvas relative min-w-0 flex-1">
                 {effectiveView === 'canvas' ? (
                   <FlowCanvas />
                 ) : (

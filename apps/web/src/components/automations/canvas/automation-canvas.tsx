@@ -35,7 +35,6 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import {
   STEP_META,
@@ -137,7 +136,7 @@ function CanvasInner({
   // Instagram — which is exactly when it matters.
   const availabilityFor = useCallback(
     (type: AutomationStepType) => stepAvailability(type, channels, triggerType),
-    [channels, triggerType],
+    [channels, triggerType]
   );
 
   // Which cards something rejoins at, so those cards can render the
@@ -145,7 +144,7 @@ function CanvasInner({
   // stored: it is a fact about the tree, not a property of a step.
   const rejoinTargets = useMemo(
     () => new Set(edges.filter((e) => e.dashed).map((e) => e.target)),
-    [edges],
+    [edges]
   );
 
   const derivedNodes = useMemo<RfNode[]>(() => {
@@ -214,7 +213,7 @@ function CanvasInner({
       const placed = all.filter(
         (f) =>
           typeof f.step.position_x === 'number' &&
-          typeof f.step.position_y === 'number',
+          typeof f.step.position_y === 'number'
       );
       let next = current;
 
@@ -229,10 +228,11 @@ function CanvasInner({
       // A new step lands to the RIGHT of everything else, on the same
       // line as the last one — the direction the automation reads in.
       const rightmost = Math.max(
-        ...placed.map((f) => f.step.position_x as number),
+        ...placed.map((f) => f.step.position_x as number)
       );
       const lastRow =
-        placed.find((f) => f.step.position_x === rightmost)?.step.position_y ?? 0;
+        placed.find((f) => f.step.position_x === rightmost)?.step.position_y ??
+        0;
       let column = 0;
       for (const f of all) {
         if (typeof f.step.position_x === 'number') continue;
@@ -241,7 +241,7 @@ function CanvasInner({
           next,
           f.step.key,
           rightmost + column * (NODE_WIDTH + 80),
-          lastRow as number,
+          lastRow as number
         );
       }
       return next;
@@ -294,13 +294,17 @@ function CanvasInner({
           labelBgBorderRadius: 4,
         };
       }),
-    [edges],
+    [edges]
   );
 
   // ---- mutations -------------------------------------------------
 
   const addStep = useCallback(
-    (type: AutomationStepType, config?: Record<string, unknown>, keyHint?: string) => {
+    (
+      type: AutomationStepType,
+      config?: Record<string, unknown>,
+      keyHint?: string
+    ) => {
       let newKey: string | null = null;
       setSteps((current) => {
         const taken = allKeys(current);
@@ -318,16 +322,13 @@ function CanvasInner({
       });
       if (newKey) setSelectedKey(newKey);
     },
-    [setSteps, setSelectedKey],
+    [setSteps, setSelectedKey]
   );
 
   const handleConnect = useCallback(
     (connection: Connection) => {
       const handle = (connection.sourceHandle ?? 'next') as
-        | 'next'
-        | 'yes'
-        | 'no'
-        | 'continue';
+        'next' | 'yes' | 'no' | 'continue';
       if (!connection.source || !connection.target) return;
       // "continue" is where the parent sequence resumes after a branch —
       // it is derived from the tree, so there is nothing to wire.
@@ -343,10 +344,10 @@ function CanvasInner({
         return;
       }
       setSteps((current) =>
-        connectSteps(current, connection.source!, handle, connection.target!),
+        connectSteps(current, connection.source!, handle, connection.target!)
       );
     },
-    [setSteps],
+    [setSteps]
   );
 
   const handleNodesChange = useCallback((changes: NodeChange<RfNode>[]) => {
@@ -359,10 +360,10 @@ function CanvasInner({
     (_event, node) => {
       if (node.id === TRIGGER_KEY) return;
       setSteps((current) =>
-        setStepPosition(current, node.id, node.position.x, node.position.y),
+        setStepPosition(current, node.id, node.position.x, node.position.y)
       );
     },
-    [setSteps],
+    [setSteps]
   );
 
   const handleNodesDelete = useCallback(
@@ -373,7 +374,7 @@ function CanvasInner({
         if (selectedKey === node.id) setSelectedKey(null);
       }
     },
-    [setSteps, selectedKey, setSelectedKey],
+    [setSteps, selectedKey, setSelectedKey]
   );
 
   const selected = selectedKey ? findStep(steps, selectedKey) : undefined;
@@ -437,12 +438,12 @@ function CanvasInner({
               branches: STEP_META[type]?.branching
                 ? (s.branches ?? { yes: [], no: [] })
                 : undefined,
-            })),
+            }))
           );
         }}
         onChangeConfig={(patch) =>
           setSteps((current) =>
-            updateStepConfig(current, selected.step.key, patch),
+            updateStepConfig(current, selected.step.key, patch)
           )
         }
         onRename={(nextKey) => {
@@ -450,7 +451,7 @@ function CanvasInner({
             updateStep(current, selected.step.key, (s) => ({
               ...s,
               key: nextKey,
-            })),
+            }))
           );
           setSelectedKey(nextKey);
         }}
@@ -458,7 +459,7 @@ function CanvasInner({
           setSteps((current) => {
             const { steps: next, newKey } = duplicateStep(
               current,
-              selected.step.key,
+              selected.step.key
             );
             if (newKey) setSelectedKey(newKey);
             return next;
@@ -484,19 +485,21 @@ function CanvasInner({
   const handleCanvasKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
-      const node = (event.target as HTMLElement)?.closest?.('.react-flow__node');
+      const node = (event.target as HTMLElement)?.closest?.(
+        '.react-flow__node'
+      );
       const id = node?.getAttribute('data-id');
       if (!id) return;
       event.preventDefault();
       setSelectedKey(id);
     },
-    [setSelectedKey],
+    [setSelectedKey]
   );
 
   return (
     <div className="flex h-full min-h-0">
       <div
-        className="relative min-w-0 flex-1"
+        className="bg-canvas relative min-w-0 flex-1"
         onKeyDown={handleCanvasKeyDown}
       >
         <ReactFlow
@@ -521,11 +524,13 @@ function CanvasInner({
           minZoom={0.2}
           maxZoom={1.5}
         >
+          {/* Same canvas tokens as the flow editor — two canvases in one
+              product must not read as two different surfaces. */}
           <Background
             variant={BackgroundVariant.Dots}
-            gap={22}
-            size={1.4}
-            color="var(--border)"
+            gap={20}
+            size={1.6}
+            color="var(--canvas-grid)"
           />
           <Controls
             className="!border-border !bg-card [&_button]:!border-border [&_button]:!bg-card [&_button:hover]:!bg-muted [&_button_svg]:!fill-foreground !overflow-hidden !rounded-xl !border"
@@ -539,7 +544,7 @@ function CanvasInner({
                 ? TRIGGER_COLORS.solid
                 : stepColors(
                     (n.data as { step?: BuilderStep })?.step?.step_type ??
-                      'send_message',
+                      'send_message'
                   ).solid
             }
             nodeStrokeWidth={0}
@@ -586,7 +591,7 @@ function CanvasInner({
           // dropdown that has one entry. With two, choosing for them
           // would silently pick which mailbox an email is sent from.
           const usable = connectionsFor(connections, app).filter(
-            (c) => c.status === 'active',
+            (c) => c.status === 'active'
           );
           addStep(
             'app_action',
@@ -599,13 +604,13 @@ function CanvasInner({
               input: Object.fromEntries(
                 action.inputs
                   .filter((spec) => spec.default !== undefined)
-                  .map((spec) => [spec.key, spec.default]),
+                  .map((spec) => [spec.key, spec.default])
               ),
             },
             // Names the step after the action, so its output reads
             // `steps.append_row.row_number` rather than
             // `steps.app_action_3.row_number`.
-            action.id,
+            action.id
           );
         }}
         channels={channels}
