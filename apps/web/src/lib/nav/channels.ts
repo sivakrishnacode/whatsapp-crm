@@ -18,6 +18,7 @@ import {
   ShoppingBag,
   ShoppingCart,
   Sparkles,
+  TrendingUp,
   Workflow,
 } from 'lucide-react';
 
@@ -261,6 +262,15 @@ const WHATSAPP_PANEL: PanelGroup[] = [
   {
     label: 'Analytics',
     items: [
+      // Overview leads the group: it is the page that answers "how is
+      // this channel doing", and the two below it answer narrower
+      // questions that the overview links into.
+      {
+        id: 'wa-analytics',
+        label: 'Overview',
+        icon: TrendingUp,
+        href: '/channels/whatsapp/analytics',
+      },
       {
         id: 'wa-ctwa',
         label: 'Click-to-WhatsApp',
@@ -321,6 +331,17 @@ const INSTAGRAM_PANEL: PanelGroup[] = [
         label: 'Comment Funnels',
         icon: Gift,
         href: '/channels/instagram/funnels',
+      },
+    ],
+  },
+  {
+    label: 'Analytics',
+    items: [
+      {
+        id: 'ig-analytics',
+        label: 'Overview',
+        icon: TrendingUp,
+        href: '/channels/instagram/analytics',
       },
     ],
   },
@@ -391,6 +412,12 @@ const WEB_PANEL: PanelGroup[] = [
   {
     label: 'Analytics',
     items: [
+      {
+        id: 'web-analytics',
+        label: 'Overview',
+        icon: TrendingUp,
+        href: '/channels/web/analytics',
+      },
       {
         id: 'web-sessions',
         label: 'Sessions',
