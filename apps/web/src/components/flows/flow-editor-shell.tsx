@@ -39,7 +39,6 @@ import { FlowResourcesProvider } from './flow-resources';
 import { EditorHeader } from './header';
 import { NodeInspector } from './node-inspector';
 import { NodePalette } from './node-palette';
-import { ValidationPanel } from './validation-panel';
 import { NODE_META, nodeColors, type NodeType } from './shared';
 import { cn } from '@/lib/utils';
 import type { FlowRow, FlowNodeRow } from '@/lib/flows/types';
@@ -191,11 +190,9 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
 
               {showCanvasPanes && <NodeInspector />}
             </div>
-
-            {/* ---- validation / activate-readiness bar ---- */}
-            <div className="border-border border-t px-4 py-2.5">
-              <ValidationPanel />
-            </div>
+            {/* No validation bar. Issues live in the top bar and appear
+                only when there are any — see `ValidationBadge`. The
+                canvas gets that row of height back. */}
           </div>
 
           <FlowSimulator

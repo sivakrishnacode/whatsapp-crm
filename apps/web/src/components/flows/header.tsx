@@ -40,6 +40,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useFlowEditor, type BuilderState } from './flow-editor-state';
 import { AiFlowPrompt } from './ai-flow-prompt';
+import { ValidationBadge } from './validation-panel';
 
 export function EditorHeader({ onTest }: { onTest?: () => void }) {
   const router = useRouter();
@@ -91,6 +92,9 @@ export function EditorHeader({ onTest }: { onTest?: () => void }) {
             Edited
           </span>
         )}
+
+        {/* Only present when something is wrong — see ValidationBadge. */}
+        <ValidationBadge />
 
         {/* ---- centre: build with AI ----
             Between the name and the actions because that is the order
@@ -155,7 +159,7 @@ export function EditorHeader({ onTest }: { onTest?: () => void }) {
               disabled={activating || !canActivate}
               title={
                 !canActivate
-                  ? 'Fix the issues below before activating'
+                  ? 'Fix the issues listed in the top bar before activating'
                   : undefined
               }
             >
