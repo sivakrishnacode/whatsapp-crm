@@ -12,6 +12,11 @@ import { usePresence } from "@/hooks/use-presence";
 import { PresenceDot } from "@/components/presence/presence-dot";
 import { presenceLabel } from "@/lib/presence";
 import { conversationChannel } from "@/lib/inbox/channel";
+import {
+  buildReactionRequest,
+  channelSupportsReactions,
+  quickEmojisFor,
+} from "@/lib/inbox/reactions";
 import { collisionLabel, type InboxPresence } from "@/lib/inbox/collision";
 import {
   contactDisplayName as displayNameFor,
@@ -266,6 +271,9 @@ export function MessageThread({
     web: "/api/web/send",
   };
   const sendPath = SEND_PATHS[channel];
+  // Empty on a channel with no reaction transport, which hides the
+  // button rather than offering one that always fails.
+  const quickEmojis = quickEmojisFor(channel);
 
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
@@ -954,6 +962,11 @@ export function MessageThread({
   // The "toggle" semantic (pill click) is computed at the call site where the
   // current reactions for the bubble are already in scope — keeps this
   // function dependency-free w.r.t. the reaction list.
+  //
+  // ⚠️ The endpoint is per CHANNEL. This used to post everything to
+  // /api/whatsapp/react, which resolves the recipient by `contacts.phone`
+  // — a column an Instagram contact has no value in — so every Instagram
+  // react failed with "Contact phone number not found".
   const postReaction = useCallback(
     async (messageId: string, emoji: string) => {
       if (!user?.id || !conversation) {
@@ -967,6 +980,24 @@ export function MessageThread({
 
       const convId = conversation.id;
       const userId = user.id;
+
+      // Built before the optimistic update so an unsupported emoji never
+      // paints a pill it would have to roll back.
+      const request = buildReactionRequest({
+        channel,
+        conversationId: convId,
+        messageId,
+        emoji,
+      });
+      if (!request) {
+        toast.error(
+          channelSupportsReactions(channel)
+            ? "Instagram doesn't support that reaction"
+            : "Reactions aren't available on this channel",
+        );
+        return;
+      }
+
       let snapshot: MessageReaction[] = [];
 
       // Functional updater — captures the freshest reactions list, never a
@@ -996,10 +1027,10 @@ export function MessageThread({
       });
 
       try {
-        const res = await fetch("/api/whatsapp/react", {
+        const res = await fetch(request.path, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message_id: messageId, emoji }),
+          body: JSON.stringify(request.body),
         });
         if (!res.ok) {
           const payload = await res.json().catch(() => ({}));
@@ -1011,7 +1042,7 @@ export function MessageThread({
         setReactions(snapshot);
       }
     },
-    [conversation, user?.id],
+    [channel, conversation, user?.id],
   );
 
   const handleAssignChange = useCallback(
@@ -1430,6 +1461,7 @@ export function MessageThread({
                       <MessageActions
                         key={msg.id}
                         message={msg}
+                        quickEmojis={quickEmojis}
                         onReply={() => handleStartReply(msg)}
                         onReact={(emoji) => {
                           if (emoji) void postReaction(msg.id, emoji);
