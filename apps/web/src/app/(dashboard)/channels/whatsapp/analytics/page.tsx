@@ -54,6 +54,7 @@ import type {
   VolumePoint,
 } from '@/lib/analytics/types'
 
+import { MessagingTierCard } from '@/components/dashboard/messaging-tier-card'
 import { AnalyticsPageShell, KpiGrid } from '@/components/analytics/analytics-page-shell'
 import { KpiTile } from '@/components/analytics/kpi-tile'
 import { Panel, SectionHeading } from '@/components/analytics/panel'
@@ -372,6 +373,18 @@ export default function WhatsAppAnalyticsPage() {
           </>
         )}
       </KpiGrid>
+
+      {/* ---- Sending capacity ----
+          Meta's messaging tier, quality rating and 24-hour usage. It
+          used to sit on the main dashboard, which made a cross-channel
+          page look like a WhatsApp one; this is the only channel the
+          number describes, so this is where it belongs.
+
+          Deliberately NOT range-scoped like everything below it: the
+          tier is a live fact about the number right now, not a total
+          over the selected window. */}
+      <SectionHeading>Sending capacity</SectionHeading>
+      <MessagingTierCard />
 
       {/* ---- Volume & delivery ---- */}
       <SectionHeading>Volume &amp; delivery</SectionHeading>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/use-auth'
 import { formatCurrency } from '@/lib/currency'
@@ -24,6 +24,7 @@ import {
   loadResponseTime,
 } from '@/lib/dashboard/queries'
 import { exportAnalyticsData, downloadCSV } from '@/lib/dashboard/export'
+import { customRange, presetRange, rangeLabel, type DateRange } from '@/lib/analytics/range'
 import type {
   ActivityItem,
   ConversationsSeriesPoint,
@@ -35,11 +36,13 @@ import type {
 import { MetricCard } from '@/components/dashboard/metric-card'
 import { SkeletonCard } from '@/components/dashboard/skeleton'
 import { QuickActions } from '@/components/dashboard/quick-actions'
-import { MessagingTierCard } from '@/components/dashboard/messaging-tier-card'
+import { ChannelOverview } from '@/components/dashboard/channel-overview'
+import { BillingSummary } from '@/components/dashboard/billing-summary'
 import { ConversationsChart } from '@/components/dashboard/conversations-chart'
 import { PipelineDonut } from '@/components/dashboard/pipeline-donut'
 import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
 import { ActivityFeed } from '@/components/dashboard/activity-feed'
+import { SectionHeading } from '@/components/analytics/panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -54,7 +57,7 @@ import {
 type RangeDays = 7 | 30 | 90 | 'custom'
 
 export default function DashboardPage() {
-  const { defaultCurrency } = useAuth()
+  const { accountId, defaultCurrency } = useAuth()
   const [metrics, setMetrics] = useState<MetricsBundle | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
 
@@ -179,6 +182,21 @@ export default function DashboardPage() {
     }
   }, [customStartDate, customEndDate, exportType])
 
+  /**
+   * The page's range in the shape the analytics RPCs take.
+   *
+   * One range drives both the conversations chart and the per-channel
+   * cards, so "last 7 days" means the same seven days in both. A custom
+   * range that fails to parse falls back to 30 days rather than
+   * querying a nonsense window — the picker has already told the user.
+   */
+  const analyticsRange = useMemo<DateRange>(() => {
+    if (range !== 'custom') return presetRange(range)
+    const parsed =
+      customStartDate && customEndDate ? customRange(customStartDate, customEndDate) : null
+    return parsed ?? presetRange(30)
+  }, [range, customStartDate, customEndDate])
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -186,7 +204,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Live analytics across conversations, contacts, deals, broadcasts, and automations.
+            Every channel at a glance — conversations, contacts, deals and pipeline.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -263,8 +281,22 @@ export default function DashboardPage() {
       {/* Quick actions */}
       <QuickActions />
 
-      {/* WhatsApp messaging limit — no recipientCount, so no pre-flight section */}
-      <MessagingTierCard compact />
+      {/* Channels — connection state and this range's traffic, per
+          channel. The WhatsApp messaging-tier card used to sit here;
+          it moved to /channels/whatsapp/analytics, where a
+          WhatsApp-only fact belongs. */}
+      <div className="flex items-baseline justify-between gap-3">
+        <SectionHeading>Channels</SectionHeading>
+        {/* The range control lives in the conversations chart, further
+            down the page. Without this label the channel totals are
+            unlabelled numbers — the reader cannot tell whether "1,204
+            sent" is a week or a quarter. */}
+        <span className="text-xs text-muted-foreground">{rangeLabel(analyticsRange)}</span>
+      </div>
+      <ChannelOverview accountId={accountId} range={analyticsRange} />
+
+      {/* Plan standing. Renders nothing for anyone but the owner. */}
+      <BillingSummary />
 
       {/* Charts row */}
       {/* items-stretch (the grid default) stretches the two columns to

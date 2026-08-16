@@ -8,8 +8,6 @@ import { cn } from "@/lib/utils";
 interface MessagingTierCardProps {
   /** Supplied by the broadcast composer — switches the card into pre-flight mode. */
   recipientCount?: number;
-  /** Denser layout for the dashboard sidebar. */
-  compact?: boolean;
   className?: string;
 }
 
@@ -70,9 +68,12 @@ function Banner({
  * WhatsApp messaging limit card — tier, quality rating, and approximate
  * 24-hour usage.
  *
- * Two placements: a compact widget on the dashboard, and a pre-flight
- * warning above the Send button in the broadcast composer (pass
- * recipientCount for that mode).
+ * Two placements, both WhatsApp-only: the Sending capacity section of
+ * /channels/whatsapp/analytics, and a pre-flight warning above the Send
+ * button in the broadcast composer (pass recipientCount for that mode).
+ * It lived on the main dashboard until that page became cross-channel —
+ * a Meta tier is a fact about one channel and reads as the whole
+ * product's ceiling anywhere else.
  *
  * The usage figure counts BROADCAST RECIPIENTS ONLY. Automation, flow,
  * and inbox sends consume the same Meta quota but aren't counted, so the
@@ -86,7 +87,6 @@ function Banner({
  */
 export function MessagingTierCard({
   recipientCount,
-  compact = false,
   className,
 }: MessagingTierCardProps) {
   const { status, isLoading, isRefreshing, error, refreshTimedOut, refresh } =
@@ -122,7 +122,7 @@ export function MessagingTierCard({
   return (
     <div className={shell}>
       <Header status={status} onRefresh={refresh} refreshing={isRefreshing} />
-      <UsageMeter status={status} compact={compact} />
+      <UsageMeter status={status} />
       <Footer status={status} refreshTimedOut={refreshTimedOut} />
       <Banners status={status} recipientCount={recipientCount} />
     </div>
@@ -183,7 +183,7 @@ function Header({
   );
 }
 
-function UsageMeter({ status, compact }: { status: TierStatusDto; compact: boolean }) {
+function UsageMeter({ status }: { status: TierStatusDto }) {
   // No meaningful bar without a numeric ceiling — covers unlimited,
   // unknown tiers, and never-synced accounts alike.
   if (status.dailyLimit === null) {
@@ -203,7 +203,7 @@ function UsageMeter({ status, compact }: { status: TierStatusDto; compact: boole
   const pct = Math.min(100, Math.round((status.used / status.dailyLimit) * 100));
 
   return (
-    <div className={cn("space-y-1.5", compact ? "mt-3" : "mt-4")}>
+    <div className="mt-4 space-y-1.5">
       <div className="flex items-baseline justify-between gap-2 text-xs">
         <span className="text-foreground">
           <span className="font-medium">{status.used.toLocaleString()}</span>
