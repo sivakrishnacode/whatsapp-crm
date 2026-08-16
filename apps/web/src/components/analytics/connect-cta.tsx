@@ -4,6 +4,8 @@ import { ArrowRight } from 'lucide-react'
 
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import type { MarkStyle } from '@/lib/analytics/config'
+import { ChannelMark } from './channel-mark'
 
 /**
  * Shown instead of the dashboard when the channel has no connection.
@@ -21,6 +23,7 @@ export function ConnectCta({
   icon: Icon,
   accent,
   gradient,
+  markStyle,
 }: {
   channelLabel: string
   description: string
@@ -28,15 +31,17 @@ export function ConnectCta({
   icon: ComponentType<{ className?: string }>
   accent: string
   gradient?: string
+  markStyle: MarkStyle
 }) {
   return (
     <div className="flex min-h-[24rem] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40 px-6 py-16 text-center">
-      <span
-        className="flex h-14 w-14 items-center justify-center rounded-2xl text-white"
-        style={gradient ? { backgroundImage: gradient } : { backgroundColor: accent }}
-      >
-        <Icon className="h-7 w-7" />
-      </span>
+      <ChannelMark
+        icon={Icon}
+        markStyle={markStyle}
+        accent={accent}
+        gradient={gradient}
+        className="h-14 w-14 rounded-2xl"
+      />
       <h2 className="mt-4 text-lg font-semibold text-foreground">
         Connect {channelLabel} to see analytics
       </h2>

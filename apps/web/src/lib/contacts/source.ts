@@ -64,15 +64,16 @@ export const CONTACT_SOURCE_META: Record<ContactSource, ContactSourceMeta> = {
   whatsapp: {
     label: 'WhatsApp',
     icon: WhatsAppIcon,
-    iconClass: 'text-[#25D366]',
+    // Inert: WhatsAppIcon is the official raster logo and cannot be
+    // tinted. Left empty rather than carrying a hex that does nothing.
+    iconClass: '',
     description:
       'Messaged your WhatsApp number first. Includes people who arrived from a click-to-WhatsApp ad.',
   },
   instagram: {
     label: 'Instagram',
     icon: InstagramIcon,
-    // The Instagram glyph paints itself with a real brand gradient,
-    // which currentColor cannot express — it ignores this class.
+    // Inert, as above — the official logo paints its own gradient.
     iconClass: '',
     description: 'Sent your account an Instagram DM.',
   },

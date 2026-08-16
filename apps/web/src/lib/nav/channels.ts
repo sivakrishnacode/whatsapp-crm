@@ -28,10 +28,12 @@ import { InstagramIcon, WhatsAppIcon } from '@/components/channels/channel-icons
  * Icon shape shared by every nav surface.
  *
  * Deliberately looser than `LucideIcon`: lucide-react 1.x dropped its
- * brand icons, so WhatsApp and Instagram are hand-rolled SVGs (see
- * components/channels/channel-icons.tsx). All the nav ever does is render
- * them with a `className`, so that is all the contract needs to promise —
- * and every lucide icon satisfies it.
+ * brand icons, so WhatsApp and Instagram come from
+ * components/channels/channel-icons.tsx instead — today as the official
+ * raster logos, previously as hand-rolled SVGs. All the nav ever does is
+ * render them with a `className`, so that is all the contract needs to
+ * promise; every lucide icon satisfies it, and it is narrow enough that
+ * the SVG→PNG swap touched none of the eight call sites.
  */
 export type NavIcon = ComponentType<{ className?: string }>;
 
@@ -167,6 +169,13 @@ export interface ChannelDef {
    * Brand colour for the rail icon. The reference renders channel icons
    * in brand colours rather than `currentColor`, which is what makes the
    * channel block read as a distinct group.
+   *
+   * ⚠️ INERT for WhatsApp and Instagram: their icons are the official
+   * raster logos now (see components/channels/channel-icons.tsx), and a
+   * text-colour class cannot tint a PNG. It still does real work for
+   * Web and Phone, whose icons are lucide glyphs in `currentColor`, so
+   * the field stays — but changing the hex on a raster channel changes
+   * nothing on screen.
    */
   accentClass: string;
   /** Copy for the connect screen and the onboarding checklist. */
@@ -478,6 +487,8 @@ export const CHANNELS: Record<ChannelId, ChannelDef> = {
     label: 'WhatsApp',
     icon: WhatsAppIcon,
     status: 'live',
+    // Inert — the icon is the official logo. Kept as the channel's
+    // documented brand hue, which the analytics pages read.
     accentClass: 'text-[#25D366]',
     tagline: 'Connect channel to start receiving customer messages.',
     connectArtClass: 'bg-linear-to-br from-[#25D366]/20 to-[#25D366]/5',
@@ -488,8 +499,7 @@ export const CHANNELS: Record<ChannelId, ChannelDef> = {
     label: 'Instagram',
     icon: InstagramIcon,
     status: 'live',
-    // The glyph paints its own brand gradient, so this accent only
-    // applies where the icon is swapped for a lucide fallback.
+    // Inert, as above — the official logo carries its own gradient.
     accentClass: 'text-[#E1306C]',
     tagline:
       'Let AI auto-reply to every comment and DM, follow up automatically, and segment responses by intent.',

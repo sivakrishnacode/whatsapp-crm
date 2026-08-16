@@ -19,13 +19,15 @@ import { localDayKey } from '@/lib/dashboard/date-utils'
 import { RANGE_PRESETS, rangeLabel, type DateRange, type RangePreset } from '@/lib/analytics/range'
 import { describeFilters, hasAnyFilter, withoutFilter } from '@/lib/analytics/filters'
 import type { AnalyticsFilters } from '@/lib/analytics/types'
-import type { QuickAction } from '@/lib/analytics/config'
+import type { MarkStyle, QuickAction } from '@/lib/analytics/config'
+import { ChannelMark } from './channel-mark'
 
 export function AnalyticsHeader({
   title,
   subtitle,
   accent,
   gradient,
+  markStyle,
   icon: Icon,
   range,
   onPreset,
@@ -43,6 +45,7 @@ export function AnalyticsHeader({
   subtitle: string
   accent: string
   gradient?: string
+  markStyle: MarkStyle
   icon: React.ComponentType<{ className?: string }>
   range: DateRange
   onPreset: (p: RangePreset) => void
@@ -71,12 +74,13 @@ export function AnalyticsHeader({
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <span
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white"
-            style={gradient ? { backgroundImage: gradient } : { backgroundColor: accent }}
-          >
-            <Icon className="h-5 w-5" />
-          </span>
+          <ChannelMark
+            icon={Icon}
+            markStyle={markStyle}
+            accent={accent}
+            gradient={gradient}
+            className="h-10 w-10"
+          />
           <div className="min-w-0">
             <h1 className="truncate text-xl font-bold text-foreground">{title}</h1>
             <p className="mt-0.5 truncate text-sm text-muted-foreground">{subtitle}</p>

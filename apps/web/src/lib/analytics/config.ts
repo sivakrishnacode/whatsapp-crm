@@ -26,6 +26,20 @@ import {
 
 import type { AnalyticsChannel } from './types'
 
+/**
+ * How a channel's icon paints itself.
+ *
+ *   'logo'  — the official raster brand mark (WhatsApp, Instagram). It
+ *             carries its own tile and colour, so it must NOT be placed
+ *             on a brand-coloured background and cannot be tinted.
+ *   'glyph' — a lucide icon in `currentColor` (Web). Needs a tinted
+ *             square behind it to read as a channel mark.
+ *
+ * Declared rather than inferred: "does this component paint itself?" is
+ * not a question you can ask a `ComponentType`.
+ */
+export type MarkStyle = 'logo' | 'glyph'
+
 export interface QuickAction {
   label: string
   href: string
@@ -42,8 +56,9 @@ export interface ChannelAnalyticsConfig {
   accent: string
   /** Second series colour, for outgoing/secondary lines. */
   accentAlt: string
-  /** Optional brand gradient for the page header glyph. */
+  /** Optional brand gradient, used only behind a 'glyph' mark. */
   gradient?: string
+  markStyle: MarkStyle
   quickActions: QuickAction[]
   /** Where each `get_channel_alerts` kind sends the user to fix it. */
   alertHref: Record<string, string>
@@ -55,6 +70,7 @@ export const CHANNEL_ANALYTICS: Record<AnalyticsChannel, ChannelAnalyticsConfig>
   whatsapp: {
     accent: '#25D366',
     accentAlt: '#0891b2',
+    markStyle: 'logo',
     quickActions: [
       { label: 'New broadcast', href: '/channels/whatsapp/broadcasts', icon: Radio },
       { label: 'Templates', href: '/channels/whatsapp/templates', icon: FileText },
@@ -74,7 +90,10 @@ export const CHANNEL_ANALYTICS: Record<AnalyticsChannel, ChannelAnalyticsConfig>
   instagram: {
     accent: '#E1306C',
     accentAlt: '#F58529',
+    // Kept for the connect-screen artwork wash; the mark itself is the
+    // official logo and paints its own gradient.
     gradient: 'linear-gradient(135deg, #F58529, #DD2A7B, #8134AF)',
+    markStyle: 'logo',
     quickActions: [
       { label: 'Comment funnels', href: '/channels/instagram/funnels', icon: Gift },
       { label: 'DM agents', href: '/channels/instagram/dm-agents', icon: Bot },
@@ -93,6 +112,7 @@ export const CHANNEL_ANALYTICS: Record<AnalyticsChannel, ChannelAnalyticsConfig>
   web: {
     accent: '#2D7FF9',
     accentAlt: '#8134AF',
+    markStyle: 'glyph',
     quickActions: [
       { label: 'Widget setup', href: '/channels/web/widget', icon: LayoutTemplate },
       { label: 'Sessions', href: '/channels/web/sessions', icon: Grid3x3 },

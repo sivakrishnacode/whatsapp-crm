@@ -50,6 +50,7 @@ export function AnalyticsPageShell({
           icon={meta.icon}
           accent={config.accent}
           gradient={config.gradient}
+          markStyle={config.markStyle}
         />
       </div>
     )
@@ -62,6 +63,7 @@ export function AnalyticsPageShell({
         subtitle={subtitle}
         accent={config.accent}
         gradient={config.gradient}
+        markStyle={config.markStyle}
         icon={meta.icon}
         range={controls.range}
         onPreset={controls.setPreset}
