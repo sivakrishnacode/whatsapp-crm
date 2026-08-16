@@ -227,6 +227,11 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Quick actions — a compact pill row directly under the header,
+          so the shortcuts stay reachable without costing the charts
+          their place on the first screen. */}
+      <QuickActions />
+
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {metricsLoading || !metrics ? (
@@ -278,28 +283,16 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Quick actions */}
-      <QuickActions />
+      {/* Charts row.
 
-      {/* Channels — connection state and this range's traffic, per
-          channel. The WhatsApp messaging-tier card used to sit here;
-          it moved to /channels/whatsapp/analytics, where a
-          WhatsApp-only fact belongs. */}
-      <div className="flex items-baseline justify-between gap-3">
-        <SectionHeading>Channels</SectionHeading>
-        {/* The range control lives in the conversations chart, further
-            down the page. Without this label the channel totals are
-            unlabelled numbers — the reader cannot tell whether "1,204
-            sent" is a week or a quarter. */}
-        <span className="text-xs text-muted-foreground">{rangeLabel(analyticsRange)}</span>
-      </div>
-      <ChannelOverview accountId={accountId} range={analyticsRange} />
+          ⚠️ ORDER IS LOAD-BEARING: the charts sit directly under the
+          metric cards so both are on screen without scrolling. They
+          used to follow the quick-action tiles and the channel cards,
+          which between them spent most of the first screen on links
+          and secondary numbers — the two things worth looking at
+          every morning were the two things you had to scroll for.
 
-      {/* Plan standing. Renders nothing for anyone but the owner. */}
-      <BillingSummary />
-
-      {/* Charts row */}
-      {/* items-stretch (the grid default) stretches the two columns to
+          items-stretch (the grid default) stretches the two columns to
           match the tallest sibling; adding h-full on each wrapper and
           on the inner panels makes both cards actually fill that
           stretched height so their rounded borders line up. Without
@@ -322,6 +315,23 @@ export default function DashboardPage() {
           />
         </div>
       </div>
+
+      {/* Channels — connection state and this range's traffic, per
+          channel. The WhatsApp messaging-tier card used to sit here;
+          it moved to /channels/whatsapp/analytics, where a
+          WhatsApp-only fact belongs. */}
+      <div className="flex items-baseline justify-between gap-3">
+        <SectionHeading>Channels</SectionHeading>
+        {/* The range control lives in the conversations chart above.
+            Without this label the channel totals are unlabelled
+            numbers — the reader cannot tell whether "1,204 sent" is a
+            week or a quarter. */}
+        <span className="text-xs text-muted-foreground">{rangeLabel(analyticsRange)}</span>
+      </div>
+      <ChannelOverview accountId={accountId} range={analyticsRange} />
+
+      {/* Plan standing. Renders nothing for anyone but the owner. */}
+      <BillingSummary />
 
       {/* Response time */}
       <ResponseTimeChart data={responseTime} loading={responseTimeLoading} />

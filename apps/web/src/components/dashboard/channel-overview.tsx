@@ -125,6 +125,16 @@ export function ChannelOverview({
   )
 }
 
+/**
+ * One channel, in three lines.
+ *
+ * The WHOLE CARD is the link — to the channel's analytics when it is
+ * connected, to its settings when it is not. That is what let the
+ * footer row ("View analytics →") go: it was a third of the card's
+ * height spent restating where the card already pointed.
+ *
+ * Locked channels render as a plain div, since there is nowhere to go.
+ */
 function ChannelCard({
   channel,
   status,
@@ -139,120 +149,109 @@ function ChannelCard({
   const locked = channel.status === 'locked'
   const analytics = analyticsChannel(channel.id)
   const config = analytics ? CHANNEL_ANALYTICS[analytics] : null
-  const state = status?.state ?? 'loading'
+  const state = locked ? 'unavailable' : (status?.state ?? 'loading')
+  const connected = state === 'connected'
 
-  return (
-    <section
-      className={cn(
-        'flex flex-col rounded-xl border border-border bg-card p-4',
-        locked && 'opacity-60',
+  const body = (
+    <>
+      {config ? (
+        <ChannelMark
+          icon={channel.icon}
+          markStyle={config.markStyle}
+          accent={config.accent}
+          gradient={config.gradient}
+          className="h-8 w-8"
+        />
+      ) : (
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+          <channel.icon className="h-4 w-4" />
+        </span>
       )}
-    >
-      <div className="flex items-center gap-3">
-        {config ? (
-          <ChannelMark
-            icon={channel.icon}
-            markStyle={config.markStyle}
-            accent={config.accent}
-            gradient={config.gradient}
-            className="h-9 w-9"
-          />
-        ) : (
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
-            <channel.icon className="h-4.5 w-4.5" />
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-foreground">{channel.label}</p>
-          <StatusLine state={locked ? 'unavailable' : state} locked={locked} />
-        </div>
-      </div>
 
-      <div className="mt-4 flex-1">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-semibold text-foreground">{channel.label}</p>
+          <StatusDot state={state} />
+        </div>
+
         {locked ? (
-          <p className="text-xs text-muted-foreground">{channel.tagline}</p>
-        ) : state === 'loading' ? (
-          <Skeleton className="h-14 w-full" />
-        ) : state === 'not_connected' ? (
-          <p className="text-xs text-muted-foreground">{status?.message ?? channel.tagline}</p>
-        ) : loading || !kpis ? (
-          <Skeleton className="h-14 w-full" />
+          <p className="mt-1 truncate text-xs text-muted-foreground">Coming soon</p>
+        ) : state === 'loading' || (connected && (loading || !kpis)) ? (
+          <Skeleton className="mt-1.5 h-7 w-full" />
+        ) : connected && kpis ? (
+          <>
+            <p className="mt-1 truncate text-xs text-muted-foreground">
+              <Num>{count(kpis.msgsOut.current)}</Num> sent ·{' '}
+              <Num>{count(kpis.msgsIn.current)}</Num> received
+            </p>
+            <p className="truncate text-[11px] text-muted-foreground">
+              {count(kpis.convsNew.current)} new chat{kpis.convsNew.current === 1 ? '' : 's'} ·{' '}
+              {duration(kpis.avgResponseMinutes.current)} reply
+            </p>
+          </>
         ) : (
-          <Numbers kpis={kpis} />
+          // Not connected: the next action, never a row of zeros — a
+          // quiet week and a channel that was never set up must not
+          // render identically.
+          <p className="mt-1 flex items-center gap-1 text-xs font-medium text-primary">
+            <Plug className="h-3 w-3 shrink-0" />
+            Connect {channel.label}
+          </p>
         )}
       </div>
 
       {!locked && (
-        <div className="mt-4 border-t border-border pt-3">
-          {state === 'not_connected' ? (
-            <Link
-              href={channelConnectHref(channel.id)}
-              className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-            >
-              <Plug className="h-3.5 w-3.5" />
-              Connect {channel.label}
-            </Link>
-          ) : (
-            <Link
-              href={channelLandingHref(channel.id)}
-              className="flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
-              View analytics
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          )}
-        </div>
+        <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
       )}
-    </section>
+    </>
   )
-}
 
-function Numbers({ kpis }: { kpis: ChannelKpis }) {
+  const shell = 'group flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3'
+
+  if (locked) {
+    return <div className={cn(shell, 'opacity-60')}>{body}</div>
+  }
+
   return (
-    <div className="space-y-2.5">
-      <div className="grid grid-cols-2 gap-3">
-        <Stat label="Sent" value={count(kpis.msgsOut.current)} />
-        <Stat label="Received" value={count(kpis.msgsIn.current)} />
-      </div>
-      <p className="text-xs text-muted-foreground">
-        {count(kpis.convsNew.current)} new chat{kpis.convsNew.current === 1 ? '' : 's'} ·{' '}
-        {duration(kpis.avgResponseMinutes.current)} avg reply
-      </p>
-    </div>
+    <Link
+      href={connected ? channelLandingHref(channel.id) : channelConnectHref(channel.id)}
+      className={cn(shell, 'transition-colors hover:bg-muted/60')}
+    >
+      {body}
+    </Link>
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xl leading-none font-semibold tabular-nums text-foreground">{value}</p>
-      <p className="mt-1 text-xs text-muted-foreground">{label}</p>
-    </div>
-  )
+/** Emphasised figure inside an otherwise muted sentence. */
+function Num({ children }: { children: React.ReactNode }) {
+  return <span className="font-semibold tabular-nums text-foreground">{children}</span>
 }
 
-function StatusLine({
-  state,
-  locked,
-}: {
-  state: ChannelStatus['state']
-  locked: boolean
-}) {
+/**
+ * Connection state as a dot with an accessible name, rather than a dot
+ * plus a word. At this size the label was half the line and it repeats
+ * on every card; the name is still announced and still on hover.
+ */
+function StatusDot({ state }: { state: ChannelStatus['state'] }) {
   const tone =
     state === 'connected'
-      ? { dot: 'bg-accent-green', text: 'text-accent-green', label: 'Connected' }
+      ? { dot: 'bg-accent-green', label: 'Connected' }
       : state === 'loading'
-        ? { dot: 'bg-muted-foreground/50', text: 'text-muted-foreground', label: 'Checking…' }
-        : locked
-          ? { dot: 'bg-muted-foreground/50', text: 'text-muted-foreground', label: 'Coming soon' }
-          : { dot: 'bg-accent-amber', text: 'text-accent-amber', label: 'Not connected' }
+        ? { dot: 'bg-muted-foreground/50', label: 'Checking connection' }
+        : state === 'unavailable'
+          ? { dot: 'bg-muted-foreground/50', label: 'Coming soon' }
+          : { dot: 'bg-accent-amber', label: 'Not connected' }
 
   return (
-    <span className={cn('mt-0.5 flex items-center gap-1.5 text-xs', tone.text)}>
-      <span
-        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', tone.dot, state === 'loading' && 'animate-pulse')}
-      />
-      {tone.label}
+    <span
+      title={tone.label}
+      className={cn(
+        'h-1.5 w-1.5 shrink-0 rounded-full',
+        tone.dot,
+        state === 'loading' && 'animate-pulse',
+      )}
+    >
+      <span className="sr-only">{tone.label}</span>
     </span>
   )
 }
