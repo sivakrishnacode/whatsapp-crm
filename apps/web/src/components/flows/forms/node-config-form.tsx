@@ -25,7 +25,15 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Paperclip, Plus, Trash2, Upload, X } from 'lucide-react';
+import {
+  Images,
+  Loader2,
+  Paperclip,
+  Plus,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -41,12 +49,11 @@ import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
 import type { ContactSegment } from '@/types';
 import { listSegmentsLight } from '@/lib/segments/api';
-import {
-  uploadAccountMedia,
-  MEDIA_MAX_BYTES,
-} from '@/lib/storage/upload-media';
+import { MEDIA_MAX_BYTES } from '@/lib/storage/upload-media';
 import { slugify, type BuilderNode } from '../shared';
 import { NextNodeRow, NodeKeySelect, TextRow } from './fields';
+import { MediaLibraryDialog } from '@/components/media/media-library';
+import { uploadToLibrary } from '@/lib/media/library';
 import {
   AiHandoffForm,
   AskForm,
@@ -1099,8 +1106,6 @@ const MEDIA_ACCEPT: Record<NonNullable<SendMediaCfg['media_type']>, string> = {
     'application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain',
 };
 
-const FLOW_MEDIA_BUCKET = 'flow-media';
-
 function SendMediaForm({
   cfg,
   allNodes,
@@ -1114,6 +1119,7 @@ function SendMediaForm({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   const mediaType = cfg.media_type ?? 'image';
   const isDocument = mediaType === 'document';
@@ -1131,9 +1137,11 @@ function SendMediaForm({
       }
       setUploading(true);
       try {
-        // Account-scoped upload (path `account-<id>/...`) — see
-        // uploadAccountMedia + migration 020's flow-media RLS policy.
-        const { publicUrl } = await uploadAccountMedia(FLOW_MEDIA_BUCKET, file);
+        // Uploads go to the LIBRARY now, not straight to flow-media:
+        // a file picked here is worth finding again, and a bucket
+        // nothing indexes is how the same logo got uploaded per node.
+        // Still an account-scoped path — see migration 087's policies.
+        const { url: publicUrl } = await uploadToLibrary(file);
         // Patch all fields in one call so the form doesn't re-render
         // with a half-uploaded state.
         onUpdateConfig({
@@ -1212,25 +1220,51 @@ function SendMediaForm({
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="border-border bg-card text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground flex w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-4 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {uploading ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Uploading…
-              </>
-            ) : (
-              <>
-                <Upload className="h-3.5 w-3.5" />
-                Click to upload (max 16 MB)
-              </>
-            )}
-          </button>
+          <div className="flex flex-col gap-1.5">
+            {/* Library first: after the first week of use, picking an
+                existing file is the common case and uploading is the
+                exception. */}
+            <button
+              type="button"
+              onClick={() => setLibraryOpen(true)}
+              disabled={uploading}
+              className="border-border bg-card text-foreground hover:bg-muted flex w-full items-center justify-center gap-2 rounded-md border px-3 py-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Images className="h-3.5 w-3.5" />
+              Choose from media library
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="border-border bg-card text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground flex w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-3 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Uploading…
+                </>
+              ) : (
+                <>
+                  <Upload className="h-3.5 w-3.5" />
+                  Or upload a new file (max 16 MB)
+                </>
+              )}
+            </button>
+          </div>
         )}
+
+        <MediaLibraryDialog
+          open={libraryOpen}
+          onClose={() => setLibraryOpen(false)}
+          // The node already knows what it can send, so the picker only
+          // offers that kind — a tab of spreadsheets on an image node is
+          // a choice that can only end in a rejected send.
+          accept={[mediaType === 'document' ? 'file' : mediaType]}
+          onPick={(asset) =>
+            onUpdateConfig({ media_url: asset.url, filename: asset.filename })
+          }
+        />
         <input
           ref={fileInputRef}
           type="file"

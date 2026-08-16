@@ -3,6 +3,7 @@ import {
   ClipboardList,
   GitBranch,
   Home,
+  Images,
   Inbox,
   PlugZap,
   Settings,
@@ -64,6 +65,10 @@ export const RAIL_WORKSPACE: RailItem[] = [
   { id: 'pipelines', label: 'Pipelines', icon: GitBranch, href: '/pipelines' },
   { id: 'automations', label: 'Automations', icon: Zap, href: '/automations' },
   { id: 'agents', label: 'AI Agents & Bots', icon: Bot, href: '/agents' },
+  // Workspace-level for the same reason as Automations: one upload is
+  // reused by flows, broadcasts, templates and the inbox, so filing it
+  // under a channel would imply a scope it does not have.
+  { id: 'media', label: 'Media', icon: Images, href: '/media' },
   // Ads Manager sits at the end of the workspace block and is the first
   // rail row to own a second panel (see `RailItem.panel`). Spliced in
   // conditionally rather than filtered downstream so the row simply does
@@ -96,7 +101,12 @@ export const RAIL_BOTTOM: RailItem[] = [
  */
 const SETTINGS_EXTRA_ROWS: Record<string, PanelItem[]> = {
   workspace: [
-    { id: 'members', label: 'Users & Roles', icon: UsersRound, href: '/members' },
+    {
+      id: 'members',
+      label: 'Users & Roles',
+      icon: UsersRound,
+      href: '/members',
+    },
     // No "Subscriptions" row here. It used to point at a per-user
     // subscription list, which stopped making sense once a plan became
     // a property of the workspace rather than of each member: the page
@@ -117,22 +127,26 @@ const SETTINGS_EXTRA_ROWS: Record<string, PanelItem[]> = {
 function buildSettingsPanel(): PanelGroup[] {
   const groups: PanelGroup[] = SETTINGS_RAIL_GROUPS.map(({ label, group }) => ({
     label,
-    items: SETTINGS_SECTIONS.filter((s) => SECTION_META[s].group === group).map((s) => {
-      const meta = SECTION_META[s];
-      return {
-        id: `settings-${s}`,
-        label: meta.label,
-        icon: meta.icon,
-        href: `/settings?tab=${s}`,
-        adminOnly: meta.adminOnly,
-        ownerOnly: meta.ownerOnly,
-      } satisfies PanelItem;
-    }),
+    items: SETTINGS_SECTIONS.filter((s) => SECTION_META[s].group === group).map(
+      (s) => {
+        const meta = SECTION_META[s];
+        return {
+          id: `settings-${s}`,
+          label: meta.label,
+          icon: meta.icon,
+          href: `/settings?tab=${s}`,
+          adminOnly: meta.adminOnly,
+          ownerOnly: meta.ownerOnly,
+        } satisfies PanelItem;
+      }
+    ),
   }));
 
   // Splice the route-based rows into their groups.
   for (const g of groups) {
-    const extras = g.label ? SETTINGS_EXTRA_ROWS[g.label.toLowerCase()] : undefined;
+    const extras = g.label
+      ? SETTINGS_EXTRA_ROWS[g.label.toLowerCase()]
+      : undefined;
     if (extras) g.items = [...g.items, ...extras];
   }
 
@@ -184,7 +198,7 @@ function matches(pathname: string, href: string, exact = false): boolean {
 function findPanelItem(
   groups: PanelGroup[],
   pathname: string,
-  search?: string,
+  search?: string
 ): PanelItem | null {
   const candidates = groups
     .flatMap((g) => g.items)
@@ -206,12 +220,14 @@ function findPanelItem(
   // No tab in the URL: the page itself falls back to its first tab
   // (commerce → catalogue), so the first candidate in panel order is the
   // one actually being shown.
-  const sharePath = candidates.filter((c) => pathOf(c.href) === pathOf(candidates[0].href));
+  const sharePath = candidates.filter(
+    (c) => pathOf(c.href) === pathOf(candidates[0].href)
+  );
   if (sharePath.length > 1) return sharePath[0];
 
   // Otherwise the longest href wins — the most specific route.
   return candidates.reduce((best, c) =>
-    pathOf(c.href).length > pathOf(best.href).length ? c : best,
+    pathOf(c.href).length > pathOf(best.href).length ? c : best
   );
 }
 
@@ -219,7 +235,10 @@ function findPanelItem(
  * Resolve the nav state for a pathname (+ optional query string, needed
  * to disambiguate `?tab=`-only siblings).
  */
-export function resolveNavContext(pathname: string, search?: string): NavContext {
+export function resolveNavContext(
+  pathname: string,
+  search?: string
+): NavContext {
   const empty: NavContext = {
     activeRailId: null,
     activeChannel: null,
@@ -242,8 +261,10 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
     urlChannel ??
     CHANNEL_ORDER.find((id) =>
       CHANNELS[id].panel.some((g) =>
-        g.items.some((item) => item.matchPaths?.some((p) => matches(pathname, p))),
-      ),
+        g.items.some((item) =>
+          item.matchPaths?.some((p) => matches(pathname, p))
+        )
+      )
     ) ??
     null;
 
@@ -277,7 +298,7 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
     // than re-deriving the active row from the URL here.
     if (matches(pathname, '/settings')) {
       const section = resolveSection(
-        search ? new URLSearchParams(search).get('tab') : null,
+        search ? new URLSearchParams(search).get('tab') : null
       );
       return {
         activeRailId: 'settings',
@@ -307,9 +328,10 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
   // 3. A rail destination. Most have no second panel; one that declares
   //    `panel` resolves its active row the same way a channel does.
   const railItem =
-    [RAIL_ONBOARDING, ...RAIL_WORKSPACE, ...RAIL_BOTTOM].find((i) =>
-      matches(pathname, i.href, i.exact) ||
-      i.matchPaths?.some((p) => matches(pathname, p)),
+    [RAIL_ONBOARDING, ...RAIL_WORKSPACE, ...RAIL_BOTTOM].find(
+      (i) =>
+        matches(pathname, i.href, i.exact) ||
+        i.matchPaths?.some((p) => matches(pathname, p))
     ) ?? null;
 
   if (railItem) {
@@ -343,13 +365,21 @@ export function resolveNavContext(pathname: string, search?: string): NavContext
     '/notifications': 'Notifications',
     '/pricing': 'Plan & billing',
   };
-  const unlisted = Object.entries(UNLISTED_TITLES).find(([p]) => matches(pathname, p));
+  const unlisted = Object.entries(UNLISTED_TITLES).find(([p]) =>
+    matches(pathname, p)
+  );
   if (unlisted) return { ...empty, title: unlisted[1] };
 
   return empty;
 }
 
-export { CHANNELS, CHANNEL_ORDER, channelBase, channelLandingHref, isChannelId };
+export {
+  CHANNELS,
+  CHANNEL_ORDER,
+  channelBase,
+  channelLandingHref,
+  isChannelId,
+};
 // `RailItem` moved to channels.ts (so ads.ts can build one without an
 // import cycle) but is re-exported here: this module stays the single
 // import site for every nav consumer.

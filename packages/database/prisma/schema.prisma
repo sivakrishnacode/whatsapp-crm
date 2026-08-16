@@ -34,6 +34,7 @@ model Account {
   ai_credit_ledger              ai_credit_ledger[]
   ai_credit_orders              ai_credit_orders[]
   ai_credit_wallets             ai_credit_wallets?
+  media_assets                  media_assets[]
   ai_knowledge_chunks           ai_knowledge_chunks[]
   ai_knowledge_documents        ai_knowledge_documents[]
   app_connections               app_connections[]
@@ -621,6 +622,7 @@ model users {
   ai_credit_ledger                                                   ai_credit_ledger[]
   ai_credit_orders                                                   ai_credit_orders[]
   ai_knowledge_documents                                             ai_knowledge_documents[]
+  media_assets                                                       media_assets[]
   api_keys                                                           ApiKey[]
   automationLogs                                                     AutomationLog[]
   automationPendingExecutions                                        AutomationPendingExecution[]
@@ -2926,5 +2928,34 @@ enum subscription_status_enum {
   cancelled
   expired
 
+  @@schema("public")
+}
+
+/// Index over uploaded files — the bytes live in Supabase Storage
+/// (`media-library` bucket). Written from the BROWSER under RLS, like
+/// the buckets it describes; nothing in apps/api reads it today.
+/// Migration 087.
+model media_assets {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id  String    @db.Uuid
+  uploaded_by String?   @db.Uuid
+  bucket      String    @default("media-library")
+  path        String
+  url         String
+  filename    String
+  /// image | video | audio | file — the picker's four tabs.
+  kind        String
+  mime_type   String?
+  size_bytes  BigInt    @default(0)
+  /// Drives "Recently used". Distinct from created_at on purpose.
+  last_used_at DateTime? @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  accounts    Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users       users?    @relation(fields: [uploaded_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([bucket, path])
+  @@index([account_id, created_at(sort: Desc)], map: "idx_media_assets_account_created")
+  @@index([account_id, kind], map: "idx_media_assets_account_kind")
+  @@map("media_assets")
   @@schema("public")
 }
