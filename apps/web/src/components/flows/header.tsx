@@ -39,6 +39,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useFlowEditor, type BuilderState } from './flow-editor-state';
+import { AiFlowPrompt } from './ai-flow-prompt';
 
 export function EditorHeader({ onTest }: { onTest?: () => void }) {
   const router = useRouter();
@@ -91,8 +92,16 @@ export function EditorHeader({ onTest }: { onTest?: () => void }) {
           </span>
         )}
 
+        {/* ---- centre: build with AI ----
+            Between the name and the actions because that is the order
+            the work happens in: name it, generate it, then save it. The
+            wrapper is `relative` so the suggestion list can hang off it. */}
+        <div className="relative ml-auto flex min-w-0 items-center">
+          <AiFlowPrompt />
+        </div>
+
         {/* ---- right: test · runs · delete · activate · save ---- */}
-        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {onTest && (
             <Button
               variant="ghost"

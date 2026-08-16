@@ -51,7 +51,19 @@ import {
 } from '@/lib/flows/validate';
 import { unlinkNodeReferences } from '@/lib/flows/edges';
 import type { FlowNodeRow, FlowRow } from '@/lib/flows/types';
-import { NODE_META, slugify, type BuilderNode, type NodeType } from './shared';
+import {
+  NODE_META,
+  defaultConfigFor,
+  slugify,
+  type BuilderNode,
+  type NodeType,
+} from './shared';
+import { draftToBuilderNodes, type AiFlowDraft } from '@/lib/flows/ai-draft';
+
+// Re-exported: `defaultConfigFor` moved to shared.tsx to break an import
+// cycle (lib/flows/ai-draft needs it, and this module needs ai-draft's
+// types). Existing importers and its tests keep their path.
+export { defaultConfigFor };
 
 // ============================================================
 // State shape
@@ -143,115 +155,6 @@ export function uniqueNodeKey(base: string, existing: BuilderNode[]): string {
   return `${base}_${i}`;
 }
 
-export function defaultConfigFor(type: NodeType): Record<string, unknown> {
-  switch (type) {
-    case 'start':
-      return { next_node_key: '' };
-    case 'send_message':
-      return { text: '', next_node_key: '' };
-    case 'send_buttons':
-      return {
-        text: '',
-        buttons: [{ reply_id: 'yes', title: 'Yes', next_node_key: '' }],
-      };
-    case 'send_list':
-      return {
-        text: '',
-        button_label: 'View options',
-        sections: [
-          {
-            title: '',
-            rows: [{ reply_id: 'row_1', title: 'Option 1', next_node_key: '' }],
-          },
-        ],
-      };
-    case 'send_media':
-      return {
-        media_type: 'image',
-        media_url: '',
-        caption: '',
-        filename: '',
-        next_node_key: '',
-      };
-    case 'collect_input':
-      return {
-        prompt_text: '',
-        var_key: 'answer',
-        next_node_key: '',
-      };
-    case 'condition':
-      return {
-        subject: 'var',
-        subject_key: '',
-        operator: 'equals',
-        value: '',
-        true_next: '',
-        false_next: '',
-      };
-    case 'set_tag':
-      return { mode: 'add', tag_id: '', next_node_key: '' };
-    case 'set_segment':
-      return { mode: 'add', segment_id: '', next_node_key: '' };
-    case 'set_attribute':
-      return {
-        target: 'contact_field',
-        key: '',
-        value: '',
-        next_node_key: '',
-      };
-    case 'send_template':
-      return {
-        template_name: '',
-        language: '',
-        body_params: [],
-        header_params: [],
-        next_node_key: '',
-      };
-    case 'send_products':
-      return {
-        mode: 'single',
-        catalog_id: '',
-        product_retailer_ids: [''],
-        body_text: '',
-        next_node_key: '',
-      };
-    case 'ask_location':
-      return { prompt_text: '', var_key: 'location', next_node_key: '' };
-    case 'ask_media':
-      return {
-        prompt_text: '',
-        var_key: 'file',
-        accept: 'any',
-        next_node_key: '',
-      };
-    case 'wait':
-      // An hour, not a minute: the common use is "give them time before
-      // we nudge", and a default measured in minutes reads as a
-      // throttle rather than a pause.
-      return { duration: 1, unit: 'hours', next_node_key: '' };
-    case 'http_request':
-      return {
-        method: 'GET',
-        url: '',
-        headers: {},
-        body: '',
-        response_var: 'api',
-        fail_on_error: false,
-        next_node_key: '',
-      };
-    case 'start_flow':
-      return { flow_id: '' };
-    case 'handoff':
-      return { note: '' };
-    case 'ai_handoff':
-      // No agent_id by default — normal routing picks, which respects
-      // the priority order the workspace already set.
-      return { note: '' };
-    case 'end':
-      return {};
-  }
-}
-
 export function applyNodePositions(
   nodes: BuilderNode[],
   positions: Record<string, { x: number; y: number }>
@@ -289,38 +192,63 @@ export function useFlowEditor(): FlowEditorContextValue {
 interface ProviderProps {
   initialFlow: FlowRow;
   initialNodes: FlowNodeRow[];
+  /**
+   * A draft handed over from the "describe it and I'll build it" entry
+   * on /flows. Seeds the editor on first render and marks it DIRTY —
+   * nothing is saved until the author presses Save, which is the whole
+   * point of the approval step.
+   */
+  seededDraft?: AiFlowDraft | null;
   children: ReactNode;
 }
 
 export function FlowEditorProvider({
   initialFlow,
   initialNodes,
+  seededDraft,
   children,
 }: ProviderProps) {
   const router = useRouter();
 
-  const [state, setStateRaw] = useState<BuilderState>(() => ({
-    name: initialFlow.name,
-    description: initialFlow.description ?? '',
-    trigger_type: initialFlow.trigger_type,
-    trigger_config: initialFlow.trigger_config as Record<string, unknown>,
-    entry_node_id: initialFlow.entry_node_id,
-    status: initialFlow.status,
-    nodes: initialNodes.map((n) => ({
-      node_key: n.node_key,
-      node_type: n.node_type as NodeType,
-      config: n.config as Record<string, unknown>,
-      position_x: n.position_x,
-      position_y: n.position_y,
-    })),
-  }));
+  const [state, setStateRaw] = useState<BuilderState>(() => {
+    const base: BuilderState = {
+      name: initialFlow.name,
+      description: initialFlow.description ?? '',
+      trigger_type: initialFlow.trigger_type,
+      trigger_config: initialFlow.trigger_config as Record<string, unknown>,
+      entry_node_id: initialFlow.entry_node_id,
+      status: initialFlow.status,
+      nodes: initialNodes.map((n) => ({
+        node_key: n.node_key,
+        node_type: n.node_type as NodeType,
+        config: n.config as Record<string, unknown>,
+        position_x: n.position_x,
+        position_y: n.position_y,
+      })),
+    };
+    if (!seededDraft) return base;
+
+    // Seeded from "describe it and I'll build it" on /flows. Positions
+    // are deliberately absent so the canvas lays the graph out with
+    // dagre — a generated flow arrives readable rather than piled at
+    // the origin.
+    const nodes = draftToBuilderNodes(seededDraft);
+    return {
+      ...base,
+      description: seededDraft.description || base.description,
+      trigger_type: seededDraft.trigger_type,
+      trigger_config: seededDraft.trigger_config,
+      entry_node_id: seededDraft.entry_node_key || (nodes[0]?.node_key ?? null),
+      nodes,
+    };
+  });
 
   const [saving, setSaving] = useState(false);
   const [activating, setActivating] = useState(false);
   // dirty flips on user edits; status-only updates (after the activate
   // API succeeds) use setStateRaw so they don't falsely re-flag the
   // form as dirty.
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(Boolean(seededDraft));
   const setState = useCallback<typeof setStateRaw>((updaterOrValue) => {
     setDirty(true);
     setStateRaw(updaterOrValue);

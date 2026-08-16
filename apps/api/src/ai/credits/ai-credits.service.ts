@@ -15,7 +15,7 @@ import {
  * added here without the matching migration fails the INSERT inside
  * `consume_ai_credits`, which is caught and logged — so the spend
  * silently stops being metered rather than erroring. Migration 083 added
- * 'automation_draft'.
+ * 'automation_draft'; 088 added 'flow_draft'.
  */
 export type CreditFeature =
   | 'draft'
@@ -23,7 +23,10 @@ export type CreditFeature =
   | 'playground'
   | 'embedding'
   /** The AI automation builder. No conversation attached, unlike 'draft'. */
-  | 'automation_draft';
+  | 'automation_draft'
+  /** The AI flow builder. Its own value so the two surfaces stay
+   *  separable in the ledger — see migration 088. */
+  | 'flow_draft';
 
 /** A thrown value is not necessarily an Error; log it without pretending. */
 function errorText(err: unknown): string {

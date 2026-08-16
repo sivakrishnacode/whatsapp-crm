@@ -27,6 +27,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { GitFork, List, PanelLeftOpen } from 'lucide-react';
 import { ReactFlowProvider } from '@xyflow/react';
 
@@ -42,6 +43,7 @@ import { ValidationPanel } from './validation-panel';
 import { NODE_META, nodeColors, type NodeType } from './shared';
 import { cn } from '@/lib/utils';
 import type { FlowRow, FlowNodeRow } from '@/lib/flows/types';
+import { takeFlowDraft } from '@/lib/flows/ai-draft';
 
 /**
  * Below this viewport width we force list view and hide the toggle.
@@ -67,6 +69,13 @@ interface Props {
 }
 
 export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
+  // A draft handed over from /flows ("describe it and I'll build it").
+  // Read ONCE and removed by `takeFlowDraft`, so a refresh does not
+  // re-seed a draft the author has since edited.
+  const searchParams = useSearchParams();
+  const handoff = searchParams.get('ai');
+  const [seeded] = useState(() => takeFlowDraft(handoff));
+
   const [view, setView] = useState<View>(() => {
     const saved = readStored(STORAGE_KEY, 'canvas');
     return saved === 'list' ? 'list' : 'canvas';
@@ -92,7 +101,11 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
   const showCanvasPanes = effectiveView === 'canvas' && !isMobile;
 
   return (
-    <FlowEditorProvider initialFlow={initialFlow} initialNodes={initialNodes}>
+    <FlowEditorProvider
+      initialFlow={initialFlow}
+      initialNodes={initialNodes}
+      seededDraft={seeded}
+    >
       {/* Templates, products, custom fields, flows and agents — fetched
           once here so ten open nodes don't fetch the same lists ten
           times. */}

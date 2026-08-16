@@ -713,6 +713,48 @@ conversation at a time. Not to be confused with **WhatsApp Flows**
   contact, so they cannot nest.
 - **The test simulator never calls a real endpoint** — an `http_request`
   in the preview reports what it *would* send.
+- **Build with AI**: `POST /ai/flow-draft` (`ai/lib/flow-draft.ts`), the
+  sibling of `automation-draft` and metered the same way — its own
+  ledger feature `flow_draft` (migration 088), because two spending
+  surfaces folded into one line can never be separated again.
+  ⚠️ **It writes nothing**: the draft is applied to EDITOR STATE and a
+  human presses Save. ⚠️ **A flow is a graph, so the parser repairs
+  more**: duplicate node keys are renamed, an edge to a node that was
+  never emitted is blanked, a bad entry falls back to the first node —
+  each with a note the author reads, never silently. Ids are always ''
+  (`needs`). In the editor the prompt bar REPLACES the canvas and
+  confirms first unless it is empty; from `/flows` the draft rides to a
+  newly-created flow through sessionStorage (`lib/flows/ai-draft.ts`),
+  and the flow row is created only AFTER a draft arrives, so a failed
+  generation leaves no litter.
+- **Media**: uploads go to the shared library (migration 087), not
+  straight to `flow-media` — see the Media library section.
+
+## Media library (migration 087)
+
+`media_assets` indexes what a workspace has uploaded; the bytes live in
+the `media-library` Storage bucket. Before it, every upload was
+fire-and-forget — nothing recorded what existed, so the same file was
+re-uploaded per node and "how much are we storing?" was unanswerable.
+
+- **Browser-written under RLS**, like the buckets it describes, and
+  deliberately unlike `app_connections`: it holds a filename, a size and
+  a URL that is already public. There is no API endpoint and should not
+  be. `apps/web/src/lib/media/library.ts` is the whole data layer.
+- ⚠️ **Upload is TWO writes and they can half-fail.** Object first, then
+  the row; if the row fails the object is deleted, because an object
+  nothing references is unfindable and bills forever. The reverse (a row
+  whose object is gone) is left alone — it renders broken and the user
+  can delete it.
+- **One component, two modes** (`components/media/media-library.tsx`):
+  `onPick` present = picker, absent = manager. A separate manage screen
+  is how the two drift until the page lists files the picker cannot see.
+- **Four call sites**: flow media node, inbox composer, template header
+  media, broadcast media step. ⚠️ A library file staged in the inbox
+  carries **no `path`**, so discarding the draft cannot delete an asset
+  other rows point at.
+- **The 1 GB meter is advisory** and enforces nothing. A real cap belongs
+  in `subscription_plans` behind `check_account_limit`.
 
 ## Queues (`apps/api/src/queue`, BullMQ + Redis)
 
