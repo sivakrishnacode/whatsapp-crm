@@ -88,6 +88,19 @@ export interface PanelItem {
    * on flat routes, surfaced inside the WhatsApp panel.
    */
   matchPaths?: string[];
+  /**
+   * For rows that share a route and differ only by `?tab=`: this is the
+   * one the page renders when no tab is in the URL.
+   *
+   * Catalog and Orders both live on `/commerce`, which shows the
+   * catalogue by default. That used to be inferred from panel order —
+   * whichever row came first was assumed to be the page's default — and
+   * it silently broke the moment the Analytics group moved above
+   * Assets, highlighting Orders on a page showing the catalogue. Which
+   * tab a page opens on is a fact about the page, not about where its
+   * row happens to sit in the sidebar, so it is stated here.
+   */
+  defaultTab?: boolean;
   /** Hidden from non-admins. Mirrors `SectionMeta.adminOnly`. */
   adminOnly?: boolean;
   /**
@@ -180,7 +193,7 @@ export function channelBase(id: ChannelId): string {
 }
 
 /**
- * Where a channel's rail row should navigate to.
+ * Where a channel's rail row should navigate to — its DEFAULT PAGE.
  *
  * The namespace root itself is NOT a valid destination for a live
  * channel: `/channels/whatsapp` has no `page.tsx` (only subdirectories),
@@ -188,17 +201,62 @@ export function channelBase(id: ChannelId): string {
  * because their optional catch-all matches the root too — a difference
  * that's invisible until you click it.
  *
- * So the landing page is the channel's first panel row, which is the one
- * a user would pick anyway (Channel Settings for all three). Deriving it
- * keeps the rail correct automatically as panels change, instead of
- * relying on a hardcoded href staying in sync.
+ * So the landing page is the channel's first panel row, which for every
+ * live channel is now **Analytics → Overview**: opening a channel should
+ * answer "how is this doing" before it offers anything to configure.
+ * Deriving it from the panel keeps the rail correct automatically as
+ * panels change, instead of relying on a hardcoded href staying in sync.
+ *
+ * ⚠️ This is NOT where you send someone to CONNECT a channel — use
+ * `channelConnectHref` for that. Landing an unconnected channel on the
+ * dashboard shows the connect CTA, which works, but it puts a page
+ * between the user and the button when connecting was the whole point.
  */
 export function channelLandingHref(id: ChannelId): string {
   const first = CHANNELS[id].panel[0]?.items[0]?.href;
   return first ?? channelBase(id);
 }
 
+/**
+ * Where connecting a channel actually happens.
+ *
+ * Split from `channelLandingHref` when Analytics became the default
+ * page. Before that the two were the same href by coincidence — the
+ * first panel row was Channel Settings — and the onboarding checklist
+ * and the automation readiness list both relied on that coincidence.
+ */
+export function channelConnectHref(id: ChannelId): string {
+  return `${channelBase(id)}/settings`;
+}
+
 const WHATSAPP_PANEL: PanelGroup[] = [
+  // Analytics leads every live channel's panel, and its first row is
+  // therefore the channel's default page (see channelLandingHref).
+  // Opening WhatsApp should answer "how is this doing" before it
+  // offers a settings form.
+  {
+    label: 'Analytics',
+    items: [
+      {
+        id: 'wa-analytics',
+        label: 'Overview',
+        icon: TrendingUp,
+        href: '/channels/whatsapp/analytics',
+      },
+      {
+        id: 'wa-ctwa',
+        label: 'Click-to-WhatsApp',
+        icon: Megaphone,
+        href: '/channels/whatsapp/ctwa',
+      },
+      {
+        id: 'wa-orders',
+        label: 'Orders',
+        icon: ShoppingCart,
+        href: '/channels/whatsapp/commerce?tab=orders',
+      },
+    ],
+  },
   {
     label: 'Action',
     items: [
@@ -256,38 +314,25 @@ const WHATSAPP_PANEL: PanelGroup[] = [
         label: 'Catalog',
         icon: ShoppingBag,
         href: '/channels/whatsapp/commerce?tab=catalogue',
-      },
-    ],
-  },
-  {
-    label: 'Analytics',
-    items: [
-      // Overview leads the group: it is the page that answers "how is
-      // this channel doing", and the two below it answer narrower
-      // questions that the overview links into.
-      {
-        id: 'wa-analytics',
-        label: 'Overview',
-        icon: TrendingUp,
-        href: '/channels/whatsapp/analytics',
-      },
-      {
-        id: 'wa-ctwa',
-        label: 'Click-to-WhatsApp',
-        icon: Megaphone,
-        href: '/channels/whatsapp/ctwa',
-      },
-      {
-        id: 'wa-orders',
-        label: 'Orders',
-        icon: ShoppingCart,
-        href: '/channels/whatsapp/commerce?tab=orders',
+        // /commerce with no ?tab= renders the catalogue.
+        defaultTab: true,
       },
     ],
   },
 ];
 
 const INSTAGRAM_PANEL: PanelGroup[] = [
+  {
+    label: 'Analytics',
+    items: [
+      {
+        id: 'ig-analytics',
+        label: 'Overview',
+        icon: TrendingUp,
+        href: '/channels/instagram/analytics',
+      },
+    ],
+  },
   {
     label: 'Action',
     items: [
@@ -334,20 +379,26 @@ const INSTAGRAM_PANEL: PanelGroup[] = [
       },
     ],
   },
+];
+
+const WEB_PANEL: PanelGroup[] = [
   {
     label: 'Analytics',
     items: [
       {
-        id: 'ig-analytics',
+        id: 'web-analytics',
         label: 'Overview',
         icon: TrendingUp,
-        href: '/channels/instagram/analytics',
+        href: '/channels/web/analytics',
+      },
+      {
+        id: 'web-sessions',
+        label: 'Sessions',
+        icon: BarChart3,
+        href: '/channels/web/sessions',
       },
     ],
   },
-];
-
-const WEB_PANEL: PanelGroup[] = [
   {
     label: 'Setup',
     items: [
@@ -406,23 +457,6 @@ const WEB_PANEL: PanelGroup[] = [
         // systems and two submission paths that would drift.
         href: '/forms',
         matchPaths: ['/forms'],
-      },
-    ],
-  },
-  {
-    label: 'Analytics',
-    items: [
-      {
-        id: 'web-analytics',
-        label: 'Overview',
-        icon: TrendingUp,
-        href: '/channels/web/analytics',
-      },
-      {
-        id: 'web-sessions',
-        label: 'Sessions',
-        icon: BarChart3,
-        href: '/channels/web/sessions',
       },
     ],
   },

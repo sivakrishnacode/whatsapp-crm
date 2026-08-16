@@ -6,7 +6,7 @@ import { ArrowRight, CheckCircle2, Circle, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { useChannelStatus } from '@/hooks/use-channel-status';
-import { CHANNELS, CHANNEL_ORDER, channelLandingHref } from '@/lib/nav/channels';
+import { CHANNELS, CHANNEL_ORDER, channelConnectHref } from '@/lib/nav/channels';
 import { Card, CardContent } from '@/components/ui/card';
 
 /**
@@ -99,10 +99,13 @@ export default function OnboardingPage() {
                 <Card className="opacity-60">{body}</Card>
               ) : (
                 <Link
-                  // Same destination the rail's channel row uses — for
-                  // all three that's Channel Settings, where connecting
-                  // actually happens.
-                  href={channelLandingHref(id)}
+                  // Channel Settings, where connecting actually
+                  // happens — deliberately NOT channelLandingHref,
+                  // which now opens the channel's analytics overview.
+                  // This is a connect checklist; a dashboard showing a
+                  // "Connect" button is one click further from the
+                  // button than this list already is.
+                  href={channelConnectHref(id)}
                   className="block rounded-xl transition-colors hover:bg-muted/40"
                 >
                   <Card className="bg-transparent">{body}</Card>

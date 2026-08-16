@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 
-import { CHANNELS } from '@/lib/nav/channels'
+import { CHANNELS, channelConnectHref } from '@/lib/nav/channels'
 import { CHANNEL_ANALYTICS } from '@/lib/analytics/config'
 import type { AnalyticsChannel, AnalyticsFilters, ChannelAlert } from '@/lib/analytics/types'
 import type { ChannelAnalyticsControls } from '@/hooks/use-channel-analytics'
@@ -46,7 +46,7 @@ export function AnalyticsPageShell({
         <ConnectCta
           channelLabel={meta.label}
           description={meta.tagline}
-          href={config.connectHref}
+          href={channelConnectHref(channel)}
           icon={meta.icon}
           accent={config.accent}
           gradient={config.gradient}

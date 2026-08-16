@@ -44,8 +44,6 @@ export interface ChannelAnalyticsConfig {
   accentAlt: string
   /** Optional brand gradient for the page header glyph. */
   gradient?: string
-  /** Where the connect screen lives when the channel is not set up. */
-  connectHref: string
   quickActions: QuickAction[]
   /** Where each `get_channel_alerts` kind sends the user to fix it. */
   alertHref: Record<string, string>
@@ -57,7 +55,6 @@ export const CHANNEL_ANALYTICS: Record<AnalyticsChannel, ChannelAnalyticsConfig>
   whatsapp: {
     accent: '#25D366',
     accentAlt: '#0891b2',
-    connectHref: '/channels/whatsapp/settings',
     quickActions: [
       { label: 'New broadcast', href: '/channels/whatsapp/broadcasts', icon: Radio },
       { label: 'Templates', href: '/channels/whatsapp/templates', icon: FileText },
@@ -78,7 +75,6 @@ export const CHANNEL_ANALYTICS: Record<AnalyticsChannel, ChannelAnalyticsConfig>
     accent: '#E1306C',
     accentAlt: '#F58529',
     gradient: 'linear-gradient(135deg, #F58529, #DD2A7B, #8134AF)',
-    connectHref: '/channels/instagram/settings',
     quickActions: [
       { label: 'Comment funnels', href: '/channels/instagram/funnels', icon: Gift },
       { label: 'DM agents', href: '/channels/instagram/dm-agents', icon: Bot },
@@ -97,7 +93,6 @@ export const CHANNEL_ANALYTICS: Record<AnalyticsChannel, ChannelAnalyticsConfig>
   web: {
     accent: '#2D7FF9',
     accentAlt: '#8134AF',
-    connectHref: '/channels/web/settings',
     quickActions: [
       { label: 'Widget setup', href: '/channels/web/widget', icon: LayoutTemplate },
       { label: 'Sessions', href: '/channels/web/sessions', icon: Grid3x3 },

@@ -48,7 +48,7 @@ import {
   type AutomationTemplateDefinition,
   type TemplateRequirement,
 } from '@/lib/automations/templates';
-import { channelLandingHref } from '@/lib/nav/channels';
+import { channelConnectHref, channelLandingHref } from '@/lib/nav/channels';
 import type { ChannelId } from '@/lib/nav/channels';
 
 export type RequirementState = 'ready' | 'missing' | 'manual' | 'checking';
@@ -146,13 +146,17 @@ export function resolveRequirements(
       if (!status || status.state === 'loading') {
         return { requirement, state: 'checking' as const };
       }
-      const href = channelLandingHref(id as ChannelId);
+      // Two different destinations for two different situations: a
+      // connected channel opens on its analytics overview, an
+      // unconnected one goes straight to the settings screen that has
+      // the connect button. They were one href only because the
+      // landing page used to BE Channel Settings.
       return status.state === 'connected'
-        ? { requirement, state: 'ready' as const, href }
+        ? { requirement, state: 'ready' as const, href: channelLandingHref(id as ChannelId) }
         : {
             requirement,
             state: 'missing' as const,
-            href,
+            href: channelConnectHref(id as ChannelId),
             detail: `Connect ${requirement.label} first — this automation only fires there.`,
           };
     }

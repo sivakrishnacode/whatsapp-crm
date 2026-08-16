@@ -16,6 +16,7 @@ import {
   CHANNELS,
   CHANNEL_ORDER,
   channelBase,
+  channelConnectHref,
   channelLandingHref,
   isChannelId,
   type ChannelDef,
@@ -217,13 +218,18 @@ function findPanelItem(
     if (byTab) return byTab;
   }
 
-  // No tab in the URL: the page itself falls back to its first tab
-  // (commerce → catalogue), so the first candidate in panel order is the
-  // one actually being shown.
+  // No tab in the URL: highlight whichever row the page actually shows
+  // by default, which the row declares with `defaultTab` (commerce →
+  // catalogue). Panel ORDER used to stand in for that, and it broke
+  // when Analytics moved to the top of the panel — Orders came first
+  // and lit up on a page rendering the catalogue. Order is still the
+  // fallback for any future `?tab=` pair that declares nothing.
   const sharePath = candidates.filter(
     (c) => pathOf(c.href) === pathOf(candidates[0].href)
   );
-  if (sharePath.length > 1) return sharePath[0];
+  if (sharePath.length > 1) {
+    return sharePath.find((c) => c.defaultTab) ?? sharePath[0];
+  }
 
   // Otherwise the longest href wins — the most specific route.
   return candidates.reduce((best, c) =>
@@ -377,6 +383,7 @@ export {
   CHANNELS,
   CHANNEL_ORDER,
   channelBase,
+  channelConnectHref,
   channelLandingHref,
   isChannelId,
 };

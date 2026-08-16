@@ -4,6 +4,7 @@ import {
   CHANNELS,
   CHANNEL_ORDER,
   SETTINGS_PANEL,
+  channelConnectHref,
   channelLandingHref,
   resolveNavContext,
 } from './nav-config';
@@ -116,12 +117,27 @@ describe('resolveNavContext — channel panels', () => {
     expect(orders.title).toBe('Orders');
   });
 
-  it('falls back to the first tab when the query is absent', () => {
+  it('falls back to the page\'s default tab when the query is absent', () => {
     // The page itself renders catalogue with no ?tab=, so the panel must
     // agree rather than highlighting nothing.
     expect(resolveNavContext('/channels/whatsapp/commerce').activePanelItemId).toBe(
       'wa-catalog',
     );
+  });
+
+  it('picks the default tab by declaration, not by panel order', () => {
+    // Regression: this resolution used to take the first `?tab=` sibling
+    // in panel order. Moving the Analytics group to the top of the panel
+    // put Orders ahead of Catalog and lit up Orders on a page showing
+    // the catalogue. Assert the declaration exists AND that it is no
+    // longer the first of the pair, so order can never carry it again.
+    const rows = CHANNELS.whatsapp.panel.flatMap((g) => g.items);
+    const commerceRows = rows.filter((r) =>
+      r.href.startsWith('/channels/whatsapp/commerce'),
+    );
+    expect(commerceRows.length).toBeGreaterThan(1);
+    expect(commerceRows.filter((r) => r.defaultTab)).toHaveLength(1);
+    expect(commerceRows[0].defaultTab).toBeUndefined();
   });
 
   it('opens a placeholder channel panel from its root', () => {
@@ -157,10 +173,21 @@ describe('channelLandingHref', () => {
     }
   });
 
-  it('lands on the first panel row of each channel', () => {
-    expect(channelLandingHref('whatsapp')).toBe('/channels/whatsapp/settings');
-    expect(channelLandingHref('instagram')).toBe('/channels/instagram/settings');
-    expect(channelLandingHref('web')).toBe('/channels/web/settings');
+  it('lands on the analytics overview of each channel', () => {
+    expect(channelLandingHref('whatsapp')).toBe('/channels/whatsapp/analytics');
+    expect(channelLandingHref('instagram')).toBe('/channels/instagram/analytics');
+    expect(channelLandingHref('web')).toBe('/channels/web/analytics');
+  });
+
+  // Opening a channel and connecting a channel are two different
+  // intents that happened to share an href until Analytics became the
+  // default page. Pinned so they cannot silently converge again.
+  it('sends connect flows to settings, not to the dashboard', () => {
+    for (const id of CHANNEL_ORDER) {
+      if (CHANNELS[id].status === 'locked') continue;
+      expect(channelConnectHref(id)).toBe(`/channels/${id}/settings`);
+      expect(channelConnectHref(id)).not.toBe(channelLandingHref(id));
+    }
   });
 
   it('resolves to a route that opens that channel\'s panel', () => {
