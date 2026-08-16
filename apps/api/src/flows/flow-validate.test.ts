@@ -537,3 +537,120 @@ describe('reachableFromEntry', () => {
     expect(set).toEqual(new Set(['a', 'b']));
   });
 });
+
+// ============================================================
+// The node types added in the builder rebuild.
+//
+// This is the AUTHORITATIVE validator — the web copy runs in the
+// builder, but this one is what refuses an activation arriving by
+// direct API call. The two must agree; see the matching block in
+// apps/web/src/lib/flows/validate.test.ts.
+// ============================================================
+
+describe('validateFlowForActivation — new node types', () => {
+  const flowWith = (nodes: Array<Record<string, unknown>>) =>
+    validateFlowForActivation({ ...validFlow, entry_node_id: 's' }, [
+      { node_key: 's', node_type: 'start', config: { next_node_key: 'n' } },
+      ...(nodes as never[]),
+      { node_key: 'done', node_type: 'end', config: {} },
+    ]);
+
+  it('treats every linear node type as reachable-through', () => {
+    const linear: Array<[string, Record<string, unknown>]> = [
+      [
+        'send_template',
+        { template_name: 't', language: 'en_US', next_node_key: 'done' },
+      ],
+      [
+        'send_products',
+        {
+          mode: 'single',
+          product_retailer_ids: ['sku'],
+          next_node_key: 'done',
+        },
+      ],
+      [
+        'ask_location',
+        { prompt_text: 'Where?', var_key: 'loc', next_node_key: 'done' },
+      ],
+      [
+        'ask_media',
+        {
+          prompt_text: 'Photo?',
+          var_key: 'f',
+          accept: 'any',
+          next_node_key: 'done',
+        },
+      ],
+      ['wait', { duration: 2, unit: 'hours', next_node_key: 'done' }],
+      [
+        'set_attribute',
+        { target: 'var', key: 'k', value: 'v', next_node_key: 'done' },
+      ],
+      [
+        'http_request',
+        {
+          method: 'GET',
+          url: 'https://x.test',
+          response_var: 'api',
+          next_node_key: 'done',
+        },
+      ],
+    ];
+
+    for (const [node_type, config] of linear) {
+      const issues = flowWith([{ node_key: 'n', node_type, config }]);
+      expect(
+        issues.filter((i) => i.severity === 'error'),
+        `${node_type} should validate clean`,
+      ).toEqual([]);
+    }
+  });
+
+  it('warns, but does not block, when a wait closes the 24-hour window', () => {
+    const issues = flowWith([
+      {
+        node_key: 'n',
+        node_type: 'wait',
+        config: { duration: 2, unit: 'days', next_node_key: 'done' },
+      },
+    ]);
+    expect(issues.some((i) => i.severity === 'error')).toBe(false);
+    expect(
+      issues.some(
+        (i) => i.severity === 'warning' && /messaging window/.test(i.message),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a non-http URL on an API request', () => {
+    const issues = flowWith([
+      {
+        node_key: 'n',
+        node_type: 'http_request',
+        config: {
+          method: 'GET',
+          url: 'file:///etc/passwd',
+          response_var: 'api',
+          next_node_key: 'done',
+        },
+      },
+    ]);
+    expect(
+      issues.some((i) => i.severity === 'error' && i.field === 'url'),
+    ).toBe(true);
+  });
+
+  it('accepts start_flow and ai_handoff as terminal nodes', () => {
+    expect(
+      validateFlowForActivation({ ...validFlow, entry_node_id: 's' }, [
+        { node_key: 's', node_type: 'start', config: { next_node_key: 'n' } },
+        {
+          node_key: 'n',
+          node_type: 'ai_handoff',
+          config: { note: 'over to you' },
+        },
+      ]).filter((i) => i.severity === 'error'),
+    ).toEqual([]);
+  });
+});

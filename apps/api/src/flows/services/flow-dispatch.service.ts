@@ -16,21 +16,33 @@ import {
   matchesKeywordTrigger,
 } from './flow-engine-helpers.util';
 import type {
+  AiHandoffNodeConfig,
+  AskLocationNodeConfig,
+  AskMediaNodeConfig,
   CollectInputNodeConfig,
   ConditionNodeConfig,
   DispatchInboundInput,
   DispatchInboundResult,
   FlowRunEventType,
+  HttpRequestNodeConfig,
   KeywordTriggerConfig,
   ParsedInbound,
   SendButtonsNodeConfig,
   SendListNodeConfig,
   SendMediaNodeConfig,
   SendMessageNodeConfig,
+  SendProductsNodeConfig,
+  SendTemplateNodeConfig,
+  StartFlowNodeConfig,
   StartNodeConfig,
+  SetAttributeNodeConfig,
   SetSegmentNodeConfig,
   SetTagNodeConfig,
+  WaitNodeConfig,
 } from '../flow.types';
+import { FlowMetaSendService } from '../../whatsapp/flow-meta-send.service';
+import { FlowWaitService } from './flow-wait.service';
+import { safeFetch } from '../../ai/lib/http-guard';
 
 /**
  * Flow runner — ported from apps/web/src/lib/flows/engine.ts
@@ -77,6 +89,11 @@ export class FlowDispatchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly channelSender: ChannelSenderService,
+    // WhatsApp-only sends (template, products, location request). Flows
+    // no longer run on Instagram or web, so reaching for the WhatsApp
+    // sender directly is honest rather than a leak of abstraction.
+    private readonly metaSend: FlowMetaSendService,
+    private readonly waits: FlowWaitService,
     private readonly segments: SegmentMembershipService,
   ) {}
 
@@ -408,6 +425,254 @@ export class FlowDispatchService {
         `stashLastPromptMessageId error: ${(err as Error).message}`,
       );
     }
+  }
+
+  /**
+   * Write a value onto one of the contact's own columns.
+   *
+   * ⚠️ The column list is a WHITELIST, not a passthrough. `cfg.key` is
+   * author-supplied and lands in a Prisma `data` object; without this
+   * an author could name any column on `contacts` — `account_id`
+   * included, which would move the contact into another tenant.
+   */
+  private async writeContactField(
+    run: FlowRun,
+    key: string,
+    value: string,
+  ): Promise<void> {
+    const allowed = ['name', 'email', 'phone', 'company'] as const;
+    if (!(allowed as readonly string[]).includes(key)) {
+      throw new Error(`"${key}" is not a writable contact field`);
+    }
+    await this.prisma.contacts.updateMany({
+      // account_id in the filter, always: Prisma bypasses RLS, so this
+      // is the only thing stopping a run writing another tenant's row.
+      where: { id: run.contactId!, account_id: run.accountId },
+      data: { [key]: value || null, updated_at: new Date() },
+    });
+  }
+
+  /**
+   * Write a custom-field value for the contact.
+   *
+   * The field must already exist on the account — an author naming a
+   * field that was since deleted gets a logged error, not a silently
+   * created field nobody can find in the UI.
+   */
+  private async writeCustomField(
+    run: FlowRun,
+    key: string,
+    value: string,
+  ): Promise<void> {
+    const field = await this.prisma.custom_fields.findFirst({
+      where: { account_id: run.accountId, field_name: key },
+      select: { id: true },
+    });
+    if (!field) {
+      throw new Error(`custom field "${key}" not found on this account`);
+    }
+    await this.prisma.contact_custom_values.upsert({
+      where: {
+        contact_id_custom_field_id: {
+          contact_id: run.contactId!,
+          custom_field_id: field.id,
+        },
+      },
+      create: {
+        contact_id: run.contactId!,
+        custom_field_id: field.id,
+        value,
+      },
+      update: { value },
+    });
+  }
+
+  /**
+   * Call the author's endpoint and publish `{ status, body }` under
+   * their chosen var.
+   *
+   * ⚠️ `safeFetch` is the SSRF boundary — the same one the AI
+   * agent's custom actions use. The URL is author-supplied and this
+   * request leaves from inside our network, so the guard (scheme
+   * allowlist, publicly-routable addresses only, redirects re-validated
+   * per hop, response size cap) is what stops it reaching the metadata
+   * service or a private host. Never swap it for bare fetch.
+   *
+   * The body is parsed as JSON when it looks like JSON and left as text
+   * otherwise, so `{{vars.api.body.order.id}}` works without asking the
+   * author to declare a content type.
+   */
+  private async executeHttpRequest(
+    run: FlowRun,
+    node: FlowNode,
+    cfg: HttpRequestNodeConfig,
+    vars: Record<string, unknown>,
+  ): Promise<{ failed: boolean; vars: Record<string, unknown> }> {
+    const method = (cfg.method ?? 'GET').toUpperCase();
+    const url = interpolateVars(cfg.url ?? '', vars);
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(cfg.headers ?? {})) {
+      if (k?.trim()) headers[k] = interpolateVars(String(v ?? ''), vars);
+    }
+    const body =
+      method === 'GET' || !cfg.body
+        ? undefined
+        : interpolateVars(cfg.body, vars);
+    if (body && !headers['Content-Type'] && !headers['content-type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    let status = 0;
+    let parsed: unknown = null;
+    try {
+      const res = await safeFetch({ url, method, headers, body });
+      status = res.status;
+      try {
+        parsed = res.body ? (JSON.parse(res.body) as unknown) : null;
+      } catch {
+        parsed = res.body;
+      }
+    } catch (err) {
+      await this.logEvent(run.id, 'error', node.nodeKey, {
+        reason: 'http_request_failed',
+        detail: err instanceof Error ? err.message : String(err),
+      });
+      // A refused or unreachable call still publishes a result, so a
+      // condition downstream can branch on `status === 0` rather than
+      // the flow simply stopping with nothing said.
+      const nextVars = {
+        ...vars,
+        [cfg.response_var]: { status: 0, body: null },
+      };
+      await this.persistVars(run.id, nextVars);
+      return { failed: Boolean(cfg.fail_on_error), vars: nextVars };
+    }
+
+    const nextVars = {
+      ...vars,
+      [cfg.response_var]: { status, body: parsed },
+    };
+    await this.persistVars(run.id, nextVars);
+    await this.logEvent(run.id, 'node_entered', node.nodeKey, {
+      http_status: status,
+    });
+    const failed =
+      Boolean(cfg.fail_on_error) && (status < 200 || status >= 300);
+    return { failed, vars: nextVars };
+  }
+
+  private async persistVars(
+    runId: string,
+    vars: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.prisma.flowRun.update({
+        where: { id: runId },
+        data: { vars: vars as Prisma.InputJsonValue },
+      });
+    } catch (err) {
+      this.logger.error(`vars persist failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * End this run and start the target flow for the same contact.
+   *
+   * ⚠️ THE TARGET IS RE-READ AND SCOPED TO THIS ACCOUNT. `flow_id` comes
+   * from a node config, which is author data rather than authority —
+   * same trap as `segment_id`. Prisma bypasses RLS, so the account
+   * filter here is the only thing stopping one workspace's flow from
+   * starting another's.
+   *
+   * ⚠️ ENDING FIRST IS LOAD-BEARING. `idx_one_active_run_per_contact`
+   * permits exactly one active run per contact, so starting the target
+   * before ending this one would violate it and lose the customer
+   * entirely.
+   */
+  private async executeStartFlow(
+    run: FlowRun,
+    node: FlowNode,
+    cfg: StartFlowNodeConfig,
+  ): Promise<{ outcome: 'advanced' | 'completed' | 'handed_off' }> {
+    // End FIRST. `idx_one_active_run_per_contact` permits exactly one
+    // active run per contact, so starting the target before ending this
+    // one violates it and loses the customer entirely.
+    await this.logEvent(run.id, 'completed', node.nodeKey, {
+      connected_to_flow: cfg.flow_id,
+    });
+    await this.endRun(run.id, 'completed', 'connected_to_flow');
+
+    // `startForContact` already does the two checks that matter — it
+    // scopes the flow to this account (the id comes from a node config,
+    // which is author data, not authority) and refuses a flow that is
+    // not active. Reimplementing them here would be a second copy to
+    // keep in step.
+    const started = await this.startForContact({
+      flowId: cfg.flow_id,
+      accountId: run.accountId,
+      contactId: run.contactId!,
+      conversationId: run.conversationId!,
+      userId: run.userId,
+    });
+
+    if (!started.consumed) {
+      // The target was missing, not active, or belongs to someone else.
+      // This run is already closed, so the customer is left with a human
+      // rather than mid-flow — log why so it is diagnosable.
+      await this.logEvent(run.id, 'error', node.nodeKey, {
+        reason: 'start_flow_target_unavailable',
+        flow_id: cfg.flow_id,
+      });
+    }
+    return { outcome: 'completed' };
+  }
+
+  /**
+   * Hand the thread to an AI agent instead of a human.
+   *
+   * Writes `conversations.ai_agent_id` when the author pinned one, so
+   * the agent resolver's stickiness rule picks it up on the customer's
+   * next message. With no pin it writes nothing and normal routing
+   * decides — which is the honest default, because routing order is a
+   * workspace setting a flow should not quietly overrule.
+   */
+  private async executeAiHandoff(
+    run: FlowRun,
+    node: FlowNode,
+    cfg: AiHandoffNodeConfig,
+  ): Promise<void> {
+    if (run.conversationId && cfg.agent_id) {
+      try {
+        // Scoped to the account: an agent id from a node config is
+        // author data, not authority.
+        const agent = await this.prisma.ai_agents.findFirst({
+          where: { id: cfg.agent_id, account_id: run.accountId },
+          select: { id: true },
+        });
+        if (agent) {
+          await this.prisma.conversations.update({
+            where: { id: run.conversationId },
+            data: { ai_agent_id: agent.id, updated_at: new Date() },
+          });
+        } else {
+          await this.logEvent(run.id, 'error', node.nodeKey, {
+            reason: 'ai_agent_not_found',
+          });
+        }
+      } catch (err) {
+        this.logger.error(
+          `ai_handoff agent pin failed: ${(err as Error).message}`,
+        );
+      }
+    }
+    await this.logEvent(run.id, 'handoff', node.nodeKey, {
+      to: 'ai_agent',
+      agent_id: cfg.agent_id ?? null,
+      note: cfg.note ?? null,
+    });
+    // 'handed_off' as the end reason, like the human handoff: the run
+    // is over and something else owns the conversation now.
+    await this.endRun(run.id, 'handed_off', 'ai_handoff');
   }
 
   private async executeHandoff(run: FlowRun, node: FlowNode): Promise<void> {
@@ -766,6 +1031,185 @@ export class FlowDispatchService {
         }
         return { outcome: 'advanced' };
       }
+      if (node.nodeType === 'send_template') {
+        const cfg = node.config as unknown as SendTemplateNodeConfig;
+        try {
+          await this.metaSend.sendTemplate({
+            accountId: run.accountId,
+            conversationId: run.conversationId!,
+            contactId: run.contactId!,
+            templateName: cfg.template_name,
+            language: cfg.language,
+            params: (cfg.body_params ?? []).map((p) =>
+              interpolateVars(p, vars),
+            ),
+          });
+        } catch (err) {
+          await this.logEvent(run.id, 'error', node.nodeKey, {
+            reason: 'send_template_failed',
+            detail: err instanceof Error ? err.message : String(err),
+          });
+          await this.endRun(run.id, 'failed', 'send_template_failed');
+          return { outcome: 'completed' };
+        }
+        currentKey = cfg.next_node_key;
+        continue;
+      }
+      if (node.nodeType === 'send_products') {
+        const cfg = node.config as unknown as SendProductsNodeConfig;
+        try {
+          await this.metaSend.sendProducts({
+            accountId: run.accountId,
+            conversationId: run.conversationId!,
+            contactId: run.contactId!,
+            mode: cfg.mode === 'list' ? 'list' : 'single',
+            catalogId: cfg.catalog_id,
+            productRetailerIds: cfg.product_retailer_ids ?? [],
+            headerText: cfg.header_text,
+            bodyText: cfg.body_text
+              ? interpolateVars(cfg.body_text, vars)
+              : undefined,
+            footerText: cfg.footer_text,
+          });
+        } catch (err) {
+          await this.logEvent(run.id, 'error', node.nodeKey, {
+            reason: 'send_products_failed',
+            detail: err instanceof Error ? err.message : String(err),
+          });
+          await this.endRun(run.id, 'failed', 'send_products_failed');
+          return { outcome: 'completed' };
+        }
+        currentKey = cfg.next_node_key;
+        continue;
+      }
+      if (node.nodeType === 'ask_location' || node.nodeType === 'ask_media') {
+        // Both suspend exactly like collect_input: send the prompt,
+        // park on this node, and let the inbound path match the answer
+        // by message KIND. The only difference is which send goes out.
+        const cfg = node.config as unknown as
+          AskLocationNodeConfig | AskMediaNodeConfig;
+        try {
+          const prompt = interpolateVars(cfg.prompt_text, vars);
+          if (node.nodeType === 'ask_location') {
+            await this.metaSend.sendLocationRequest({
+              accountId: run.accountId,
+              conversationId: run.conversationId!,
+              contactId: run.contactId!,
+              bodyText: prompt,
+            });
+          } else {
+            await this.channelSender.sendText({
+              accountId: run.accountId,
+              conversationId: run.conversationId!,
+              contactId: run.contactId!,
+              text: prompt,
+            });
+          }
+        } catch (err) {
+          await this.logEvent(run.id, 'error', node.nodeKey, {
+            reason: `${node.nodeType}_prompt_failed`,
+            detail: err instanceof Error ? err.message : String(err),
+          });
+          await this.endRun(run.id, 'failed', `${node.nodeType}_prompt_failed`);
+          return { outcome: 'completed' };
+        }
+        const advanced = await this.advanceCurrentNodeKey(
+          run.id,
+          run.currentNodeKey,
+          node.nodeKey,
+        );
+        if (!advanced) {
+          await this.logEvent(run.id, 'error', node.nodeKey, {
+            reason: 'lost_race_during_advance',
+          });
+        }
+        return { outcome: 'advanced' };
+      }
+      if (node.nodeType === 'wait') {
+        const cfg = node.config as unknown as WaitNodeConfig;
+        const delayMs = FlowWaitService.toMilliseconds(cfg.duration, cfg.unit);
+        // Park ON the wait node itself, resuming at its target. The run
+        // stays 'active' — see migration 086 for why a fourth status
+        // would have been worse.
+        const advanced = await this.advanceCurrentNodeKey(
+          run.id,
+          run.currentNodeKey,
+          node.nodeKey,
+        );
+        if (!advanced) {
+          await this.logEvent(run.id, 'error', node.nodeKey, {
+            reason: 'lost_race_during_advance',
+          });
+          return { outcome: 'advanced' };
+        }
+        const parked = await this.waits.park({
+          runId: run.id,
+          resumeNodeKey: cfg.next_node_key,
+          delayMs,
+        });
+        if (!parked) {
+          // Could not record the pause. Continuing immediately is the
+          // lesser evil: a customer who gets the next message early is
+          // recoverable, one whose conversation stops forever is not.
+          await this.logEvent(run.id, 'error', node.nodeKey, {
+            reason: 'wait_park_failed_continuing',
+          });
+          currentKey = cfg.next_node_key;
+          continue;
+        }
+        await this.logEvent(run.id, 'node_entered', node.nodeKey, {
+          waiting_ms: delayMs,
+          resumes_at: new Date(Date.now() + delayMs).toISOString(),
+        });
+        return { outcome: 'advanced' };
+      }
+      if (node.nodeType === 'set_attribute') {
+        const cfg = node.config as unknown as SetAttributeNodeConfig;
+        const value = interpolateVars(cfg.value ?? '', vars);
+        try {
+          if (cfg.target === 'var') {
+            const nextVars = { ...vars, [cfg.key]: value };
+            await this.prisma.flowRun.update({
+              where: { id: run.id },
+              data: { vars: nextVars as Prisma.InputJsonValue },
+            });
+            vars = nextVars;
+          } else if (cfg.target === 'custom_field') {
+            await this.writeCustomField(run, cfg.key, value);
+          } else {
+            await this.writeContactField(run, cfg.key, value);
+          }
+        } catch (err) {
+          // Non-fatal, same call as set_tag: a failed write is not a
+          // reason to abandon the customer mid-conversation.
+          await this.logEvent(run.id, 'error', node.nodeKey, {
+            reason: 'set_attribute_failed',
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+        currentKey = cfg.next_node_key;
+        continue;
+      }
+      if (node.nodeType === 'http_request') {
+        const cfg = node.config as unknown as HttpRequestNodeConfig;
+        const outcome = await this.executeHttpRequest(run, node, cfg, vars);
+        if (outcome.failed) {
+          await this.endRun(run.id, 'failed', 'http_request_failed');
+          return { outcome: 'completed' };
+        }
+        vars = outcome.vars;
+        currentKey = cfg.next_node_key;
+        continue;
+      }
+      if (node.nodeType === 'start_flow') {
+        const cfg = node.config as unknown as StartFlowNodeConfig;
+        return this.executeStartFlow(run, node, cfg);
+      }
+      if (node.nodeType === 'ai_handoff') {
+        const cfg = node.config as unknown as AiHandoffNodeConfig;
+        await this.executeAiHandoff(run, node, cfg);
+        return { outcome: 'handed_off' };
+      }
       if (node.nodeType === 'handoff') {
         await this.executeHandoff(run, node);
         return { outcome: 'handed_off' };
@@ -882,6 +1326,78 @@ export class FlowDispatchService {
         message.reply_id,
       );
     } else if (
+      message.kind === 'location' &&
+      currentNode.nodeType === 'ask_location'
+    ) {
+      // The pin is stored STRUCTURED, not as "name - address - lat,lng":
+      // a downstream condition or API request needs the numbers, and
+      // parsing them back out of a display string breaks on any place
+      // name containing a hyphen.
+      const cfg = currentNode.config as unknown as AskLocationNodeConfig;
+      if (cfg.var_key) {
+        const captured = {
+          latitude: message.latitude,
+          longitude: message.longitude,
+          name: message.name ?? null,
+          address: message.address ?? null,
+        };
+        const newVars = { ...vars, [cfg.var_key]: captured };
+        try {
+          await this.prisma.flowRun.update({
+            where: { id: run.id },
+            data: {
+              vars: newVars as Prisma.InputJsonValue,
+              repromptCount: 0,
+            },
+          });
+          vars = newVars;
+          repromptCount = 0;
+          await this.logEvent(run.id, 'node_entered', currentNode.nodeKey, {
+            captured_key: cfg.var_key,
+            captured_kind: 'location',
+          });
+          matched = cfg.next_node_key;
+        } catch (err) {
+          this.logger.error(
+            `ask_location capture failed: ${(err as Error).message}`,
+          );
+        }
+      }
+    } else if (
+      message.kind === 'media' &&
+      currentNode.nodeType === 'ask_media'
+    ) {
+      const cfg = currentNode.config as unknown as AskMediaNodeConfig;
+      const accept = cfg.accept ?? 'any';
+      // A node waiting for a document must not be satisfied by a
+      // sticker. A rejected kind falls through to the fallback policy,
+      // which re-asks — which is the behaviour the author expects from
+      // having narrowed it in the first place.
+      const kindOk = accept === 'any' || accept === message.media_kind;
+      if (kindOk && cfg.var_key && message.media_url) {
+        const newVars = { ...vars, [cfg.var_key]: message.media_url };
+        try {
+          await this.prisma.flowRun.update({
+            where: { id: run.id },
+            data: {
+              vars: newVars as Prisma.InputJsonValue,
+              repromptCount: 0,
+            },
+          });
+          vars = newVars;
+          repromptCount = 0;
+          await this.logEvent(run.id, 'node_entered', currentNode.nodeKey, {
+            captured_key: cfg.var_key,
+            captured_kind: message.media_kind,
+          });
+          matched = cfg.next_node_key;
+        } catch (err) {
+          this.logger.error(
+            `ask_media capture failed: ${(err as Error).message}`,
+          );
+        }
+      }
+    } else if (
       message.kind === 'text' &&
       currentNode.nodeType === 'collect_input'
     ) {
@@ -968,7 +1484,25 @@ export class FlowDispatchService {
         await this.sendButtonsAndSuspend(run, currentNode);
       } else if (currentNode.nodeType === 'send_list') {
         await this.sendListAndSuspend(run, currentNode);
-      } else if (currentNode.nodeType === 'collect_input') {
+      } else if (currentNode.nodeType === 'ask_location') {
+        const cfg = currentNode.config as unknown as AskLocationNodeConfig;
+        try {
+          await this.metaSend.sendLocationRequest({
+            accountId: run.accountId,
+            conversationId: run.conversationId!,
+            contactId: run.contactId!,
+            bodyText: interpolateVars(cfg.prompt_text, vars),
+          });
+        } catch (err) {
+          await this.logEvent(run.id, 'error', currentNode.nodeKey, {
+            reason: 'reprompt_send_failed',
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } else if (
+        currentNode.nodeType === 'collect_input' ||
+        currentNode.nodeType === 'ask_media'
+      ) {
         // Customer typed something we couldn't accept (empty after trim,
         // or var_key missing — rare). Re-send the prompt so they try again.
         const cfg = currentNode.config as unknown as CollectInputNodeConfig;
@@ -1040,6 +1574,45 @@ export class FlowDispatchService {
    *   unrelated automation fired is worse than the second flow not
    *   starting.
    */
+  /**
+   * Continue a run whose `wait` has come due.
+   *
+   * Called by the delayed job and, when Redis lost it, by the periodic
+   * sweep. Both may reach the same run, which is why the FIRST thing
+   * this does is claim it: `FlowWaitService.claim` clears `resume_at` /
+   * `resume_node_key` in a conditional UPDATE, so exactly one caller
+   * gets `true` and the other returns without sending anything. Without
+   * that claim, a customer gets the rest of the flow twice.
+   *
+   * Returns whether this call is the one that resumed it.
+   */
+  async resumeFromWait(runId: string, resumeNodeKey: string): Promise<boolean> {
+    const claimed = await this.waits.claim(runId, resumeNodeKey);
+    if (!claimed) return false;
+
+    const run = await this.prisma.flowRun.findUnique({ where: { id: runId } });
+    if (!run || run.status !== 'active') return false;
+
+    const nodes = await this.loadAllNodes(run.flowId);
+    await this.logEvent(run.id, 'node_entered', resumeNodeKey, {
+      resumed_from_wait: true,
+    });
+    try {
+      await this.advanceFromNodeKey(
+        run,
+        resumeNodeKey,
+        nodes,
+        (run.vars ?? {}) as Record<string, unknown>,
+      );
+    } catch (err) {
+      this.logger.error(
+        `resumeFromWait advance failed for ${runId}: ${(err as Error).message}`,
+      );
+      await this.endRun(run.id, 'failed', 'resume_advance_failed');
+    }
+    return true;
+  }
+
   async startForContact(input: {
     accountId: string;
     flowId: string;

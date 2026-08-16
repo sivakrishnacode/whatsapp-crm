@@ -3,7 +3,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   sendInteractiveButtons,
   sendInteractiveList,
+  sendLocationRequest,
   sendMediaMessage,
+  sendProductListMessage,
+  sendProductMessage,
+  sendTemplateMessage,
   sendTextMessage,
   type InteractiveButton,
   type InteractiveListSection,
@@ -75,13 +79,46 @@ interface SendInteractiveListArgs {
   footerText?: string;
 }
 
+interface SendTemplateArgs {
+  accountId: string;
+  conversationId: string;
+  contactId: string;
+  templateName: string;
+  language: string;
+  /** Positional {{1}}, {{2}}… body values, already interpolated. */
+  params?: string[];
+}
+
+interface SendProductsArgs {
+  accountId: string;
+  conversationId: string;
+  contactId: string;
+  mode: 'single' | 'list';
+  /** Falls back to the account's configured catalogue. */
+  catalogId?: string;
+  productRetailerIds: string[];
+  headerText?: string;
+  bodyText?: string;
+  footerText?: string;
+}
+
+interface SendLocationRequestArgs {
+  accountId: string;
+  conversationId: string;
+  contactId: string;
+  bodyText: string;
+}
+
 /** Internal discriminated union. `send` is the tag; SendMediaArgs keeps
  *  its public `kind: MediaKind` field un-shadowed. */
 type SendInput =
   | (SendTextArgs & { send: 'text' })
   | (SendMediaArgs & { send: 'media' })
   | (SendInteractiveButtonsArgs & { send: 'buttons' })
-  | (SendInteractiveListArgs & { send: 'list' });
+  | (SendInteractiveListArgs & { send: 'list' })
+  | (SendTemplateArgs & { send: 'template' })
+  | (SendProductsArgs & { send: 'products' })
+  | (SendLocationRequestArgs & { send: 'location_request' });
 
 @Injectable()
 export class FlowMetaSendService {
@@ -125,6 +162,38 @@ export class FlowMetaSendService {
     args: SendInteractiveListArgs,
   ): Promise<{ whatsapp_message_id: string }> {
     return this.sendViaMeta({ ...args, send: 'list' });
+  }
+
+  /**
+   * Send an approved template (`send_template` node).
+   *
+   * ⚠️ The ONLY send here that works outside WhatsApp's 24-hour window,
+   * which is why a flow that resumes after a long `wait` has to use it.
+   */
+  async sendTemplate(
+    args: SendTemplateArgs,
+  ): Promise<{ whatsapp_message_id: string }> {
+    return this.sendViaMeta({ ...args, send: 'template' });
+  }
+
+  /**
+   * Send one catalogue product, or a list of them (`send_products`).
+   */
+  async sendProducts(
+    args: SendProductsArgs,
+  ): Promise<{ whatsapp_message_id: string }> {
+    return this.sendViaMeta({ ...args, send: 'products' });
+  }
+
+  /**
+   * Ask the customer to share their location (`ask_location`). Meta
+   * renders a native "Send location" button; the answer arrives as a
+   * `location` webhook message.
+   */
+  async sendLocationRequest(
+    args: SendLocationRequestArgs,
+  ): Promise<{ whatsapp_message_id: string }> {
+    return this.sendViaMeta({ ...args, send: 'location_request' });
   }
 
   private async sendViaMeta(
@@ -187,6 +256,64 @@ export class FlowMetaSendService {
           buttons: input.buttons,
           headerText: input.headerText,
           footerText: input.footerText,
+        });
+        return r.messageId;
+      }
+      if (input.send === 'template') {
+        const r = await sendTemplateMessage({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: phone,
+          templateName: input.templateName,
+          language: input.language || 'en_US',
+          params: input.params,
+        });
+        return r.messageId;
+      }
+      if (input.send === 'products') {
+        // The node's own catalogue id wins, then the account's. Meta
+        // rejects the send without one, so this is where a missing
+        // catalogue becomes a legible error rather than a 400 body.
+        const catalogId = input.catalogId?.trim() || config.catalog_id;
+        if (!catalogId) {
+          throw new Error(
+            'no catalogue connected — set one on the node or in WhatsApp settings',
+          );
+        }
+        const ids = input.productRetailerIds.filter((id) => id?.trim());
+        if (ids.length === 0) throw new Error('no products to send');
+        if (input.mode === 'single') {
+          const r = await sendProductMessage({
+            phoneNumberId: config.phone_number_id,
+            accessToken,
+            to: phone,
+            catalogId,
+            productRetailerId: ids[0],
+            bodyText: input.bodyText,
+            footerText: input.footerText,
+          });
+          return r.messageId;
+        }
+        const r = await sendProductListMessage({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: phone,
+          catalogId,
+          headerText: input.headerText ?? 'Our products',
+          bodyText: input.bodyText ?? '',
+          footerText: input.footerText,
+          sections: [
+            { title: input.headerText ?? 'Products', productRetailerIds: ids },
+          ],
+        });
+        return r.messageId;
+      }
+      if (input.send === 'location_request') {
+        const r = await sendLocationRequest({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: phone,
+          bodyText: input.bodyText,
         });
         return r.messageId;
       }
@@ -255,6 +382,25 @@ export class FlowMetaSendService {
       contentType = input.kind;
       contentText = input.caption ?? null;
       preview = input.caption?.trim() || `[${input.kind}]`;
+    } else if (input.send === 'template') {
+      // 'template' rather than 'text': the inbox marks template sends
+      // differently, and the body we have here is the NAME, not the
+      // copy the customer sees — Meta renders that from its own store.
+      contentType = 'template';
+      contentText = input.templateName;
+      preview = `[template: ${input.templateName}]`;
+    } else if (input.send === 'products') {
+      contentType = 'interactive';
+      contentText = input.bodyText ?? null;
+      preview =
+        input.bodyText?.trim() ||
+        `[${input.productRetailerIds.length} product${
+          input.productRetailerIds.length === 1 ? '' : 's'
+        }]`;
+    } else if (input.send === 'location_request') {
+      contentType = 'interactive';
+      contentText = input.bodyText;
+      preview = input.bodyText;
     } else {
       contentType = 'interactive';
       contentText = input.bodyText;

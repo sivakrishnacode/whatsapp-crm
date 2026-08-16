@@ -656,6 +656,64 @@ here mints a second.
   `ConnectionsModule` imports nothing, so it cannot be part of a cycle.
   Module wiring is not caught by typecheck; boot the container.
 
+## Flows — the WhatsApp chatbot builder
+
+A flow is a GRAPH of typed nodes (`flow_nodes`, edges live inside each
+config as `next_node_key`), run by `FlowDispatchService` against one
+conversation at a time. Not to be confused with **WhatsApp Flows**
+(Meta's native JSON form screens, `/channels/whatsapp/flows`).
+
+- ⚠️ **FLOWS ARE WHATSAPP-ONLY.** The Instagram and web webhooks no
+  longer dispatch into the engine. Flows can send lists, templates and
+  catalogue products — none of which exist off WhatsApp — so a
+  cross-channel run failed mid-conversation. **Automations remain the
+  channel-agnostic engine**; anything that must work on Instagram or the
+  web widget belongs there.
+- **The editor is full-screen and three-paned** (`flow-editor-shell.tsx`,
+  `fixed inset-0`, same as the automation and form editors): node palette
+  ← canvas → docked inspector. Selection lives in `flow-editor-state.tsx`
+  because the pane doing the editing is not the canvas. A Canvas/List
+  toggle survives — the list is the only view that works below `md`.
+- ⚠️ **`ADDABLE_NODE_TYPES` (shared.tsx) is the ONE node list.** It used
+  to be written out in three places (list menu, canvas menu, legend), so
+  a new type could ship visible in one picker and missing from another
+  with nothing failing.
+- **20 node types**, added by migration 086: the original eleven plus
+  `send_template`, `send_products`, `ask_location`, `ask_media`, `wait`,
+  `set_attribute`, `http_request`, `start_flow`, `ai_handoff`.
+  ⚠️ Adding one means touching, in lockstep: `lib/flows/types.ts` +
+  `flows/flow.types.ts` (byte-identical ports), `shared.tsx`
+  (NODE_META/NODE_HUE/summarize), `lib/flows/edges.ts` (**all four**
+  switches), both validators, `defaultConfigFor`, the form dispatcher,
+  the engine loop, the simulator, and the DB CHECK.
+- ⚠️ **A linear node type missing from `outgoingEdges`** (validate.ts)
+  looks TERMINAL to the reachability BFS, so everything downstream is
+  reported "unreachable" — an error pointing at innocent nodes.
+- ⚠️ **`wait` parks the run; it does not sleep.** `flow_runs.resume_at` /
+  `resume_node_key` are the durable record and a delayed `flows-resume`
+  job is the fast path — if Redis is flushed the sweep continues every
+  overdue run. `FlowWaitService.claim` is a conditional UPDATE, so the
+  job and the sweep cannot both continue the same run (that would send
+  the rest of the flow twice). The sweep also **must not time out a
+  parked run**: a 2-day wait under a 24h timeout would otherwise be
+  killed before it fired. Pinned by `flows-sweep.service.test.ts`.
+- ⚠️ **The 24-hour window keeps running while a run waits**, so the
+  validator warns (never blocks) on a wait ≥ 24h: after it, only a
+  template will send.
+- ⚠️ **`http_request` goes through `ai/lib/http-guard`'s `safeFetch`** —
+  the same SSRF boundary as the AI agent's custom actions. It publishes
+  `{status, body}` even on a refused call, so a condition can branch on
+  the failure instead of the flow simply stopping.
+- ⚠️ **`set_attribute` writes through a column WHITELIST.** The key is
+  author-supplied and lands in a Prisma `data` object; without it an
+  author could name `account_id` and move the contact to another tenant.
+- ⚠️ **`start_flow` ENDS the current run before starting the target**, and
+  reuses `startForContact` (account-scoped, active-only).
+  `idx_one_active_run_per_contact` allows exactly one active run per
+  contact, so they cannot nest.
+- **The test simulator never calls a real endpoint** — an `http_request`
+  in the preview reports what it *would* send.
+
 ## Queues (`apps/api/src/queue`, BullMQ + Redis)
 
 **Anything that calls somebody else's API on behalf of a request runs on a
@@ -665,12 +723,12 @@ queue.** Design and the decisions behind it: `docs/implementation_queue.md`.
   and the list the dashboard enumerates. A queue whose name is declared next to
   its processor instead still runs — it is just invisible at `/admin/queues`,
   which is when you need it most.
-- **13 queues.** Registered centrally in `QueueModule` when producer and
+- **14 queues.** Registered centrally in `QueueModule` when producer and
   processor live in different modules (`broadcast-orchestrate`,
   `broadcast-send`, `webhook-delivery`, `ai-reply`, `automation-trigger`,
   `ecommerce-sync`, `lead-fetch`); in the owning module otherwise
-  (`automations-pending`, `flows-sweep`, `whatsapp-limits`, `ads-sync`, the two
-  Instagram ones).
+  (`automations-pending`, `flows-sweep`, `flows-resume`, `whatsapp-limits`,
+  `ads-sync`, the two Instagram ones).
 - **Broadcasts are a fan-out**: one orchestrator job per broadcast → one job per
   recipient. Both the dashboard and `POST /v1/broadcasts` go through
   `BroadcastQueueService.enqueueBroadcast()`. The status flow is

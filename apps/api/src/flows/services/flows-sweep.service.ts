@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveFallbackPolicy } from '../flow-fallback.util';
+import { FlowDispatchService } from './flow-dispatch.service';
 
 export const FLOWS_SWEEP_QUEUE = 'flows-sweep';
 
@@ -37,6 +38,9 @@ export class FlowsSweepService implements OnModuleInit {
   constructor(
     @InjectQueue(FLOWS_SWEEP_QUEUE) private readonly queue: Queue,
     private readonly prisma: PrismaService,
+    // The durable half of the `wait` node: this pass continues any run
+    // whose resume came due while its delayed job was not around.
+    private readonly dispatch: FlowDispatchService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -66,6 +70,8 @@ export class FlowsSweepService implements OnModuleInit {
       select: {
         id: true,
         lastAdvancedAt: true,
+        resumeAt: true,
+        resumeNodeKey: true,
         flow: { select: { fallbackPolicy: true } },
       },
     });
@@ -73,6 +79,32 @@ export class FlowsSweepService implements OnModuleInit {
 
     let swept = 0;
     for (const r of runs) {
+      // ⚠️ A PARKED RUN IS NOT A STALE RUN (migration 086). A `wait` of
+      // two days on a flow with the default 24-hour timeout would
+      // otherwise be swept to `timed_out` before its own resume fired —
+      // the pause would silently become the end of the conversation.
+      if (r.resumeAt && r.resumeNodeKey) {
+        if (r.resumeAt.getTime() > now.getTime()) continue;
+        // Due, and nothing woke it — the delayed job is gone (a flushed
+        // Redis, a restart mid-flight). This is the durable path the
+        // columns exist for. `resumeFromWait` claims the row first, so
+        // racing the real job is safe.
+        try {
+          const resumed = await this.dispatch.resumeFromWait(
+            r.id,
+            r.resumeNodeKey,
+          );
+          if (resumed) {
+            this.logger.log(`resumed overdue wait for run ${r.id}`);
+          }
+        } catch (err) {
+          this.logger.error(
+            `overdue resume failed for ${r.id}: ${(err as Error).message}`,
+          );
+        }
+        continue;
+      }
+
       const policy = resolveFallbackPolicy(r.flow?.fallbackPolicy ?? null);
       const ageHours =
         (now.getTime() - r.lastAdvancedAt.getTime()) / (1000 * 60 * 60);

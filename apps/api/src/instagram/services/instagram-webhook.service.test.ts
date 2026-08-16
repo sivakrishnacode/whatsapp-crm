@@ -270,39 +270,32 @@ describe('InstagramWebhookService — inbound messages', () => {
     expect(created.getUTCFullYear()).toBe(2026);
   });
 
-  it('fans out to flows, automations and the AI bot', async () => {
-    const { service, flowDispatch, automationDispatch, aiReply } =
-      makeService(prisma);
+  it('fans out to automations and the AI bot', async () => {
+    const { service, automationDispatch, aiReply } = makeService(prisma);
     await runWebhook(service, envelope(inboundText));
 
-    expect(flowDispatch.dispatchInbound).toHaveBeenCalledTimes(1);
     expect(automationDispatch.dispatch).toHaveBeenCalled();
     expect(aiReply.dispatchInboundToAiReply).toHaveBeenCalledTimes(1);
   });
 
-  it('suppresses reply-producing triggers when a flow consumes the message', async () => {
-    const { service, flowDispatch, automationDispatch, aiReply } =
-      makeService(prisma);
-    flowDispatch.dispatchInbound.mockResolvedValue({ consumed: true });
+  it('does NOT dispatch Instagram messages into the flow engine', async () => {
+    // ⚠️ FLOWS ARE WHATSAPP-ONLY. Instagram used to reach the flow
+    // engine, which let an author build a flow that sends a list, a
+    // template or a catalogue — none of which exist here — and watch the
+    // run fail mid-conversation. Automations are the channel-agnostic
+    // engine and still run on every trigger.
+    const { service, flowDispatch, automationDispatch } = makeService(prisma);
 
     await runWebhook(service, envelope(inboundText));
 
-    // Precedence must match the WhatsApp webhook exactly: a consuming
-    // flow suppresses new_message_received and keyword_match — the two
-    // that would send a second reply — but NOT the lifecycle triggers,
-    // which do bookkeeping (tagging, deal creation) that should still
-    // happen. Diverging here would make the same automation behave
-    // differently per channel.
+    expect(flowDispatch.dispatchInbound).not.toHaveBeenCalled();
+    // And because no flow can consume the message, the reply-producing
+    // triggers always fire on this channel.
     const fired = automationDispatch.dispatch.mock.calls.map(
       (c: any[]) => c[0].triggerType,
     );
-    expect(fired).not.toContain('new_message_received');
-    expect(fired).not.toContain('keyword_match');
-    expect(fired).toContain('first_inbound_message');
-
-    // The AI bot is unconditionally suppressed — it exists to answer,
-    // and the flow already did.
-    expect(aiReply.dispatchInboundToAiReply).not.toHaveBeenCalled();
+    expect(fired).toContain('new_message_received');
+    expect(fired).toContain('keyword_match');
   });
 
   it('tags automation dispatches with the instagram channel', async () => {
@@ -620,16 +613,10 @@ describe('InstagramWebhookService — postbacks and story replies', () => {
       }),
     );
 
-    // Indistinguishable from a WhatsApp button reply to the flow engine,
-    // which is what lets flows work on Instagram unchanged.
-    expect(flowDispatch.dispatchInbound).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: expect.objectContaining({
-          kind: 'interactive_reply',
-          reply_id: 'SHOW_PRICING',
-        }),
-      }),
-    );
+    // The payload is carried through as an interactive reply id, which
+    // is what an automation's keyword/postback handling reads. It no
+    // longer reaches the flow engine — flows are WhatsApp-only.
+    expect(flowDispatch.dispatchInbound).not.toHaveBeenCalled();
   });
 
   it('keeps story context on a story reply', async () => {

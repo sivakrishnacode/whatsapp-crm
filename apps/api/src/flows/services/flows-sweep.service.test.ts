@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Queue } from 'bullmq';
 import { FlowsSweepService } from './flows-sweep.service';
 import type { PrismaService } from '../../prisma/prisma.service';
+import type { FlowDispatchService } from './flow-dispatch.service';
 
 // Fresh coverage for the cron-sweep replacement (the old
 // /api/flows/cron route had no tests either).
@@ -29,13 +30,16 @@ function hoursAgo(h: number): Date {
 
 describe('FlowsSweepService.sweepStaleRuns', () => {
   let prisma: ReturnType<typeof makePrismaMock>;
+  let dispatch: { resumeFromWait: ReturnType<typeof vi.fn> };
   let service: FlowsSweepService;
 
   beforeEach(() => {
     prisma = makePrismaMock();
+    dispatch = { resumeFromWait: vi.fn().mockResolvedValue(true) };
     service = new FlowsSweepService(
       queueMock,
       prisma as unknown as PrismaService,
+      dispatch as unknown as FlowDispatchService,
     );
   });
 
@@ -122,5 +126,68 @@ describe('FlowsSweepService.sweepStaleRuns', () => {
     const result = await service.sweepStaleRuns();
     expect(result).toEqual({ swept: 0 });
     expect(prisma.flowRunEvent.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The `wait` node's two sweep interactions (migration 086). Both are
+ * regressions waiting to happen: the first silently ends conversations,
+ * the second silently drops them.
+ */
+describe('FlowsSweepService and parked runs', () => {
+  let prisma: ReturnType<typeof makePrismaMock>;
+  let dispatch: { resumeFromWait: ReturnType<typeof vi.fn> };
+  let service: FlowsSweepService;
+
+  beforeEach(() => {
+    prisma = makePrismaMock();
+    dispatch = { resumeFromWait: vi.fn().mockResolvedValue(true) };
+    service = new FlowsSweepService(
+      queueMock,
+      prisma as unknown as PrismaService,
+      dispatch as unknown as FlowDispatchService,
+    );
+  });
+
+  it('does NOT time out a run that is deliberately waiting', async () => {
+    // Parked 48h from now on a flow whose timeout is 24h: without the
+    // resumeAt check the sweep kills it before its own wait fires.
+    prisma.flowRun.findMany.mockResolvedValue([
+      {
+        id: 'run-parked',
+        lastAdvancedAt: hoursAgo(30),
+        resumeAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+        resumeNodeKey: 'after_wait',
+        flow: { fallbackPolicy: { on_timeout_hours: 24 } },
+      },
+    ]);
+
+    const result = await service.sweepStaleRuns();
+
+    expect(result).toEqual({ swept: 0 });
+    expect(prisma.flowRun.updateMany).not.toHaveBeenCalled();
+    expect(dispatch.resumeFromWait).not.toHaveBeenCalled();
+  });
+
+  it('resumes an overdue wait instead of timing it out', async () => {
+    prisma.flowRun.findMany.mockResolvedValue([
+      {
+        id: 'run-due',
+        lastAdvancedAt: hoursAgo(30),
+        resumeAt: hoursAgo(1),
+        resumeNodeKey: 'after_wait',
+        flow: { fallbackPolicy: { on_timeout_hours: 24 } },
+      },
+    ]);
+
+    const result = await service.sweepStaleRuns();
+
+    expect(dispatch.resumeFromWait).toHaveBeenCalledWith(
+      'run-due',
+      'after_wait',
+    );
+    // Resumed, not swept — the run carries on rather than ending.
+    expect(result).toEqual({ swept: 0 });
+    expect(prisma.flowRun.updateMany).not.toHaveBeenCalled();
   });
 });

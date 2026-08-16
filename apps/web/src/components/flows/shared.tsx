@@ -17,17 +17,26 @@
  */
 
 import {
+  Bot,
+  Camera,
+  Clock,
   Flag,
+  FileText,
   GitFork,
   Inbox,
   Layers,
   ListChecks,
   ListPlus,
+  MapPin,
   MessageCircle,
   Paperclip,
+  PencilLine,
   PlayCircle,
+  ShoppingBag,
   Tag,
   UserPlus,
+  Waypoints,
+  Webhook,
   Workflow,
 } from 'lucide-react';
 
@@ -47,11 +56,20 @@ export type NodeType =
   | 'send_buttons'
   | 'send_list'
   | 'send_media'
+  | 'send_template'
+  | 'send_products'
   | 'collect_input'
+  | 'ask_location'
+  | 'ask_media'
   | 'condition'
+  | 'wait'
   | 'set_tag'
   | 'set_segment'
+  | 'set_attribute'
+  | 'http_request'
+  | 'start_flow'
   | 'handoff'
+  | 'ai_handoff'
   | 'end';
 
 export interface BuilderNode {
@@ -79,12 +97,17 @@ export interface BuilderNode {
 // the canvas, so `start` is just the entry point under Flow control.
 // ------------------------------------------------------------
 
-export type NodeCategory = 'messaging' | 'logic' | 'flow';
+export type NodeCategory = 'messaging' | 'capture' | 'logic' | 'flow';
 
 /** Category labels + the order they render in the add-step menu. */
 export const NODE_CATEGORIES: { id: NodeCategory; label: string }[] = [
-  { id: 'messaging', label: 'Messaging' },
-  { id: 'logic', label: 'Logic & data' },
+  { id: 'messaging', label: 'Message types' },
+  // Split out of 'logic' when the ask_* nodes landed: "send something"
+  // and "wait for an answer" are the two halves of every conversation,
+  // and burying the capture nodes among the data ones made the palette
+  // read as one long list of unrelated verbs.
+  { id: 'capture', label: 'Ask & capture' },
+  { id: 'logic', label: 'Actions & data' },
   { id: 'flow', label: 'Flow control' },
 ];
 
@@ -133,12 +156,40 @@ export const NODE_META: Record<
     blurb: 'Sends an image, video, or document',
     category: 'messaging',
   },
+  send_template: {
+    label: 'Template',
+    icon: FileText,
+    color: 'text-accent-blue',
+    blurb: 'Sends an approved template — works past 24h',
+    category: 'messaging',
+  },
+  send_products: {
+    label: 'Products',
+    icon: ShoppingBag,
+    color: 'text-accent-green',
+    blurb: 'Sends one product or a catalogue list',
+    category: 'messaging',
+  },
   collect_input: {
-    label: 'Collect input',
+    label: 'Ask a question',
     icon: Inbox,
     color: 'text-accent-teal',
     blurb: 'Asks a question, saves the reply',
-    category: 'logic',
+    category: 'capture',
+  },
+  ask_location: {
+    label: 'Ask location',
+    icon: MapPin,
+    color: 'text-accent-red',
+    blurb: 'Requests their location, saves the pin',
+    category: 'capture',
+  },
+  ask_media: {
+    label: 'Ask for a file',
+    icon: Camera,
+    color: 'text-accent-cyan',
+    blurb: 'Asks for a photo or document, saves the URL',
+    category: 'capture',
   },
   condition: {
     label: 'If / else',
@@ -161,11 +212,46 @@ export const NODE_META: Record<
     blurb: 'Adds or removes them from a saved audience',
     category: 'logic',
   },
+  set_attribute: {
+    label: 'Set attribute',
+    icon: PencilLine,
+    color: 'text-accent-violet',
+    blurb: 'Saves a value onto the contact or a variable',
+    category: 'logic',
+  },
+  http_request: {
+    label: 'API request',
+    icon: Webhook,
+    color: 'text-accent-purple',
+    blurb: 'Calls your API, saves the response',
+    category: 'logic',
+  },
+  wait: {
+    label: 'Wait',
+    icon: Clock,
+    color: 'text-accent-amber',
+    blurb: 'Pauses the flow, continues later',
+    category: 'flow',
+  },
+  start_flow: {
+    label: 'Connect flow',
+    icon: Waypoints,
+    color: 'text-accent-teal',
+    blurb: 'Hands the customer to another flow',
+    category: 'flow',
+  },
   handoff: {
     label: 'Handoff to agent',
     icon: UserPlus,
     color: 'text-accent-amber',
     blurb: 'Hands the conversation to a human',
+    category: 'flow',
+  },
+  ai_handoff: {
+    label: 'Hand to AI agent',
+    icon: Bot,
+    color: 'text-accent-pink',
+    blurb: 'Lets an AI agent take the conversation',
     category: 'flow',
   },
   end: {
@@ -189,15 +275,24 @@ export const NODE_META: Record<
  */
 export const ADDABLE_NODE_TYPES: NodeType[] = [
   'start',
+  'send_message',
   'send_buttons',
   'send_list',
-  'send_message',
   'send_media',
+  'send_template',
+  'send_products',
   'collect_input',
+  'ask_location',
+  'ask_media',
   'condition',
+  'wait',
   'set_tag',
   'set_segment',
+  'set_attribute',
+  'http_request',
+  'start_flow',
   'handoff',
+  'ai_handoff',
   'end',
 ];
 
@@ -239,6 +334,15 @@ const NODE_HUE: Record<NodeType, { l: number; c: number; h: number }> = {
   condition: { l: 0.72, c: 0.15, h: 65 }, // amber — a fork in the road
   set_tag: { l: 0.65, c: 0.15, h: 350 }, // pink
   set_segment: { l: 0.68, c: 0.13, h: 225 }, // cyan — a list, not a label
+  set_attribute: { l: 0.62, c: 0.14, h: 310 }, // magenta — writes data
+  http_request: { l: 0.6, c: 0.16, h: 265 }, // deep violet — leaves the building
+  send_template: { l: 0.6, c: 0.14, h: 240 }, // steel blue — the formal one
+  send_products: { l: 0.64, c: 0.14, h: 145 }, // green — commerce
+  ask_location: { l: 0.63, c: 0.16, h: 30 }, // orange — a pin on a map
+  ask_media: { l: 0.66, c: 0.11, h: 200 }, // pale sky — sibling of send_media
+  wait: { l: 0.7, c: 0.1, h: 90 }, // olive — time passing
+  start_flow: { l: 0.64, c: 0.12, h: 172 }, // sea green — hands on to another flow
+  ai_handoff: { l: 0.66, c: 0.16, h: 330 }, // fuchsia — sibling of handoff's rose
   handoff: { l: 0.65, c: 0.17, h: 16 }, // rose — hands off
   end: { l: 0.55, c: 0.01, h: 260 }, // neutral grey — terminal
 };
@@ -462,6 +566,78 @@ export function summarizeNode(node: BuilderNode): string | null {
     case 'handoff': {
       const note = typeof cfg.note === 'string' ? cfg.note : '';
       return note.length > 0 ? truncate(note) : null;
+    }
+    case 'send_template': {
+      const name =
+        typeof cfg.template_name === 'string' ? cfg.template_name : '';
+      const lang = typeof cfg.language === 'string' ? cfg.language : '';
+      if (!name) return 'No template picked';
+      return lang ? `${truncate(name, 40)} · ${lang}` : truncate(name);
+    }
+    case 'send_products': {
+      const ids = Array.isArray(cfg.product_retailer_ids)
+        ? (cfg.product_retailer_ids as unknown[]).filter(Boolean)
+        : [];
+      if (cfg.mode === 'list') {
+        return ids.length > 0
+          ? `${ids.length} product${ids.length === 1 ? '' : 's'}`
+          : 'No products picked';
+      }
+      return ids.length > 0
+        ? `Product ${truncate(String(ids[0]), 40)}`
+        : 'No product picked';
+    }
+    case 'ask_location':
+    case 'ask_media': {
+      const prompt = typeof cfg.prompt_text === 'string' ? cfg.prompt_text : '';
+      const varKey = typeof cfg.var_key === 'string' ? cfg.var_key : '';
+      if (prompt.length > 0) {
+        return varKey
+          ? `${truncate(prompt, 50)} → vars.${varKey}`
+          : truncate(prompt);
+      }
+      return varKey ? `→ vars.${varKey}` : null;
+    }
+    case 'wait': {
+      const duration = typeof cfg.duration === 'number' ? cfg.duration : 0;
+      const unit = typeof cfg.unit === 'string' ? cfg.unit : 'minutes';
+      if (duration <= 0) return 'No delay set';
+      // Singularise so "1 hours" never ships.
+      const label = duration === 1 ? unit.replace(/s$/, '') : unit;
+      return `Wait ${duration} ${label}`;
+    }
+    case 'set_attribute': {
+      const key = typeof cfg.key === 'string' ? cfg.key : '';
+      const value = typeof cfg.value === 'string' ? cfg.value : '';
+      if (!key) return 'Nothing to save yet';
+      const prefix =
+        cfg.target === 'var'
+          ? 'vars.'
+          : cfg.target === 'custom_field'
+            ? 'custom.'
+            : 'contact.';
+      return value
+        ? `${prefix}${key} = ${truncate(value, 30)}`
+        : `${prefix}${key}`;
+    }
+    case 'http_request': {
+      const method = typeof cfg.method === 'string' ? cfg.method : 'GET';
+      const url = typeof cfg.url === 'string' ? cfg.url : '';
+      return url ? `${method} ${truncate(url, 50)}` : 'No URL set';
+    }
+    case 'start_flow': {
+      const flowId = typeof cfg.flow_id === 'string' ? cfg.flow_id : '';
+      // Same reasoning as set_tag: the flow's name needs an async
+      // lookup, so a short id prefix is what distinguishes two nodes.
+      return flowId
+        ? `Continue in flow ${flowId.slice(0, 8)}…`
+        : 'No flow picked';
+    }
+    case 'ai_handoff': {
+      const note = typeof cfg.note === 'string' ? cfg.note : '';
+      const agentId = typeof cfg.agent_id === 'string' ? cfg.agent_id : '';
+      const who = agentId ? `Agent ${agentId.slice(0, 8)}…` : 'Any agent';
+      return note ? `${who} · ${truncate(note, 40)}` : who;
     }
   }
 }

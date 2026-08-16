@@ -34,6 +34,7 @@ import { FlowBuilder } from './flow-builder';
 import { FlowCanvas } from './flow-canvas';
 import { FlowSimulator } from './flow-simulator';
 import { FlowEditorProvider } from './flow-editor-state';
+import { FlowResourcesProvider } from './flow-resources';
 import { EditorHeader } from './header';
 import { NodeInspector } from './node-inspector';
 import { NodePalette } from './node-palette';
@@ -92,99 +93,104 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
 
   return (
     <FlowEditorProvider initialFlow={initialFlow} initialNodes={initialNodes}>
-      <ReactFlowProvider>
-        <div className="bg-background fixed inset-0 z-40 flex flex-col">
-          <EditorHeader onTest={() => setSimulatorOpen(true)} />
+      {/* Templates, products, custom fields, flows and agents — fetched
+          once here so ten open nodes don't fetch the same lists ten
+          times. */}
+      <FlowResourcesProvider currentFlowId={initialFlow.id}>
+        <ReactFlowProvider>
+          <div className="bg-background fixed inset-0 z-40 flex flex-col">
+            <EditorHeader onTest={() => setSimulatorOpen(true)} />
 
-          {/* ---- mode row: view toggle + node-type legend ----
+            {/* ---- mode row: view toggle + node-type legend ----
               Omitted entirely on mobile (canvas is unavailable there and
               the legend is lg-only), so there's no empty band above the
               stage on small screens. */}
-          {!isMobile && (
-            <div className="border-border flex items-center gap-3 border-b px-4 py-2">
-              <div
-                role="group"
-                aria-label="Editor view"
-                className="border-border bg-muted inline-flex gap-0.5 rounded-lg border p-0.5"
-              >
-                <SegButton
-                  active={effectiveView === 'canvas'}
-                  onClick={() => choose('canvas')}
-                  icon={<GitFork className="h-3.5 w-3.5" />}
-                  label="Canvas"
-                />
-                <SegButton
-                  active={effectiveView === 'list'}
-                  onClick={() => choose('list')}
-                  icon={<List className="h-3.5 w-3.5" />}
-                  label="List"
-                />
-              </div>
+            {!isMobile && (
+              <div className="border-border flex items-center gap-3 border-b px-4 py-2">
+                <div
+                  role="group"
+                  aria-label="Editor view"
+                  className="border-border bg-muted inline-flex gap-0.5 rounded-lg border p-0.5"
+                >
+                  <SegButton
+                    active={effectiveView === 'canvas'}
+                    onClick={() => choose('canvas')}
+                    icon={<GitFork className="h-3.5 w-3.5" />}
+                    label="Canvas"
+                  />
+                  <SegButton
+                    active={effectiveView === 'list'}
+                    onClick={() => choose('list')}
+                    icon={<List className="h-3.5 w-3.5" />}
+                    label="List"
+                  />
+                </div>
 
-              {/* Re-opens the palette. Lives here rather than floating on
+                {/* Re-opens the palette. Lives here rather than floating on
                   the canvas so the control that hides it and the control
                   that brings it back sit in one predictable place. */}
-              {effectiveView === 'canvas' && !paletteOpen && (
-                <button
-                  type="button"
-                  onClick={() => togglePalette(true)}
-                  className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-medium transition-colors"
-                >
-                  <PanelLeftOpen className="h-3.5 w-3.5" />
-                  Nodes
-                </button>
-              )}
-
-              <div className="ml-auto hidden flex-wrap items-center gap-x-3.5 gap-y-1.5 lg:flex">
-                {LEGEND_TYPES.map((t) => (
-                  <span
-                    key={t}
-                    className="text-muted-foreground inline-flex items-center gap-1.5 text-[11.5px]"
+                {effectiveView === 'canvas' && !paletteOpen && (
+                  <button
+                    type="button"
+                    onClick={() => togglePalette(true)}
+                    className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-medium transition-colors"
                   >
-                    <span
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ background: nodeColors(t).solid }}
-                    />
-                    {NODE_META[t].label}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+                    <PanelLeftOpen className="h-3.5 w-3.5" />
+                    Nodes
+                  </button>
+                )}
 
-          {/* ---- workspace: palette · stage · inspector ---- */}
-          <div className="flex min-h-0 flex-1">
-            {showCanvasPanes && (
-              <NodePalette
-                collapsed={!paletteOpen}
-                onCollapse={() => togglePalette(false)}
-              />
+                <div className="ml-auto hidden flex-wrap items-center gap-x-3.5 gap-y-1.5 lg:flex">
+                  {LEGEND_TYPES.map((t) => (
+                    <span
+                      key={t}
+                      className="text-muted-foreground inline-flex items-center gap-1.5 text-[11.5px]"
+                    >
+                      <span
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={{ background: nodeColors(t).solid }}
+                      />
+                      {NODE_META[t].label}
+                    </span>
+                  ))}
+                </div>
+              </div>
             )}
 
-            <div className="bg-card-2 relative min-w-0 flex-1">
-              {effectiveView === 'canvas' ? (
-                <FlowCanvas />
-              ) : (
-                <div className="absolute inset-0 overflow-y-auto">
-                  <FlowBuilder />
-                </div>
+            {/* ---- workspace: palette · stage · inspector ---- */}
+            <div className="flex min-h-0 flex-1">
+              {showCanvasPanes && (
+                <NodePalette
+                  collapsed={!paletteOpen}
+                  onCollapse={() => togglePalette(false)}
+                />
               )}
+
+              <div className="bg-card-2 relative min-w-0 flex-1">
+                {effectiveView === 'canvas' ? (
+                  <FlowCanvas />
+                ) : (
+                  <div className="absolute inset-0 overflow-y-auto">
+                    <FlowBuilder />
+                  </div>
+                )}
+              </div>
+
+              {showCanvasPanes && <NodeInspector />}
             </div>
 
-            {showCanvasPanes && <NodeInspector />}
+            {/* ---- validation / activate-readiness bar ---- */}
+            <div className="border-border border-t px-4 py-2.5">
+              <ValidationPanel />
+            </div>
           </div>
 
-          {/* ---- validation / activate-readiness bar ---- */}
-          <div className="border-border border-t px-4 py-2.5">
-            <ValidationPanel />
-          </div>
-        </div>
-
-        <FlowSimulator
-          open={simulatorOpen}
-          onClose={() => setSimulatorOpen(false)}
-        />
-      </ReactFlowProvider>
+          <FlowSimulator
+            open={simulatorOpen}
+            onClose={() => setSimulatorOpen(false)}
+          />
+        </ReactFlowProvider>
+      </FlowResourcesProvider>
     </FlowEditorProvider>
   );
 }

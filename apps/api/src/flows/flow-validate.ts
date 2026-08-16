@@ -183,6 +183,64 @@ function validateTrigger(
 // Per-node
 // ============================================================
 
+/**
+ * "This node must point somewhere, and somewhere real."
+ *
+ * Every linear node type repeats the same two checks. The pre-existing
+ * types still spell them out inline (they carry bespoke wording that
+ * users have seen for a year); everything added since shares this.
+ */
+function requireNext(
+  node: NodeInput,
+  nextKey: string | undefined,
+  knownKeys: Set<string>,
+  label: string,
+): ValidationIssue[] {
+  if (!nextKey) {
+    return [
+      {
+        severity: 'error',
+        scope: 'node',
+        node_key: node.node_key,
+        field: 'next_node_key',
+        message: `${label} must point to a next node.`,
+      },
+    ];
+  }
+  if (!knownKeys.has(nextKey)) {
+    return [
+      {
+        severity: 'error',
+        scope: 'node',
+        node_key: node.node_key,
+        field: 'next_node_key',
+        message: `${label} points to non-existent node "${nextKey}".`,
+      },
+    ];
+  }
+  return [];
+}
+
+/**
+ * Does this wait cross WhatsApp's 24-hour customer-service window?
+ *
+ * Exported for the test that pins the boundary: exactly 24 hours
+ * counts, because the window is closed AT 24 hours, not after.
+ */
+export function waitExceedsWindow(
+  duration: number | undefined,
+  unit: string | undefined,
+): boolean {
+  if (typeof duration !== 'number' || duration <= 0) return false;
+  const hours =
+    unit === 'days'
+      ? duration * 24
+      : unit === 'minutes'
+        ? duration / 60
+        : duration;
+  return hours >= 24;
+}
+
 function validateNode(
   node: NodeInput,
   knownKeys: Set<string>,
@@ -755,10 +813,258 @@ function validateNode(
       break;
     }
 
+    case 'set_attribute': {
+      const cfg = node.config as {
+        target?: string;
+        key?: string;
+        value?: string;
+        next_node_key?: string;
+      };
+      if (
+        !cfg.target ||
+        !['contact_field', 'custom_field', 'var'].includes(cfg.target)
+      ) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'target',
+          message: 'Set-attribute needs somewhere to write to.',
+        });
+      }
+      if (!cfg.key?.trim()) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'key',
+          message: 'Set-attribute needs a field or variable name.',
+        });
+      }
+      // An empty value is legitimate — clearing a field is a real
+      // thing to want — so only the destination is required.
+      issues.push(
+        ...requireNext(node, cfg.next_node_key, knownKeys, 'Set-attribute'),
+      );
+      break;
+    }
+
+    case 'send_template': {
+      const cfg = node.config as {
+        template_name?: string;
+        language?: string;
+        next_node_key?: string;
+      };
+      if (!cfg.template_name?.trim()) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'template_name',
+          message: 'Pick a template to send.',
+        });
+      }
+      if (!cfg.language?.trim()) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'language',
+          message: 'A template needs its language code (e.g. en_US).',
+        });
+      }
+      issues.push(
+        ...requireNext(node, cfg.next_node_key, knownKeys, 'Template'),
+      );
+      break;
+    }
+
+    case 'send_products': {
+      const cfg = node.config as {
+        mode?: string;
+        product_retailer_ids?: unknown;
+        body_text?: string;
+        next_node_key?: string;
+      };
+      const ids = Array.isArray(cfg.product_retailer_ids)
+        ? cfg.product_retailer_ids.filter(
+            (id): id is string =>
+              typeof id === 'string' && id.trim().length > 0,
+          )
+        : [];
+      if (ids.length === 0) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'product_retailer_ids',
+          message: 'Add at least one product.',
+        });
+      }
+      if (cfg.mode === 'single' && ids.length > 1) {
+        issues.push({
+          severity: 'warning',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'product_retailer_ids',
+          message:
+            'A single-product message sends only the first product. Switch to a list to send them all.',
+        });
+      }
+      // Meta requires a body on the multi-product message and rejects
+      // the send without one — caught here rather than at send time,
+      // where it is a failed run rather than a red field.
+      if (cfg.mode === 'list' && !cfg.body_text?.trim()) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'body_text',
+          message: 'A product list needs body text.',
+        });
+      }
+      issues.push(
+        ...requireNext(node, cfg.next_node_key, knownKeys, 'Products'),
+      );
+      break;
+    }
+
+    case 'ask_location':
+    case 'ask_media': {
+      const cfg = node.config as {
+        prompt_text?: string;
+        var_key?: string;
+        next_node_key?: string;
+      };
+      const label =
+        node.node_type === 'ask_location' ? 'Ask-location' : 'Ask-for-a-file';
+      if (!cfg.prompt_text?.trim()) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'prompt_text',
+          message: `${label} needs a prompt to send.`,
+        });
+      }
+      if (!cfg.var_key?.trim()) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'var_key',
+          message: `${label} needs a variable to save the answer in.`,
+        });
+      }
+      issues.push(...requireNext(node, cfg.next_node_key, knownKeys, label));
+      break;
+    }
+
+    case 'wait': {
+      const cfg = node.config as {
+        duration?: number;
+        unit?: string;
+        next_node_key?: string;
+      };
+      if (typeof cfg.duration !== 'number' || cfg.duration <= 0) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'duration',
+          message: 'Wait needs a duration greater than zero.',
+        });
+      }
+      if (!cfg.unit || !['minutes', 'hours', 'days'].includes(cfg.unit)) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'unit',
+          message: 'Wait needs a unit (minutes, hours or days).',
+        });
+      }
+      // ⚠️ The 24-hour window keeps running while a run is parked. A
+      // wait this long means the next plain message will be REFUSED by
+      // Meta unless the customer writes again first — a warning, not an
+      // error, because a template send after it is perfectly valid and
+      // so is a flow that expects the customer to reply.
+      if (waitExceedsWindow(cfg.duration, cfg.unit)) {
+        issues.push({
+          severity: 'warning',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'duration',
+          message:
+            "Waiting 24 hours or more closes WhatsApp's messaging window — after this, only a template will send unless the customer messages again.",
+        });
+      }
+      issues.push(...requireNext(node, cfg.next_node_key, knownKeys, 'Wait'));
+      break;
+    }
+
+    case 'http_request': {
+      const cfg = node.config as {
+        method?: string;
+        url?: string;
+        response_var?: string;
+        next_node_key?: string;
+      };
+      if (!cfg.url?.trim()) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'url',
+          message: 'API request needs a URL.',
+        });
+      } else if (!/^https?:\/\//i.test(cfg.url.trim())) {
+        // The server-side SSRF guard is the real gate; this is the
+        // early, legible half of the same rule.
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'url',
+          message: 'URL must start with http:// or https://.',
+        });
+      }
+      if (!cfg.response_var?.trim()) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'response_var',
+          message: 'Pick a variable to store the response in.',
+        });
+      }
+      issues.push(
+        ...requireNext(node, cfg.next_node_key, knownKeys, 'API request'),
+      );
+      break;
+    }
+
+    case 'start_flow': {
+      const cfg = node.config as { flow_id?: string };
+      if (!cfg.flow_id?.trim()) {
+        issues.push({
+          severity: 'error',
+          scope: 'node',
+          node_key: node.node_key,
+          field: 'flow_id',
+          message: 'Pick the flow to continue in.',
+        });
+      }
+      break;
+    }
+
     case 'handoff':
+    case 'ai_handoff':
     case 'end':
       // Terminal nodes have no outgoing edges; nothing to validate
-      // beyond their existence.
+      // beyond their existence. `ai_handoff` carries an optional
+      // agent_id: unset is the meaningful default ("whichever agent
+      // routing picks"), so there is nothing to require.
       break;
 
     default:
@@ -801,12 +1107,25 @@ export function reachableFromEntry(
 
 function outgoingEdges(node: NodeInput): string[] {
   switch (node.node_type) {
+    // ⚠️ Every LINEAR node type must be listed here, not just
+    // validated above. A type missing from this switch falls to
+    // `default: return []`, which makes it look terminal to the BFS —
+    // so everything downstream of it is reported "unreachable" and the
+    // flow cannot be activated, with the error pointing at innocent
+    // nodes rather than at this list.
     case 'start':
     case 'send_message':
     case 'send_media':
+    case 'send_template':
+    case 'send_products':
     case 'collect_input':
+    case 'ask_location':
+    case 'ask_media':
+    case 'wait':
     case 'set_tag':
-    case 'set_segment': {
+    case 'set_segment':
+    case 'set_attribute':
+    case 'http_request': {
       const cfg = node.config as { next_node_key?: string };
       return cfg.next_node_key ? [cfg.next_node_key] : [];
     }
@@ -841,6 +1160,8 @@ function outgoingEdges(node: NodeInput): string[] {
       return out;
     }
     case 'handoff':
+    case 'ai_handoff':
+    case 'start_flow':
     case 'end':
     default:
       return [];

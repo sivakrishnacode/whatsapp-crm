@@ -11,6 +11,7 @@ import { AiReplyService } from '../../ai/services/ai-reply.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
 import { FlowDispatchService } from '../../flows/services/flow-dispatch.service';
+import type { ParsedInbound } from '../../flows/flow.types';
 import { AutomationDispatchService } from '../../automations/services/automation-dispatch.service';
 import {
   decrypt,
@@ -850,18 +851,7 @@ export class WhatsappWebhookService {
         conversationId: conversation.id,
         isFirstInboundMessage,
         channel: 'whatsapp',
-        message: parsedContent.interactiveReplyId
-          ? {
-              kind: 'interactive_reply',
-              reply_id: parsedContent.interactiveReplyId,
-              reply_title: parsedContent.contentText ?? '',
-              meta_message_id: message.id,
-            }
-          : {
-              kind: 'text',
-              text: parsedContent.contentText ?? message.text?.body ?? '',
-              meta_message_id: message.id,
-            },
+        message: toFlowInbound(message, parsedContent),
       });
       flowConsumed = flowResult.consumed === true;
     } catch (err) {
@@ -1417,4 +1407,70 @@ function safeEqual(a: string, b: string): boolean {
   const bufB = Buffer.from(b, 'utf8');
   if (bufA.length !== bufB.length) return false;
   return timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Normalise a Meta inbound into the shape the flow engine matches on.
+ *
+ * ⚠️ ORDER MATTERS. An interactive reply is checked first because a
+ * button tap also carries text (the button's own title); treating it as
+ * a text reply would satisfy a `collect_input` node with the label of
+ * the button the customer pressed.
+ *
+ * Location and media get their own kinds rather than being flattened to
+ * text: `ask_location` needs the coordinates as numbers, and `ask_media`
+ * needs the file URL — both of which are unrecoverable from the
+ * human-readable summary the inbox renders.
+ */
+function toFlowInbound(
+  message: WhatsAppMessage,
+  parsed: {
+    contentText: string | null;
+    mediaUrl: string | null;
+    interactiveReplyId: string | null;
+    metadata: WhatsAppMessageMetadata | null;
+  },
+): ParsedInbound {
+  if (parsed.interactiveReplyId) {
+    return {
+      kind: 'interactive_reply',
+      reply_id: parsed.interactiveReplyId,
+      reply_title: parsed.contentText ?? '',
+      meta_message_id: message.id,
+    };
+  }
+
+  const location = parsed.metadata?.location;
+  if (message.type === 'location' && location) {
+    return {
+      kind: 'location',
+      latitude: location.latitude,
+      longitude: location.longitude,
+      name: location.name,
+      address: location.address,
+      meta_message_id: message.id,
+    };
+  }
+
+  if (
+    message.type === 'image' ||
+    message.type === 'video' ||
+    message.type === 'document' ||
+    message.type === 'audio' ||
+    message.type === 'sticker'
+  ) {
+    return {
+      kind: 'media',
+      media_kind: message.type,
+      media_url: parsed.mediaUrl,
+      caption: parsed.contentText,
+      meta_message_id: message.id,
+    };
+  }
+
+  return {
+    kind: 'text',
+    text: parsed.contentText ?? message.text?.body ?? '',
+    meta_message_id: message.id,
+  };
 }

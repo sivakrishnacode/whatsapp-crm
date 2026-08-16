@@ -176,6 +176,173 @@ export interface SetSegmentNodeConfig {
   next_node_key: string;
 }
 
+/**
+ * Writes a value onto the CONTACT (a profile column or a custom field)
+ * or into the run's own `vars`. This is how a captured answer becomes
+ * CRM data rather than something that dies with the run.
+ *
+ * `target` decides where it lands; `value` is interpolated, so
+ * "{{vars.answer}}" is the common case.
+ */
+export interface SetAttributeNodeConfig {
+  target: 'contact_field' | 'custom_field' | 'var';
+  /**
+   * For `contact_field`: one of 'name' | 'email' | 'phone' | 'company'.
+   * For `custom_field`: the custom_fields row's key.
+   * For `var`: the key under flow_runs.vars.
+   */
+  key: string;
+  /** Interpolated before writing. */
+  value: string;
+  next_node_key: string;
+}
+
+/**
+ * Sends an approved WhatsApp template — the ONLY message that can be
+ * sent outside the 24-hour customer-service window, which is why a flow
+ * resumed by a `wait` longer than a day needs one.
+ *
+ * ⚠️ `template_name` + `language` identify the template AT META, not a
+ * row of ours. We do not copy the body text here: an admin can edit and
+ * re-submit a template at any time, and a cached copy would render the
+ * builder a liar about what the customer actually receives.
+ */
+export interface SendTemplateNodeConfig {
+  template_name: string;
+  /** BCP-47 code as Meta stores it, e.g. 'en_US'. */
+  language: string;
+  /** Positional {{1}}, {{2}}… body variables. Interpolated. */
+  body_params?: string[];
+  /** Positional header variable, when the template has one. */
+  header_params?: string[];
+  next_node_key: string;
+}
+
+/**
+ * Sends catalogue products — one product, or a multi-product list.
+ *
+ * One node type with a `mode` discriminator rather than two, for the
+ * same reason `send_media` covers image/video/document: Meta's payloads
+ * differ only in shape around the same catalogue id, and two node types
+ * would double the forms, the engine cases and the menu entries for no
+ * behavioural difference the author cares about.
+ */
+export interface SendProductsNodeConfig {
+  mode: 'single' | 'list';
+  /** Meta catalogue id. Falls back to the account's configured one. */
+  catalog_id?: string;
+  /** `single`: exactly one retailer id. `list`: one per section row. */
+  product_retailer_ids: string[];
+  /** Required by Meta for the multi-product message. */
+  header_text?: string;
+  body_text?: string;
+  footer_text?: string;
+  next_node_key: string;
+}
+
+/**
+ * Asks the customer to share their location and stores it in
+ * `vars[var_key]` as `{ latitude, longitude, name, address }`.
+ *
+ * WhatsApp-only: it is an interactive `location_request_message`, and
+ * there is no equivalent on any other channel we run.
+ */
+export interface AskLocationNodeConfig {
+  prompt_text: string;
+  var_key: string;
+  next_node_key: string;
+}
+
+/**
+ * Asks the customer to send a file and stores the resulting media URL
+ * in `vars[var_key]`.
+ *
+ * `accept` narrows what counts as an answer — a run waiting for a
+ * document should not be satisfied by a sticker. Anything else the
+ * customer sends is treated as an unmatched reply and goes through the
+ * flow's normal reprompt policy.
+ */
+export interface AskMediaNodeConfig {
+  prompt_text: string;
+  var_key: string;
+  accept: 'any' | 'image' | 'video' | 'document' | 'audio';
+  next_node_key: string;
+}
+
+/**
+ * Parks the run and continues later.
+ *
+ * ⚠️ THE DELAY IS NOT A SLEEP. The run is suspended and a delayed job
+ * wakes it (`flow_runs.resume_at` is the durable record — see migration
+ * 086). Nothing holds a connection open, and the 24-hour messaging
+ * window keeps running while it waits, which is why the validator warns
+ * when a non-template send sits after a wait of a day or more.
+ */
+export interface WaitNodeConfig {
+  duration: number;
+  unit: 'minutes' | 'hours' | 'days';
+  next_node_key: string;
+}
+
+/**
+ * Calls an external endpoint mid-flow and stores the response in
+ * `vars[response_var]` as `{ status, body }`, so a later condition can
+ * branch on it.
+ *
+ * ⚠️ THE URL GOES THROUGH `http-guard.ts` — the same SSRF boundary the
+ * AI agent's custom actions use. It is author-supplied and therefore
+ * reaches our network from inside; the guard is what stops it reaching
+ * the metadata service or a private address.
+ */
+export interface HttpRequestNodeConfig {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  url: string;
+  /** Header name → value. Interpolated. */
+  headers?: Record<string, string>;
+  /** Raw body, interpolated. Ignored for GET. */
+  body?: string;
+  /** Key under vars to store `{ status, body }`. */
+  response_var: string;
+  /**
+   * Whether a non-2xx response stops the run. Default false: a status
+   * code is often the thing the flow means to branch on, and failing
+   * closed would make that impossible to express.
+   */
+  fail_on_error?: boolean;
+  next_node_key: string;
+}
+
+/**
+ * Hands the customer to ANOTHER flow. The current run ends
+ * (`end_reason: 'connected_to_flow'`) and the target starts fresh —
+ * they do not nest.
+ *
+ * ⚠️ Not nesting is the whole design. `idx_one_active_run_per_contact`
+ * permits exactly one active run per contact, so a "call and return"
+ * would need either two active runs or a stack we do not have. Ending
+ * first also makes an accidental A→B→A loop terminate instead of
+ * growing.
+ */
+export interface StartFlowNodeConfig {
+  /** flows.id. Validated against the caller's account at run time. */
+  flow_id: string;
+}
+
+/**
+ * Hands the conversation to one of the workspace's AI agents rather
+ * than to a human. Terminal, like `handoff`.
+ *
+ * `agent_id` is optional: unset means "whichever agent normal routing
+ * would pick" (`AgentResolverService`), which is the right default
+ * because routing order is a deliberate setting and a flow pinning one
+ * agent would silently outrank it.
+ */
+export interface AiHandoffNodeConfig {
+  agent_id?: string;
+  /** Written to the run's event log, and to the agent as context. */
+  note?: string;
+}
+
 // Terminal nodes carry no config — they just stop the run.
 export type EndNodeConfig = Record<string, never>;
 
@@ -190,7 +357,16 @@ export type FlowNodeConfig =
   | { node_type: 'condition'; config: ConditionNodeConfig }
   | { node_type: 'set_tag'; config: SetTagNodeConfig }
   | { node_type: 'set_segment'; config: SetSegmentNodeConfig }
+  | { node_type: 'set_attribute'; config: SetAttributeNodeConfig }
+  | { node_type: 'send_template'; config: SendTemplateNodeConfig }
+  | { node_type: 'send_products'; config: SendProductsNodeConfig }
+  | { node_type: 'ask_location'; config: AskLocationNodeConfig }
+  | { node_type: 'ask_media'; config: AskMediaNodeConfig }
+  | { node_type: 'wait'; config: WaitNodeConfig }
+  | { node_type: 'http_request'; config: HttpRequestNodeConfig }
+  | { node_type: 'start_flow'; config: StartFlowNodeConfig }
   | { node_type: 'handoff'; config: HandoffNodeConfig }
+  | { node_type: 'ai_handoff'; config: AiHandoffNodeConfig }
   | { node_type: 'end'; config: EndNodeConfig };
 
 export type FlowNodeType = FlowNodeConfig['node_type'];
@@ -277,6 +453,32 @@ export type ParsedInbound =
       reply_id: string;
       /** The visible title of the tapped option (for logging). */
       reply_title: string;
+      meta_message_id: string;
+    }
+  | {
+      /**
+       * The customer shared their location — the answer to an
+       * `ask_location` node. NOT an interactive reply: Meta delivers a
+       * `location` message, so the engine matches it by KIND rather
+       * than by a reply id.
+       */
+      kind: 'location';
+      latitude: number;
+      longitude: number;
+      name?: string | null;
+      address?: string | null;
+      meta_message_id: string;
+    }
+  | {
+      /**
+       * The customer sent a file — the answer to an `ask_media` node.
+       * `media_url` is our own proxy path, not Meta's short-lived one,
+       * so a value stored in `vars` is still fetchable tomorrow.
+       */
+      kind: 'media';
+      media_kind: 'image' | 'video' | 'document' | 'audio' | 'sticker';
+      media_url: string | null;
+      caption?: string | null;
       meta_message_id: string;
     };
 

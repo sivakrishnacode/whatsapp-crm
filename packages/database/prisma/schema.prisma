@@ -1622,6 +1622,11 @@ model FlowRun {
   endedAt             DateTime?      @map("ended_at") @db.Timestamptz(6)
   endReason           String?        @map("end_reason")
   accountId           String         @map("account_id") @db.Uuid
+  /// Set by a `wait` node (migration 086). The delayed queue job is the
+  /// fast path; these two columns are what make the resume survive a
+  /// flushed Redis, because the sweep reads them.
+  resumeAt            DateTime?      @map("resume_at") @db.Timestamptz(6)
+  resumeNodeKey       String?        @map("resume_node_key")
   events              FlowRunEvent[]
   account             Account        @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   contact             contacts?      @relation(fields: [contactId], references: [id], onUpdate: NoAction)

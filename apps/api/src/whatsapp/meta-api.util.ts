@@ -657,6 +657,63 @@ function validateInteractiveHeaderFooter(
   }
 }
 
+export interface SendLocationRequestArgs {
+  phoneNumberId: string;
+  accessToken: string;
+  to: string;
+  /** The question shown above Meta's native "Send location" button. */
+  bodyText: string;
+  contextMessageId?: string;
+}
+
+/**
+ * Ask the customer to share their location.
+ *
+ * `interactive.type = 'location_request_message'` renders a native
+ * button in WhatsApp; the answer comes back as a `location` message on
+ * the inbound webhook, NOT as an interactive reply — which is why the
+ * flow engine matches it by message kind rather than by a reply id.
+ *
+ * The action takes no parameters at all: `{ name: 'send_location' }` is
+ * the whole of it. Meta rejects the send if `body` is missing, so it is
+ * required here rather than optional.
+ */
+export async function sendLocationRequest(
+  args: SendLocationRequestArgs,
+): Promise<MetaSendResult> {
+  const { phoneNumberId, accessToken, to, bodyText, contextMessageId } = args;
+  validateInteractiveBody(bodyText);
+
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive: {
+      type: 'location_request_message',
+      body: { text: bodyText },
+      action: { name: 'send_location' },
+    },
+  };
+  if (contextMessageId) {
+    body.context = { message_id: contextMessageId };
+  }
+
+  const response = await fetch(`${META_API_BASE}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  const data = (await response.json()) as MetaSendResponse;
+  return { messageId: data.messages[0].id };
+}
+
 export interface SendProductMessageArgs {
   phoneNumberId: string;
   accessToken: string;

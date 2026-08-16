@@ -963,32 +963,12 @@ export class InstagramWebhookService {
       }
     }
 
-    let flowConsumed = false;
-    try {
-      const result = await this.flowDispatch.dispatchInbound({
-        accountId: ctx.accountId,
-        userId: ctx.ownerUserId,
-        contactId,
-        conversationId: conversation.id,
-        isFirstInboundMessage: args.isFirstInbound,
-        channel: 'instagram',
-        message: args.interactiveReplyId
-          ? {
-              kind: 'interactive_reply',
-              reply_id: args.interactiveReplyId,
-              reply_title: args.text,
-              meta_message_id: args.metaMessageId,
-            }
-          : {
-              kind: 'text',
-              text: args.text,
-              meta_message_id: args.metaMessageId,
-            },
-      });
-      flowConsumed = result.consumed === true;
-    } catch (err) {
-      this.logger.error(`[flows] Instagram dispatch failed: ${String(err)}`);
-    }
+    // ⚠️ FLOWS ARE WHATSAPP-ONLY. Instagram used to dispatch into the
+    // flow engine too, which meant a flow could send a `send_list` (no
+    // Instagram equivalent) or a template (likewise) and fail the run
+    // mid-conversation. Automations are the channel-agnostic engine and
+    // still run on every trigger below; flows are not offered here.
+    const flowConsumed = false;
 
     const triggers: Array<
       | 'new_contact_created'

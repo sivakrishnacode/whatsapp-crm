@@ -13,13 +13,20 @@ import {
   FlowsSweepService,
 } from './services/flows-sweep.service';
 import { FlowsSweepProcessor } from './flows-sweep.processor';
+import { FlowsResumeProcessor } from './flows-resume.processor';
+import { FlowWaitService } from './services/flow-wait.service';
+import { FLOWS_RESUME_QUEUE } from '../queue/queue.constants';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: FLOWS_SWEEP_QUEUE }),
+    // One delayed job per run parked at a `wait` node.
+    BullModule.registerQueue({ name: FLOWS_RESUME_QUEUE }),
+    // ⚠️ Flows are WHATSAPP-ONLY. The Instagram and web webhooks no
+    // longer dispatch into this engine — a flow can send a list, a
+    // template or a catalogue, none of which exist off WhatsApp.
+    // Automations remain the channel-agnostic engine.
     forwardRef(() => WhatsappModule),
-    // Flow send nodes route by conversation channel, so a flow runs on
-    // Instagram DMs as well as WhatsApp.
     forwardRef(() => MessagingModule),
     // The set_segment node.
     SegmentsModule,
@@ -30,6 +37,8 @@ import { FlowsSweepProcessor } from './flows-sweep.processor';
     FlowDispatchService,
     FlowsSweepService,
     FlowsSweepProcessor,
+    FlowWaitService,
+    FlowsResumeProcessor,
     // Reused from the automations bridge — same class, same
     // INTERNAL_API_SECRET; registered here so this module's injector
     // can instantiate it for FlowsEngineController.

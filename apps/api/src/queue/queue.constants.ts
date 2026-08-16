@@ -54,8 +54,23 @@ export const LEAD_FETCH_QUEUE = 'lead-fetch';
 /** Automation runs parked at a wait step (delayed jobs). */
 export const AUTOMATIONS_PENDING_QUEUE = 'automations-pending';
 
-/** Flow runs parked at a wait/delay node. */
+/**
+ * Periodic scan that times out abandoned flow runs — and, since
+ * migration 086, continues any run whose `wait` came due while Redis
+ * was not around to fire the delayed job.
+ */
 export const FLOWS_SWEEP_QUEUE = 'flows-sweep';
+
+/**
+ * One delayed job per run parked at a `wait` node.
+ *
+ * Per-row delayed jobs (unlike the sweep, which is a periodic scan)
+ * because a wait's due time is fixed the moment the node runs — there
+ * is no policy to edit afterwards that would make a pre-scheduled job
+ * go stale. The row still carries `resume_at`, so a lost Redis degrades
+ * to "the sweep picks it up" rather than "the customer is stranded".
+ */
+export const FLOWS_RESUME_QUEUE = 'flows-resume';
 
 /** Nightly refresh of WhatsApp messaging limits / quality rating. */
 export const LIMITS_QUEUE = 'whatsapp-limits';
@@ -89,6 +104,7 @@ export const ALL_QUEUE_NAMES = [
   AI_REPLY_QUEUE,
   AUTOMATION_TRIGGER_QUEUE,
   AUTOMATIONS_PENDING_QUEUE,
+  FLOWS_RESUME_QUEUE,
   FLOWS_SWEEP_QUEUE,
   WEBHOOK_DELIVERY_QUEUE,
   LEAD_FETCH_QUEUE,

@@ -7,6 +7,8 @@ import { FlowDispatchService } from './flow-dispatch.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { ChannelSenderService } from '../../common/messaging/channel-sender.service';
 import type { SegmentMembershipService } from '../../common/segments/segment-membership.service';
+import type { FlowMetaSendService } from '../../whatsapp/flow-meta-send.service';
+import type { FlowWaitService } from './flow-wait.service';
 import type { DispatchInboundInput } from '../flow.types';
 
 // Fresh coverage — the web original's dispatchInboundToFlows /
@@ -153,6 +155,14 @@ function makeInput(
   };
 }
 
+/** A wait service that parks successfully and records nothing else. */
+function makeWaitsMock() {
+  return {
+    park: vi.fn().mockResolvedValue(true),
+    claim: vi.fn().mockResolvedValue(true),
+  };
+}
+
 describe('FlowDispatchService.dispatchInbound', () => {
   let prisma: ReturnType<typeof makePrismaMock>;
   let metaSend: ReturnType<typeof makeMetaSendMock>;
@@ -164,6 +174,11 @@ describe('FlowDispatchService.dispatchInbound', () => {
     service = new FlowDispatchService(
       prisma as unknown as PrismaService,
       metaSend as unknown as ChannelSenderService,
+      // WhatsApp-only sender (template / products / location request) —
+      // no test in this file exercises those nodes, so an empty stub is
+      // enough to construct the service.
+      {} as unknown as FlowMetaSendService,
+      makeWaitsMock() as unknown as FlowWaitService,
       makeSegmentsMock() as unknown as SegmentMembershipService,
     );
   });

@@ -146,44 +146,24 @@ export class WebInboundService {
     };
   }
 
-  private async fanOut(
+  /**
+   * ⚠️ FLOWS ARE WHATSAPP-ONLY — see the same note in the Instagram
+   * webhook. The website widget runs on automations, which are
+   * channel-aware and degrade per step rather than failing the whole
+   * run. Nothing here is awaited (every dispatch is fire-and-forget),
+   * which is why this is no longer `async`.
+   */
+  private fanOut(
     input: InboundWebMessage,
     meta: { messageId: string; isFirstInbound: boolean },
-  ): Promise<void> {
-    let flowConsumed = false;
-    try {
-      const result = await this.flowDispatch.dispatchInbound({
-        accountId: input.accountId,
-        userId: input.ownerUserId,
-        contactId: input.contactId,
-        conversationId: input.conversationId,
-        isFirstInboundMessage: meta.isFirstInbound,
-        channel: 'web',
-        message: input.interactiveReplyId
-          ? {
-              kind: 'interactive_reply',
-              reply_id: input.interactiveReplyId,
-              reply_title: input.text,
-              meta_message_id: meta.messageId,
-            }
-          : {
-              kind: 'text',
-              text: input.text,
-              meta_message_id: meta.messageId,
-            },
-      });
-      flowConsumed = result.consumed === true;
-    } catch (err) {
-      this.logger.error(`[flows] web dispatch failed: ${String(err)}`);
-    }
-
+  ): void {
     const triggers: Array<
       | 'first_inbound_message'
       | 'new_message_received'
       | 'keyword_match'
       | 'web_chat_started'
     > = [];
-    if (!flowConsumed) triggers.push('new_message_received', 'keyword_match');
+    triggers.push('new_message_received', 'keyword_match');
     if (meta.isFirstInbound) {
       // `web_chat_started` is not a duplicate of `first_inbound_message`:
       // the latter fires on all three channels, so a rule that should only
@@ -212,9 +192,9 @@ export class WebInboundService {
         );
     }
 
-    // Same guard as Instagram: AI stays quiet if a flow answered, and
-    // never answers a button tap (the flow owns those) or an empty body.
-    if (!flowConsumed && !input.interactiveReplyId && input.text.trim()) {
+    // Same guard as Instagram minus the flow half: AI never answers a
+    // button tap (an automation owns those) or an empty body.
+    if (!input.interactiveReplyId && input.text.trim()) {
       void this.aiReply.dispatchInboundToAiReply({
         accountId: input.accountId,
         conversationId: input.conversationId,

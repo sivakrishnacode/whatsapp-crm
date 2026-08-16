@@ -192,7 +192,60 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
       return { mode: 'add', tag_id: '', next_node_key: '' };
     case 'set_segment':
       return { mode: 'add', segment_id: '', next_node_key: '' };
+    case 'set_attribute':
+      return {
+        target: 'contact_field',
+        key: '',
+        value: '',
+        next_node_key: '',
+      };
+    case 'send_template':
+      return {
+        template_name: '',
+        language: '',
+        body_params: [],
+        header_params: [],
+        next_node_key: '',
+      };
+    case 'send_products':
+      return {
+        mode: 'single',
+        catalog_id: '',
+        product_retailer_ids: [''],
+        body_text: '',
+        next_node_key: '',
+      };
+    case 'ask_location':
+      return { prompt_text: '', var_key: 'location', next_node_key: '' };
+    case 'ask_media':
+      return {
+        prompt_text: '',
+        var_key: 'file',
+        accept: 'any',
+        next_node_key: '',
+      };
+    case 'wait':
+      // An hour, not a minute: the common use is "give them time before
+      // we nudge", and a default measured in minutes reads as a
+      // throttle rather than a pause.
+      return { duration: 1, unit: 'hours', next_node_key: '' };
+    case 'http_request':
+      return {
+        method: 'GET',
+        url: '',
+        headers: {},
+        body: '',
+        response_var: 'api',
+        fail_on_error: false,
+        next_node_key: '',
+      };
+    case 'start_flow':
+      return { flow_id: '' };
     case 'handoff':
+      return { note: '' };
+    case 'ai_handoff':
+      // No agent_id by default — normal routing picks, which respects
+      // the priority order the workspace already set.
       return { note: '' };
     case 'end':
       return {};
