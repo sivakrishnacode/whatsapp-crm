@@ -499,17 +499,35 @@ const createDeal: BuiltinTool = {
       const pipelineId = pipeline.id;
       const stageId = stage.id;
 
-      // Get the account owner to assign the deal to
       const owner = await ctx.prisma.account.findUnique({
         where: { id: ctx.accountId },
         select: { ownerUserId: true },
       });
 
       if (!owner?.ownerUserId) {
-        return { ok: false, detail: 'No team member found to assign the deal to.' };
+        return { ok: false, detail: 'This workspace has no owner to file the deal under.' };
       }
 
-      // Create the deal
+      /**
+       * ⚠️ `user_id` AND `assigned_to` ARE NOT THE SAME KIND OF ID.
+       *
+       * `deals.user_id` references `auth.users`, but
+       * `deals.assigned_to` references `profiles(id)` (migration 002) —
+       * and `profiles.id` is its own `gen_random_uuid()`, NOT the user id
+       * (001 inserts only `user_id`). Writing the owner's user id into
+       * both — as this shipped — is a foreign-key violation, so the
+       * INSERT threw, the catch below turned it into a tool error, and no
+       * deal was created. Nothing surfaced: a tool result is only ever
+       * read by the model.
+       *
+       * Left NULL when the owner somehow has no profile row: an
+       * unassigned deal is worth far more than no deal.
+       */
+      const ownerProfile = await ctx.prisma.profile.findFirst({
+        where: { userId: owner.ownerUserId, accountId: ctx.accountId },
+        select: { id: true },
+      });
+
       const currency = ctx.currency?.toUpperCase() || 'USD';
       const dealValue = Number.isFinite(value) ? value : 0;
 
@@ -519,7 +537,7 @@ const createDeal: BuiltinTool = {
           pipeline_id: pipelineId,
           stage_id: stageId,
           user_id: owner.ownerUserId,
-          assigned_to: owner.ownerUserId,
+          assigned_to: ownerProfile?.id ?? null,
           contact_id: ctx.contactId,
           title: title.slice(0, 255),
           value: dealValue,
@@ -530,9 +548,14 @@ const createDeal: BuiltinTool = {
         select: { id: true, title: true, value: true },
       });
 
+      // The id is in the detail because `assign_deal` is the natural next
+      // call and a tool result is the only thing the model carries
+      // forward. Without it the two deal skills cannot be chained at all.
       return {
         ok: true,
-        detail: `Deal "${deal.title}" created in pipeline "${pipeline.name}" at stage "${stage.name}" (value: ${currency} ${deal.value})`,
+        detail:
+          `Deal "${deal.title}" created in pipeline "${pipeline.name}" at stage "${stage.name}" ` +
+          `(value: ${currency} ${deal.value}, deal_id: ${deal.id})`,
       };
     } catch (error) {
       return {
@@ -546,66 +569,123 @@ const createDeal: BuiltinTool = {
 const assignDeal: BuiltinTool = {
   definition: {
     name: 'assign_deal',
-    description: 'Assign an existing deal to a specific team member.',
+    description:
+      "Hand a deal to a teammate by their NAME or email — the same name you would say out loud. " +
+      'Omit `deal_id` to assign the deal most recently opened for this customer.',
     parameters: {
       type: 'object',
       properties: {
+        assignee: {
+          type: 'string',
+          description:
+            "The teammate's name or email address, e.g. \"Priya\" or \"priya@acme.com\".",
+        },
         deal_id: {
           type: 'string',
-          description: 'ID of the deal to assign.',
-        },
-        assigned_to_user_id: {
-          type: 'string',
-          description: 'ID of the team member to assign the deal to.',
+          description:
+            'Optional. The id returned by create_deal. Omit to use this customer\'s newest open deal.',
         },
       },
-      required: ['deal_id', 'assigned_to_user_id'],
+      required: ['assignee'],
     },
   },
   async run(args, ctx) {
-    const dealId = str(args, 'deal_id');
-    const userId = str(args, 'assigned_to_user_id');
-
-    if (!dealId || !userId) {
-      return { ok: false, detail: 'Deal ID and user ID are required.' };
+    /**
+     * ⚠️ THE MODEL NAMES A PERSON; THE SERVER RESOLVES THE ID.
+     *
+     * This shipped requiring `assigned_to_user_id` — a `profiles.id`
+     * UUID. Nothing lists teammates, so the model could not produce one
+     * and the skill never assigned anything. Worse, the lookup that
+     * claimed to "verify target user is a team member on this account"
+     * queried `profile.findFirst({ where: { id } })` with NO account
+     * filter, so a guessed id from ANOTHER TENANT passed the check and
+     * the deal was handed to somebody outside the workspace. Prisma
+     * connects as the database owner, so RLS was not going to stop it
+     * (CLAUDE.md → tenant-scoping traps).
+     *
+     * Matching on a name is why the account filter is now load-bearing
+     * twice over: it scopes the search AND it is the only thing that
+     * makes "Priya" mean this workspace's Priya.
+     */
+    const assignee = str(args, 'assignee');
+    if (!assignee) {
+      return { ok: false, detail: 'Name the teammate to assign the deal to.' };
     }
 
+    const requestedDealId = str(args, 'deal_id');
+
     try {
-      // Verify deal exists and belongs to this account
-      const deal = await ctx.prisma.deals.findFirst({
-        where: { id: dealId, account_id: ctx.accountId },
-        select: { id: true },
-      });
+      // A deal id from the model is data, not authority — always scoped.
+      const deal = requestedDealId
+        ? await ctx.prisma.deals.findFirst({
+            where: { id: requestedDealId, account_id: ctx.accountId },
+            select: { id: true, title: true },
+          })
+        : ctx.contactId
+          ? await ctx.prisma.deals.findFirst({
+              where: {
+                account_id: ctx.accountId,
+                contact_id: ctx.contactId,
+                status: 'open',
+              },
+              orderBy: { created_at: 'desc' },
+              select: { id: true, title: true },
+            })
+          : null;
 
       if (!deal) {
-        return { ok: false, detail: 'Deal not found or does not belong to this account.' };
-      }
-
-      // Verify target user is a team member on this account
-      const member = await ctx.prisma.profile.findFirst({
-        where: {
-          id: userId,
-        },
-        select: { id: true, fullName: true },
-      });
-
-      if (!member) {
         return {
           ok: false,
-          detail: 'Target user is not a team member on this account.',
+          detail: requestedDealId
+            ? 'That deal does not exist in this workspace.'
+            : 'This customer has no open deal to assign — create one first.',
         };
       }
 
-      // Update the deal
-      await ctx.prisma.deals.update({
-        where: { id: dealId },
-        data: { assigned_to: userId },
+      // Exact email first, then a case-insensitive name match. Both
+      // pinned to this account.
+      const candidates = await ctx.prisma.profile.findMany({
+        where: {
+          accountId: ctx.accountId,
+          OR: [
+            { email: { equals: assignee, mode: 'insensitive' } },
+            { fullName: { contains: assignee, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, fullName: true, email: true },
+        take: 5,
       });
 
-      return {
-        ok: true,
-        detail: `Deal assigned to ${member.fullName || 'team member'}`,
-      };
+      if (candidates.length === 0) {
+        return {
+          ok: false,
+          detail: `Nobody on this team matches "${assignee}".`,
+        };
+      }
+
+      // Two people called "Ann" must not resolve to whichever row came
+      // back first — the deal would silently land on the wrong desk.
+      const exact = candidates.filter(
+        (c) =>
+          c.email.toLowerCase() === assignee.toLowerCase() ||
+          c.fullName.toLowerCase() === assignee.toLowerCase(),
+      );
+      const member = exact.length === 1 ? exact[0] : null;
+
+      if (!member) {
+        if (candidates.length > 1) {
+          return {
+            ok: false,
+            detail: `"${assignee}" matches more than one teammate (${candidates
+              .map((c) => c.fullName)
+              .join(', ')}) — use their full name or email.`,
+          };
+        }
+        // A single fuzzy match is the ordinary case: "Priya" → "Priya Nair".
+        return assignDealTo(ctx, deal, candidates[0]);
+      }
+
+      return assignDealTo(ctx, deal, member);
     } catch (error) {
       return {
         ok: false,
@@ -614,6 +694,22 @@ const assignDeal: BuiltinTool = {
     }
   },
 };
+
+/** `deals.assigned_to` references `profiles(id)` — see create_deal. */
+async function assignDealTo(
+  ctx: BuiltinToolContext,
+  deal: { id: string; title: string },
+  member: { id: string; fullName: string },
+): Promise<{ ok: boolean; detail: string }> {
+  await ctx.prisma.deals.update({
+    where: { id: deal.id },
+    data: { assigned_to: member.id },
+  });
+  return {
+    ok: true,
+    detail: `Deal "${deal.title}" assigned to ${member.fullName || 'team member'}.`,
+  };
+}
 
 const triggerAutomation: BuiltinTool = {
   definition: {

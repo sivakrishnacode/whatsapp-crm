@@ -313,7 +313,9 @@ export const AGENT_SKILLS: SkillDefinition[] = [
       const criteria = skillText(config, 'assignment_criteria');
       let prompt =
         'Deal assignment: after creating a deal or when a customer requests a specific contact, ' +
-        'assign it to the right team member using `assign_deal`. ';
+        'assign it to the right team member using `assign_deal` — name them the way you would ' +
+        'out loud ("Priya", or their email). You do not need any id: leave `deal_id` out and the ' +
+        "customer's newest open deal is used. ";
       if (criteria) {
         prompt += `Assignment rules: ${criteria}. `;
       }
