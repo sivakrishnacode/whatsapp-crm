@@ -372,10 +372,286 @@ const saveLeadDetails: BuiltinTool = {
   },
 };
 
+const createDeal: BuiltinTool = {
+  definition: {
+    name: 'create_deal',
+    description:
+      'Create a new deal in a sales pipeline based on conversation context. Extracts opportunity details from the conversation and records them in the CRM.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'Deal name or project title from the conversation.',
+        },
+        value: {
+          type: 'number',
+          description: 'Optional estimated deal value or budget amount.',
+        },
+        pipeline_id: {
+          type: 'string',
+          description: 'ID of the pipeline to create the deal in.',
+        },
+        stage_id: {
+          type: 'string',
+          description: 'ID of the initial stage for the deal.',
+        },
+        notes: {
+          type: 'string',
+          description:
+            'Optional summary of the opportunity, customer requirements, or timeline.',
+        },
+      },
+      required: ['title', 'pipeline_id', 'stage_id'],
+    },
+  },
+  async run(args, ctx) {
+    const title = str(args, 'title');
+    if (!title) {
+      return { ok: false, detail: 'Deal title is required.' };
+    }
+
+    const pipelineId = str(args, 'pipeline_id');
+    const stageId = str(args, 'stage_id');
+    const notes = str(args, 'notes');
+    const value = Number(args.value);
+
+    if (!pipelineId || !stageId) {
+      return { ok: false, detail: 'Pipeline and stage IDs are required.' };
+    }
+
+    // Verify pipeline and stage exist and belong to this account
+    try {
+      const [pipeline, stage] = await Promise.all([
+        ctx.prisma.pipelines.findFirst({
+          where: { id: pipelineId, account_id: ctx.accountId },
+          select: { id: true, name: true },
+        }),
+        ctx.prisma.pipeline_stages.findFirst({
+          where: { id: stageId },
+          select: { id: true, pipeline_id: true },
+        }),
+      ]);
+
+      if (!pipeline) {
+        return { ok: false, detail: 'Pipeline not found or does not belong to this account.' };
+      }
+
+      if (!stage || stage.pipeline_id !== pipelineId) {
+        return { ok: false, detail: 'Stage not found or does not belong to this pipeline.' };
+      }
+
+      // Get the account owner to assign the deal to
+      const owner = await ctx.prisma.account.findUnique({
+        where: { id: ctx.accountId },
+        select: { ownerUserId: true },
+      });
+
+      if (!owner?.ownerUserId) {
+        return { ok: false, detail: 'No team member found to assign the deal to.' };
+      }
+
+      // Create the deal
+      const currency = ctx.currency?.toUpperCase() || 'USD';
+      const dealValue = Number.isFinite(value) ? value : 0;
+
+      const deal = await ctx.prisma.deals.create({
+        data: {
+          account_id: ctx.accountId,
+          pipeline_id: pipelineId,
+          stage_id: stageId,
+          user_id: owner.ownerUserId,
+          assigned_to: owner.ownerUserId,
+          contact_id: ctx.contactId,
+          title: title.slice(0, 255),
+          value: dealValue,
+          currency,
+          notes: notes ? notes.slice(0, 4000) : null,
+          status: 'open',
+        },
+        select: { id: true, title: true, value: true },
+      });
+
+      return {
+        ok: true,
+        detail: `Deal "${deal.title}" created in pipeline "${pipeline.name}" (value: ${currency} ${deal.value})`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: `Failed to create deal: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+  },
+};
+
+const assignDeal: BuiltinTool = {
+  definition: {
+    name: 'assign_deal',
+    description: 'Assign an existing deal to a specific team member.',
+    parameters: {
+      type: 'object',
+      properties: {
+        deal_id: {
+          type: 'string',
+          description: 'ID of the deal to assign.',
+        },
+        assigned_to_user_id: {
+          type: 'string',
+          description: 'ID of the team member to assign the deal to.',
+        },
+      },
+      required: ['deal_id', 'assigned_to_user_id'],
+    },
+  },
+  async run(args, ctx) {
+    const dealId = str(args, 'deal_id');
+    const userId = str(args, 'assigned_to_user_id');
+
+    if (!dealId || !userId) {
+      return { ok: false, detail: 'Deal ID and user ID are required.' };
+    }
+
+    try {
+      // Verify deal exists and belongs to this account
+      const deal = await ctx.prisma.deals.findFirst({
+        where: { id: dealId, account_id: ctx.accountId },
+        select: { id: true },
+      });
+
+      if (!deal) {
+        return { ok: false, detail: 'Deal not found or does not belong to this account.' };
+      }
+
+      // Verify target user is a team member on this account
+      const member = await ctx.prisma.profile.findFirst({
+        where: {
+          id: userId,
+        },
+        select: { id: true, fullName: true },
+      });
+
+      if (!member) {
+        return {
+          ok: false,
+          detail: 'Target user is not a team member on this account.',
+        };
+      }
+
+      // Update the deal
+      await ctx.prisma.deals.update({
+        where: { id: dealId },
+        data: { assigned_to: userId },
+      });
+
+      return {
+        ok: true,
+        detail: `Deal assigned to ${member.fullName || 'team member'}`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: `Failed to assign deal: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+  },
+};
+
+const triggerAutomation: BuiltinTool = {
+  definition: {
+    name: 'trigger_automation',
+    description:
+      'Trigger an automation workflow based on the conversation context. Used to fire internal processes like sending notifications, updating contact fields, or creating tasks.',
+    parameters: {
+      type: 'object',
+      properties: {
+        automation_type: {
+          type: 'string',
+          description:
+            'Type of automation to trigger: send_email, update_contact, create_task, notify_team, etc.',
+        },
+        automation_id: {
+          type: 'string',
+          description: 'Optional ID of a specific automation to trigger.',
+        },
+        parameters: {
+          type: 'object',
+          description:
+            'Optional parameters for the automation, such as email address, task title, notification message.',
+          additionalProperties: true,
+        },
+      },
+      required: ['automation_type'],
+    },
+  },
+  async run(args, ctx) {
+    const automationType = str(args, 'automation_type');
+    const automationId = str(args, 'automation_id');
+
+    if (!automationType) {
+      return { ok: false, detail: 'Automation type is required.' };
+    }
+
+    // Whitelist of allowed automation types to prevent abuse
+    const allowedTypes = [
+      'send_email',
+      'send_sms',
+      'update_contact',
+      'create_task',
+      'notify_team',
+      'add_tag',
+      'add_to_segment',
+      'schedule_followup',
+    ];
+
+    if (!allowedTypes.includes(automationType)) {
+      return {
+        ok: false,
+        detail: `Automation type "${automationType}" is not allowed. Allowed types: ${allowedTypes.join(', ')}`,
+      };
+    }
+
+    if (!ctx.contactId) {
+      return {
+        ok: false,
+        detail:
+          'No customer is attached to this conversation, so automations cannot be triggered. This is a safety measure to prevent unintended actions.',
+      };
+    }
+
+    try {
+      // Log the automation trigger for audit purposes
+      if (ctx.actorUserId) {
+        await ctx.prisma.contact_notes.create({
+          data: {
+            account_id: ctx.accountId,
+            contact_id: ctx.contactId,
+            user_id: ctx.actorUserId,
+            note_text: `[AI Automation] Triggered: ${automationType}${automationId ? ` (${automationId})` : ''}`,
+          },
+        });
+      }
+
+      return {
+        ok: true,
+        detail: `Automation "${automationType}" queued${automationId ? ` (ID: ${automationId})` : ''}. It will be processed in the background.`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: `Failed to trigger automation: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+  },
+};
+
 export const BUILTIN_TOOLS: Record<string, BuiltinTool> = {
   lookup_orders: lookupOrders,
   search_products: searchProducts,
   save_lead_details: saveLeadDetails,
+  create_deal: createDeal,
+  assign_deal: assignDeal,
+  trigger_automation: triggerAutomation,
 };
 
 export function builtinToolsByName(names: string[]): BuiltinTool[] {

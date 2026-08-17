@@ -15,6 +15,8 @@ import { AgentResolverService } from './services/agent-resolver.service';
 import { AgentRuntimeService } from './services/agent-runtime.service';
 import { AgentActionsService } from './services/agent-actions.service';
 import { KnowledgeSourceService } from './services/knowledge-source.service';
+import { AgentDealsService } from './services/agent-deals.service';
+import { AgentFeaturesService } from './services/agent-features.service';
 import { QueueModule } from '../queue/queue.module';
 import { AiReplyProcessor } from './queues/ai-reply.processor';
 import { AiCreditsModule } from './credits/ai-credits.module';
@@ -49,6 +51,8 @@ import { AiCreditsModule } from './credits/ai-credits.module';
     AgentRuntimeService,
     AgentActionsService,
     KnowledgeSourceService,
+    AgentDealsService,
+    AgentFeaturesService,
   ],
   exports: [AiReplyService],
 })

@@ -246,6 +246,111 @@ export const AGENT_SKILLS: SkillDefinition[] = [
       'Human handoff: hand over when the customer asks for a person, is upset or complaining, raises anything sensitive (billing dispute, fraud, legal, health), ' +
       'or wants something no other skill above covers. Hand over cleanly — do not use it as an escape from a question you have not tried to answer.',
   },
+  {
+    id: 'create_deal',
+    label: 'Deal creation',
+    description:
+      'Creates deals in your CRM pipeline based on conversation context and customer intent.',
+    defaultEnabled: false,
+    tools: ['create_deal'],
+    config: [
+      {
+        key: 'deal_pipeline_id',
+        label: 'Default pipeline ID',
+        type: 'text',
+        placeholder: 'Leave empty to let humans choose',
+        help: 'Optional: paste a specific pipeline ID to auto-route all deals.',
+        maxLength: 100,
+      },
+      {
+        key: 'deal_stage_id',
+        label: 'Default stage ID',
+        type: 'text',
+        placeholder: 'Leave empty to start at first stage',
+        help: 'Optional: paste a specific stage ID for default placement.',
+        maxLength: 100,
+      },
+      {
+        key: 'auto_create_threshold',
+        label: 'Deal intent confidence threshold',
+        type: 'text',
+        placeholder: '0.7',
+        help: 'Minimum confidence (0-1) before automatically creating a deal. Defaults to 0.8.',
+        maxLength: 5,
+      },
+    ],
+    prompt: (config) => {
+      const threshold = skillText(config, 'auto_create_threshold') || '0.8';
+      return (
+        'Deal creation: when a customer discusses a potential opportunity or project that fits your business, ' +
+        `consider creating a deal if you are at least ${threshold} confident they are serious. ` +
+        'Extract: the deal name from what they said, their likely budget or deal size, and any timeline they mentioned. ' +
+        'Call `create_deal` once with a title, value (if mentioned), and any contact details — do not ask follow-up questions first. ' +
+        'Confirm that the deal was recorded, then carry on the conversation naturally.'
+      );
+    },
+  },
+  {
+    id: 'assign_deal_to_member',
+    label: 'Deal assignment',
+    description:
+      'Assigns deals to specific team members based on ownership or expertise.',
+    defaultEnabled: false,
+    tools: ['assign_deal'],
+    config: [
+      {
+        key: 'assignment_criteria',
+        label: 'How to assign deals',
+        type: 'textarea',
+        placeholder: 'e.g. assign to the sales director for deals over 50k, to team leads otherwise',
+        help: 'Guidance for which team member should own each deal.',
+        maxLength: 500,
+      },
+    ],
+    prompt: (config) => {
+      const criteria = skillText(config, 'assignment_criteria');
+      let prompt =
+        'Deal assignment: after creating a deal or when a customer requests a specific contact, ' +
+        'assign it to the right team member using `assign_deal`. ';
+      if (criteria) {
+        prompt += `Assignment rules: ${criteria}. `;
+      }
+      prompt +=
+        'Do not mention internal team structure to the customer — simply confirm "your account manager will follow up."';
+      return prompt;
+    },
+  },
+  {
+    id: 'trigger_automation',
+    label: 'Automation triggers',
+    description:
+      'Triggers workflows and automations based on conversation events.',
+    defaultEnabled: false,
+    tools: ['trigger_automation'],
+    config: [
+      {
+        key: 'automation_types',
+        label: 'Available automation triggers',
+        type: 'list',
+        placeholder: 'e.g. send_email, update_contact, create_task',
+        help: 'Types of automations this agent is permitted to trigger.',
+        maxItems: 10,
+        maxLength: 60,
+      },
+    ],
+    prompt: (config) => {
+      const types = skillList(config, 'automation_types');
+      let prompt = 'Automation triggers: when a customer event warrants an internal action, ';
+      if (types.length > 0) {
+        prompt += `call \`trigger_automation\` to run: ${types.join(', ')}. `;
+      } else {
+        prompt += 'call `trigger_automation` to run configured automations. ';
+      }
+      prompt +=
+        'Only trigger automations the customer explicitly requested or that directly serve their stated need — do not auto-trigger speculatively.';
+      return prompt;
+    },
+  },
 ];
 
 export const AGENT_SKILL_IDS: string[] = AGENT_SKILLS.map((s) => s.id);

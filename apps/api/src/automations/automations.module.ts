@@ -19,6 +19,7 @@ import { AutomationStepsTreeService } from './services/automation-steps-tree.ser
 import { AutomationsProcessor } from './automations.processor';
 import { InternalDispatchGuard } from './guards/internal-dispatch.guard';
 import { AutomationTriggerProcessor } from './queues/automation-trigger.processor';
+import { AutomationAiTriggerService } from './services/automation-ai-trigger.service';
 import { QueueModule } from '../queue/queue.module';
 
 @Module({
@@ -54,7 +55,8 @@ import { QueueModule } from '../queue/queue.module';
     AutomationsProcessor,
     AutomationTriggerProcessor,
     InternalDispatchGuard,
+    AutomationAiTriggerService,
   ],
-  exports: [AutomationDispatchService],
+  exports: [AutomationDispatchService, AutomationAiTriggerService],
 })
 export class AutomationsModule {}
