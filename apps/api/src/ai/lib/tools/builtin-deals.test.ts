@@ -59,6 +59,8 @@ interface Fixture {
     status: string;
     created_at: Date;
     assigned_to: string | null;
+    value: number;
+    notes: string | null;
   }>;
 }
 
@@ -254,6 +256,8 @@ function standardFixture(): Fixture {
         status: 'open',
         created_at: new Date('2026-01-05'),
         assigned_to: null,
+        value: 1000,
+        notes: 'Original enquiry',
       },
       {
         id: 'deal-latest',
@@ -264,6 +268,8 @@ function standardFixture(): Fixture {
         status: 'open',
         created_at: new Date('2026-02-05'),
         assigned_to: null,
+        value: 50000,
+        notes: 'Wants it in 1 month',
       },
       {
         id: 'deal-won',
@@ -274,6 +280,8 @@ function standardFixture(): Fixture {
         status: 'won',
         created_at: new Date('2026-02-04'),
         assigned_to: null,
+        value: 999,
+        notes: null,
       },
       {
         id: 'deal-other-tenant',
@@ -284,6 +292,8 @@ function standardFixture(): Fixture {
         status: 'open',
         created_at: new Date('2026-02-06'),
         assigned_to: null,
+        value: 777,
+        notes: null,
       },
     ],
   };
@@ -449,9 +459,10 @@ describe('create_deal', () => {
  * the thread does.
  */
 describe('create_deal duplicate guard', () => {
-  it('refuses a second deal in a conversation that already has one', async () => {
-    const { prisma, created } = fakePrisma(standardFixture());
+  it('creates no second deal when nothing changed', async () => {
+    const { prisma, created, updated } = fakePrisma(standardFixture());
 
+    // Same value the deal already carries, no new notes.
     const result = await createDeal.run(
       { title: 'CRM and HRMS Software', value: 50000 },
       ctxWith(prisma, { conversationId: 'conv-taken' }),
@@ -461,8 +472,53 @@ describe('create_deal duplicate guard', () => {
     // as though it had created one, not retry or apologise.
     expect(result.ok).toBe(true);
     expect(result.detail).toContain('deal-latest');
-    expect(result.detail).toMatch(/already has an open deal/i);
     expect(created).toHaveLength(0);
+    expect(updated).toHaveLength(0);
+  });
+
+  it('UPDATES the value when the customer changes their budget', async () => {
+    const { prisma, created, updated } = fakePrisma(standardFixture());
+
+    // "i have to update my requirement, my budget is 40k" — the deal on
+    // this thread is 50000.
+    const result = await createDeal.run(
+      { title: 'CRM and HRMS Project', value: 40000 },
+      ctxWith(prisma, { conversationId: 'conv-taken' }),
+    );
+
+    // Refusing here is what made the bot answer "Got it, I've noted the
+    // updated budget of 40k" while the CRM still said 50k.
+    expect(result.ok).toBe(true);
+    expect(created).toHaveLength(0);
+    expect(updated).toEqual([{ id: 'deal-latest', data: { value: 40000 } }]);
+    expect(result.detail).toMatch(/40000/);
+  });
+
+  it('appends notes rather than replacing the earlier requirement', async () => {
+    const { prisma, updated } = fakePrisma(standardFixture());
+
+    await createDeal.run(
+      { title: 'CRM build', notes: 'Also needs HRMS' },
+      ctxWith(prisma, { conversationId: 'conv-taken' }),
+    );
+
+    const notes = updated[0].data.notes as string;
+    expect(notes).toContain('Wants it in 1 month'); // the original
+    expect(notes).toContain('Also needs HRMS'); // the update
+  });
+
+  it('never renames the deal, moves its stage, or reassigns it', async () => {
+    const { prisma, updated } = fakePrisma(standardFixture());
+
+    await createDeal.run(
+      { title: 'A completely different wording', value: 40000 },
+      ctxWith(prisma, { conversationId: 'conv-taken' }),
+    );
+
+    // A human reads the title in the pipeline and may have moved the deal
+    // along; restating a budget is not a reason to undo either.
+    const patched = Object.keys(updated[0].data);
+    expect(patched).toEqual(['value']);
   });
 
   it('allows a new deal on a different thread for the same customer', async () => {

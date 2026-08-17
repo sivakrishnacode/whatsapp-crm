@@ -467,9 +467,29 @@ const createDeal: BuiltinTool = {
        * and a wedding order are not duplicates), and a later enquiry
        * arrives on its own thread and still earns its own deal.
        *
-       * Returns the existing deal as a SUCCESS with its id, so the model
-       * carries on as though it had just created one rather than
-       * retrying or apologising to the customer.
+       * ⚠️ AND IT IS AN UPSERT, NOT A REFUSAL.
+       *
+       * "I have to update my requirement, my budget is 40k" is the second
+       * call on a thread, so the guard catches it — but simply declining
+       * made the bot answer "Got it, I've noted the updated budget of
+       * 40k" while the deal still said 50k. Preventing the duplicate by
+       * making the reply untrue is a worse bug than the duplicate: the
+       * customer is told a thing that is not in the CRM, and nobody finds
+       * out until the invoice.
+       *
+       * So a repeat call MOVES the existing deal. What it may touch is
+       * narrow on purpose:
+       *   value — yes, only when a new one is supplied and it differs.
+       *           This is the thing the customer just changed.
+       *   notes — APPENDED, never replaced, so the earlier requirement
+       *           survives next to the update.
+       *   title — never. A human reads it in the pipeline; renaming it
+       *           under them on every message is churn, and the model
+       *           invents a slightly different wording each time (which
+       *           is how this whole mess started).
+       *   stage, assignment — never. A human may have moved it, and the
+       *           customer restating a budget is not a reason to drag a
+       *           deal back to New Lead.
        */
       if (ctx.conversationId) {
         const existing = await ctx.prisma.deals.findFirst({
@@ -479,16 +499,47 @@ const createDeal: BuiltinTool = {
             status: 'open',
           },
           orderBy: { created_at: 'desc' },
-          select: { id: true, title: true },
+          select: { id: true, title: true, value: true, notes: true },
         });
 
         if (existing) {
+          const nextValue = Number.isFinite(value) && value > 0 ? value : null;
+          const valueChanged =
+            nextValue !== null && Number(existing.value) !== nextValue;
+
+          const patch: { value?: number; notes?: string } = {};
+          if (valueChanged) patch.value = nextValue;
+          if (notes && notes !== existing.notes) {
+            patch.notes = [existing.notes, notes]
+              .filter(Boolean)
+              .join('\n\n')
+              .slice(0, 4000);
+          }
+
+          if (Object.keys(patch).length === 0) {
+            return {
+              ok: true,
+              detail:
+                `This conversation already has an open deal: "${existing.title}" ` +
+                `(deal_id: ${existing.id}), and nothing you passed changes it. ` +
+                `Refer to the existing one rather than announcing a new deal.`,
+            };
+          }
+
+          await ctx.prisma.deals.update({
+            where: { id: existing.id },
+            data: patch,
+          });
+
+          const currencyLabel = ctx.currency?.toUpperCase() || 'USD';
           return {
             ok: true,
             detail:
-              `This conversation already has an open deal: "${existing.title}" ` +
-              `(deal_id: ${existing.id}). No second deal was created — ` +
-              `mention the existing one rather than announcing a new one.`,
+              `Updated the existing deal "${existing.title}" (deal_id: ${existing.id})` +
+              (valueChanged
+                ? ` — value ${currencyLabel} ${Number(existing.value)} to ${currencyLabel} ${nextValue}`
+                : ' — requirements added') +
+              `. No second deal was created.`,
           };
         }
       }

@@ -288,6 +288,10 @@ export const AGENT_SKILLS: SkillDefinition[] = [
         'Call `create_deal` once with a title, a value if they named one, and the requirements in `notes` — ' +
         'do not ask follow-up questions first, and do not ask for or invent a pipeline or stage id: ' +
         'the workspace default is chosen for you. ' +
+        'If they later change their budget or requirements in this same conversation, call ' +
+        '`create_deal` again with the new figure — it updates the deal this conversation already ' +
+        'has instead of opening a second one, so never tell someone their change is noted ' +
+        'without making that call. ' +
         'Confirm that the deal was recorded, then carry on the conversation naturally.'
       );
     },
