@@ -729,8 +729,12 @@ export default function InboxPage() {
   // before, unchanged.
   const hasActiveConv = !!activeConversation;
 
+  // Height is the shell's own minus the h-14 header, so it must track the
+  // shell's unit: `dvh`, not `vh`. With `vh` this pane is taller than
+  // <main> by however much the mobile URL bar covers, which makes <main>
+  // scroll and hides the composer under the browser chrome.
   return (
-    <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
+    <div className="-m-4 flex h-[calc(100dvh-3.5rem)] flex-col overflow-hidden sm:-m-6">
       {/* Live-feed banner. Sits above the WhatsApp one because it is
           the more urgent of the two: a disconnected socket means what
           is on screen right now may already be wrong, whereas an

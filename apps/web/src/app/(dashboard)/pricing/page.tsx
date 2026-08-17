@@ -101,8 +101,12 @@ export default function PricingPage() {
   }, [currentPlan, plans]);
 
   if (subscriptionLoading || plansLoading) {
+    // `min-h-full`, not `min-h-screen`: this renders inside the shell's
+    // <main>, which is already a viewport minus the header — asking for a
+    // full viewport here makes <main> scroll and pushes the spinner below
+    // the fold it is meant to be centred in.
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex min-h-full items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );

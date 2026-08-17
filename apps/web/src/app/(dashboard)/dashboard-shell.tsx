@@ -68,7 +68,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   // being redirected.
   if (loading || (user && onboarding === "checking")) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
+      <div className="flex h-dvh items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <p className="text-sm text-muted-foreground">Loading...</p>
@@ -106,21 +106,48 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
     [pathname, searchParams],
   );
 
-  // Lock body scroll and allow Escape to close while the drawer is open on
-  // mobile. No-ops on desktop because the rail isn't positioned there.
+  // Escape closes the drawer on mobile. It used to lock body scroll here
+  // too; the document-level lock below has made that unnecessary, and two
+  // writers of `body.style.overflow` fought over the restore value on
+  // unmount.
   useEffect(() => {
     if (!drawerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpenedAt(null);
     };
     window.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onKey);
-    };
+    return () => window.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
+
+  /**
+   * ⚠️ THE DOCUMENT ITSELF MUST NEVER SCROLL IN THE DASHBOARD.
+   *
+   * Every scroll in here belongs to a pane INSIDE the shell — the rail's
+   * nav, the secondary panel's nav, `<main>`. The shell is exactly one
+   * viewport tall, so a document scrollbar can only ever mean something
+   * overflowed, and the damage is out of proportion to the cause: the
+   * page slides up, taking the header and the top of the rail off-screen,
+   * and the app looks like it has lost its chrome (which is what a
+   * `w-screen` on the shell did — `100vw` counts the vertical scrollbar
+   * gutter, so it overflowed the body by ~15px, the horizontal bar that
+   * appeared stole ~15px of height, and `100vh` then no longer fit).
+   *
+   * `w-full` + `h-dvh` on the shell removes the cause; this removes the
+   * whole failure mode, including for anything that overflows the body
+   * later. Restored on unmount because the auth, marketing and hosted
+   * form pages share this document and do scroll normally.
+   */
+  useEffect(() => {
+    const html = document.documentElement;
+    const prevHtml = html.style.overflow;
+    const prevBody = document.body.style.overflow;
+    html.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = prevHtml;
+      document.body.style.overflow = prevBody;
+    };
+  }, []);
 
   return (
     <TooltipProvider>
@@ -129,7 +156,13 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
             Provider tab. Three separate fetches would disagree the
             moment one of them spent a credit. */}
         <AiCreditsProvider>
-        <div className="flex h-screen w-screen overflow-hidden bg-background">
+        {/* `w-full`, never `w-screen`: 100vw includes the vertical
+            scrollbar gutter, so it is WIDER than the space available and
+            overflows the body — see the note on the scroll lock above.
+            `h-dvh` rather than `h-screen` because 100vh on a phone is the
+            viewport with the URL bar retracted, which pushes the bottom of
+            every pane (the inbox composer especially) under it. */}
+        <div className="flex h-dvh w-full overflow-hidden bg-background">
           {/* Reports this tab's online/away presence once we know a user is
               signed in. Headless — renders nothing. */}
           <PresenceHeartbeat />
