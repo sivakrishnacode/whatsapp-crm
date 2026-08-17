@@ -23,7 +23,7 @@ interface ResponseTimeChartProps {
 // per weekday". Tremor expects categories as the second tuple in
 // the row object, so we shape the buckets into
 // `{ day: 'Mon', 'Avg minutes': 4.2 }` rows below.
-const CATEGORY = 'Avg minutes'
+const CATEGORY = 'Avg response time'
 
 export function ResponseTimeChart({
   data,
@@ -95,7 +95,7 @@ export function ResponseTimeChart({
             // 'violet' maps to Tailwind's `fill-accent-violet` — matches
             // the brand accent the hand-rolled bars used (#7c3aed).
             colors={['violet']}
-            valueFormatter={(value) => `${value.toFixed(1)}m`}
+            valueFormatter={(value) => fmt(value)}
             showLegend={false}
             yAxisWidth={48}
             // Compact height so the chart sits well inside the card
