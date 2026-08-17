@@ -55,6 +55,7 @@ interface Fixture {
     title: string;
     account_id: string;
     contact_id: string | null;
+    conversation_id: string | null;
     status: string;
     created_at: Date;
     assigned_to: string | null;
@@ -138,6 +139,9 @@ function fakePrisma(fx: Fixture) {
         if (where.contact_id !== undefined) {
           rows = rows.filter((d) => d.contact_id === where.contact_id);
         }
+        if (where.conversation_id !== undefined) {
+          rows = rows.filter((d) => d.conversation_id === where.conversation_id);
+        }
         if (where.status !== undefined) {
           rows = rows.filter((d) => d.status === where.status);
         }
@@ -171,12 +175,15 @@ function ctxWith(
   opts: {
     dealConfig?: Record<string, unknown>;
     contactId?: string | null;
+    conversationId?: string | null;
   } = {},
 ): BuiltinToolContext {
   return {
     prisma,
     accountId: ACCOUNT,
     contactId: opts.contactId === undefined ? 'contact-1' : opts.contactId,
+    conversationId:
+      opts.conversationId === undefined ? 'conv-fresh' : opts.conversationId,
     actorUserId: OWNER_USER,
     currency: 'INR',
     skills: {
@@ -243,6 +250,7 @@ function standardFixture(): Fixture {
         title: 'Old enquiry',
         account_id: ACCOUNT,
         contact_id: 'contact-1',
+        conversation_id: 'conv-old',
         status: 'open',
         created_at: new Date('2026-01-05'),
         assigned_to: null,
@@ -252,8 +260,19 @@ function standardFixture(): Fixture {
         title: 'CRM build',
         account_id: ACCOUNT,
         contact_id: 'contact-1',
+        conversation_id: 'conv-taken',
         status: 'open',
         created_at: new Date('2026-02-05'),
+        assigned_to: null,
+      },
+      {
+        id: 'deal-won',
+        title: 'Closed job',
+        account_id: ACCOUNT,
+        contact_id: 'contact-1',
+        conversation_id: 'conv-closed',
+        status: 'won',
+        created_at: new Date('2026-02-04'),
         assigned_to: null,
       },
       {
@@ -261,6 +280,7 @@ function standardFixture(): Fixture {
         title: 'Not ours',
         account_id: 'acc-2',
         contact_id: 'contact-9',
+        conversation_id: 'conv-theirs',
         status: 'open',
         created_at: new Date('2026-02-06'),
         assigned_to: null,
@@ -407,6 +427,98 @@ describe('create_deal', () => {
 
     expect(result.ok).toBe(false);
     expect(created).toHaveLength(0);
+  });
+
+  it('records the conversation it came from', async () => {
+    const { prisma, created } = fakePrisma(standardFixture());
+
+    await createDeal.run(
+      { title: 'CRM build' },
+      ctxWith(prisma, { conversationId: 'conv-fresh' }),
+    );
+
+    // Provenance, and the key the duplicate guard reads next time.
+    expect(created[0]).toMatchObject({ conversation_id: 'conv-fresh' });
+  });
+});
+
+/**
+ * One deal per conversation. Two messages in one thread produced "CRM and
+ * HRMS Tool Project" and "CRM and HRMS Software" for the same customer at
+ * the same value — neither title nor value marks them as duplicates, only
+ * the thread does.
+ */
+describe('create_deal duplicate guard', () => {
+  it('refuses a second deal in a conversation that already has one', async () => {
+    const { prisma, created } = fakePrisma(standardFixture());
+
+    const result = await createDeal.run(
+      { title: 'CRM and HRMS Software', value: 50000 },
+      ctxWith(prisma, { conversationId: 'conv-taken' }),
+    );
+
+    // Reported as SUCCESS with the existing id: the model should carry on
+    // as though it had created one, not retry or apologise.
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('deal-latest');
+    expect(result.detail).toMatch(/already has an open deal/i);
+    expect(created).toHaveLength(0);
+  });
+
+  it('allows a new deal on a different thread for the same customer', async () => {
+    const { prisma, created } = fakePrisma(standardFixture());
+
+    // contact-1 already has open deals on conv-old and conv-taken. A
+    // website enquiry and a wedding order are not duplicates.
+    const result = await createDeal.run(
+      { title: 'Website revamp', value: 25000 },
+      ctxWith(prisma, { contactId: 'contact-1', conversationId: 'conv-brand-new' }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ conversation_id: 'conv-brand-new' });
+  });
+
+  it('allows a new deal once the thread\'s earlier deal is closed', async () => {
+    const { prisma, created } = fakePrisma(standardFixture());
+
+    // conv-closed's deal is 'won', so the thread is free to earn another.
+    const result = await createDeal.run(
+      { title: 'Follow-up job' },
+      ctxWith(prisma, { conversationId: 'conv-closed' }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(created).toHaveLength(1);
+  });
+
+  it('never dedupes against another account\'s conversation', async () => {
+    const { prisma, created } = fakePrisma(standardFixture());
+
+    // conv-theirs has an open deal, but on acc-2.
+    const result = await createDeal.run(
+      { title: 'CRM build' },
+      ctxWith(prisma, { conversationId: 'conv-theirs' }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(created).toHaveLength(1);
+  });
+
+  it('creates without a guard in the playground, where there is no thread', async () => {
+    const { prisma, created } = fakePrisma(standardFixture());
+
+    const result = await createDeal.run(
+      { title: 'Test deal' },
+      ctxWith(prisma, { contactId: null, conversationId: null }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(created[0]).toMatchObject({
+      conversation_id: null,
+      contact_id: null,
+    });
   });
 });
 

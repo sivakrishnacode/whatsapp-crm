@@ -29,6 +29,8 @@ export interface BuiltinToolContext {
   accountId: string;
   /** The customer in this conversation. Absent in the playground. */
   contactId: string | null;
+  /** The thread this run belongs to. Absent in the playground. */
+  conversationId: string | null;
   /** Who to attribute writes to (notes need a user id). */
   actorUserId: string | null;
   currency: string | null;
@@ -451,6 +453,46 @@ const createDeal: BuiltinTool = {
     const wantedStageId = skillText(cfg, 'deal_stage_id');
 
     try {
+      /**
+       * ⚠️ ONE DEAL PER CONVERSATION.
+       *
+       * Nothing stops a model calling a tool twice, and it does: two
+       * messages in one thread produced "CRM and HRMS Tool Project" and
+       * "CRM and HRMS Software" for the same customer, same value,
+       * minutes apart. Neither is wrong on its own, so no title or value
+       * check catches it — the thread is what makes them the same deal.
+       *
+       * Scoped to the CONVERSATION and not the contact deliberately: a
+       * customer legitimately has several open deals at once (a website
+       * and a wedding order are not duplicates), and a later enquiry
+       * arrives on its own thread and still earns its own deal.
+       *
+       * Returns the existing deal as a SUCCESS with its id, so the model
+       * carries on as though it had just created one rather than
+       * retrying or apologising to the customer.
+       */
+      if (ctx.conversationId) {
+        const existing = await ctx.prisma.deals.findFirst({
+          where: {
+            account_id: ctx.accountId,
+            conversation_id: ctx.conversationId,
+            status: 'open',
+          },
+          orderBy: { created_at: 'desc' },
+          select: { id: true, title: true },
+        });
+
+        if (existing) {
+          return {
+            ok: true,
+            detail:
+              `This conversation already has an open deal: "${existing.title}" ` +
+              `(deal_id: ${existing.id}). No second deal was created — ` +
+              `mention the existing one rather than announcing a new one.`,
+          };
+        }
+      }
+
       const pipeline = wantedPipelineId
         ? await ctx.prisma.pipelines.findFirst({
             where: { id: wantedPipelineId, account_id: ctx.accountId },
@@ -539,6 +581,8 @@ const createDeal: BuiltinTool = {
           user_id: owner.ownerUserId,
           assigned_to: ownerProfile?.id ?? null,
           contact_id: ctx.contactId,
+          // Provenance, and the key the guard above reads next time.
+          conversation_id: ctx.conversationId,
           title: title.slice(0, 255),
           value: dealValue,
           currency,

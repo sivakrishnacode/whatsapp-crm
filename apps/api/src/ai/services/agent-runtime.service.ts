@@ -28,6 +28,14 @@ export interface RuntimeContext {
   accountId: string;
   /** The customer in the conversation; null in the playground. */
   contactId: string | null;
+  /**
+   * The thread this run belongs to; null in the playground.
+   *
+   * A tool needs it to record WHERE a write came from, and to recognise
+   * its own earlier write — `create_deal` uses it for both, which is what
+   * stops one conversation producing two deals for the same customer.
+   */
+  conversationId: string | null;
   /** Who writes are attributed to (contact notes need a user). */
   actorUserId: string | null;
   mode: 'draft' | 'auto_reply';
@@ -149,6 +157,7 @@ export class AgentRuntimeService {
       prisma: this.prisma,
       accountId: ctx.accountId,
       contactId: ctx.contactId,
+      conversationId: ctx.conversationId,
       actorUserId: ctx.actorUserId,
       currency: config.profile.storeCurrency,
       // Resolved, not raw: a tool reading a default an admin set must see

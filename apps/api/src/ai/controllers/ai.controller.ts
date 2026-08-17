@@ -515,6 +515,7 @@ export class AiController {
       ctx: {
         accountId: account.accountId,
         contactId: conversation.contact_id,
+        conversationId,
         actorUserId: account.userId,
         mode: 'draft',
       },
@@ -673,6 +674,9 @@ export class AiController {
       ctx: {
         accountId: account.accountId,
         contactId: null,
+        // The playground has no thread, so nothing it writes can be
+        // deduplicated against a conversation — see `create_deal`.
+        conversationId: null,
         actorUserId: account.userId,
         mode: body?.mode === 'draft' ? 'draft' : 'auto_reply',
       },

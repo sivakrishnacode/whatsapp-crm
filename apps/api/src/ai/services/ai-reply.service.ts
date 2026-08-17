@@ -363,6 +363,7 @@ export class AiReplyService {
         ctx: {
           accountId,
           contactId,
+          conversationId,
           actorUserId: configOwnerUserId,
           mode: 'auto_reply',
         },
