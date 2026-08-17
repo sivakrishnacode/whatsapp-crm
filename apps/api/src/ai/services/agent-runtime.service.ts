@@ -4,7 +4,7 @@ import { decrypt } from '../../common/security/encryption.util';
 import { buildSystemPrompt } from '../lib/defaults';
 import { retrieveKnowledge } from '../lib/knowledge';
 import { latestUserMessage } from '../lib/query';
-import { enabledSkillTools } from '../lib/skills';
+import { enabledSkillTools, resolveSkills } from '../lib/skills';
 import {
   actionToolDefinition,
   parseActionParameters,
@@ -151,6 +151,9 @@ export class AgentRuntimeService {
       contactId: ctx.contactId,
       actorUserId: ctx.actorUserId,
       currency: config.profile.storeCurrency,
+      // Resolved, not raw: a tool reading a default an admin set must see
+      // the same config the skill's own prompt was built from.
+      skills: resolveSkills(config.skills),
     };
 
     const actionByName = new Map<string, AgentAction>();

@@ -1,5 +1,6 @@
 import { PrismaService } from '../../../prisma/prisma.service';
-import type { ToolDefinition } from '../types';
+import type { AgentSkills, ToolDefinition } from '../types';
+import { skillText } from '../skills';
 
 /**
  * ============================================================
@@ -31,6 +32,28 @@ export interface BuiltinToolContext {
   /** Who to attribute writes to (notes need a user id). */
   actorUserId: string | null;
   currency: string | null;
+  /**
+   * The agent's resolved per-skill config.
+   *
+   * A tool needs this whenever the right value is something an ADMIN
+   * chose rather than something the model can know — a default pipeline,
+   * say. Without it those fields are collected by the studio UI and read
+   * by nothing, which is how `deal_pipeline_id` sat unused while
+   * `create_deal` demanded the same id from a model that had no way to
+   * find one.
+   */
+  skills: AgentSkills;
+}
+
+/** One skill's saved config, defensively — it comes from JSONB. */
+function skillConfig(
+  ctx: BuiltinToolContext,
+  skillId: string,
+): Record<string, unknown> {
+  const entry = ctx.skills?.[skillId];
+  return entry && typeof entry.config === 'object' && entry.config !== null
+    ? (entry.config as Record<string, unknown>)
+    : {};
 }
 
 export interface BuiltinTool {
@@ -376,7 +399,9 @@ const createDeal: BuiltinTool = {
   definition: {
     name: 'create_deal',
     description:
-      'Create a new deal in a sales pipeline based on conversation context. Extracts opportunity details from the conversation and records them in the CRM.',
+      'Create a new deal in the sales pipeline from what the customer said. ' +
+      'Only a title is required — the pipeline and stage are chosen automatically, ' +
+      'so never ask the customer for them and never invent an id.',
     parameters: {
       type: 'object',
       properties: {
@@ -388,21 +413,13 @@ const createDeal: BuiltinTool = {
           type: 'number',
           description: 'Optional estimated deal value or budget amount.',
         },
-        pipeline_id: {
-          type: 'string',
-          description: 'ID of the pipeline to create the deal in.',
-        },
-        stage_id: {
-          type: 'string',
-          description: 'ID of the initial stage for the deal.',
-        },
         notes: {
           type: 'string',
           description:
             'Optional summary of the opportunity, customer requirements, or timeline.',
         },
       },
-      required: ['title', 'pipeline_id', 'stage_id'],
+      required: ['title'],
     },
   },
   async run(args, ctx) {
@@ -411,35 +428,76 @@ const createDeal: BuiltinTool = {
       return { ok: false, detail: 'Deal title is required.' };
     }
 
-    const pipelineId = str(args, 'pipeline_id');
-    const stageId = str(args, 'stage_id');
     const notes = str(args, 'notes');
     const value = Number(args.value);
 
-    if (!pipelineId || !stageId) {
-      return { ok: false, detail: 'Pipeline and stage IDs are required.' };
-    }
+    /**
+     * ⚠️ WHERE THE DEAL GOES IS RESOLVED HERE, NOT ASKED OF THE MODEL.
+     *
+     * This shipped with `pipeline_id` and `stage_id` as REQUIRED tool
+     * parameters, and the model has no way to know either: nothing lists
+     * pipelines, the skill prompt never mentions ids, and asking the
+     * customer for a UUID is absurd. So every call either omitted them
+     * and failed validation or invented one and failed the lookup —
+     * the skill could not create a deal at all, and the failure was
+     * invisible because a tool result only goes back to the model.
+     *
+     * The order is: what an admin configured, then the workspace's own
+     * first pipeline. Both ids are still validated against the account,
+     * because a configured id is data too.
+     */
+    const cfg = skillConfig(ctx, 'create_deal');
+    const wantedPipelineId = skillText(cfg, 'deal_pipeline_id');
+    const wantedStageId = skillText(cfg, 'deal_stage_id');
 
-    // Verify pipeline and stage exist and belong to this account
     try {
-      const [pipeline, stage] = await Promise.all([
-        ctx.prisma.pipelines.findFirst({
-          where: { id: pipelineId, account_id: ctx.accountId },
-          select: { id: true, name: true },
-        }),
-        ctx.prisma.pipeline_stages.findFirst({
-          where: { id: stageId },
-          select: { id: true, pipeline_id: true },
-        }),
-      ]);
+      const pipeline = wantedPipelineId
+        ? await ctx.prisma.pipelines.findFirst({
+            where: { id: wantedPipelineId, account_id: ctx.accountId },
+            select: { id: true, name: true },
+          })
+        : await ctx.prisma.pipelines.findFirst({
+            where: { account_id: ctx.accountId },
+            orderBy: { created_at: 'asc' },
+            select: { id: true, name: true },
+          });
 
       if (!pipeline) {
-        return { ok: false, detail: 'Pipeline not found or does not belong to this account.' };
+        return {
+          ok: false,
+          detail: wantedPipelineId
+            ? 'The configured default pipeline no longer exists in this workspace.'
+            : 'This workspace has no pipeline yet, so there is nowhere to file a deal.',
+        };
       }
 
-      if (!stage || stage.pipeline_id !== pipelineId) {
-        return { ok: false, detail: 'Stage not found or does not belong to this pipeline.' };
+      // Scoped through `pipeline_id`, which is what keeps a stage from
+      // another pipeline (or another tenant) out. A configured stage that
+      // does not belong to the resolved pipeline falls back to the first
+      // one rather than failing: stale config should not cost a deal that
+      // the conversation has already earned.
+      const stage =
+        (wantedStageId
+          ? await ctx.prisma.pipeline_stages.findFirst({
+              where: { id: wantedStageId, pipeline_id: pipeline.id },
+              select: { id: true, name: true },
+            })
+          : null) ??
+        (await ctx.prisma.pipeline_stages.findFirst({
+          where: { pipeline_id: pipeline.id },
+          orderBy: { position: 'asc' },
+          select: { id: true, name: true },
+        }));
+
+      if (!stage) {
+        return {
+          ok: false,
+          detail: `Pipeline "${pipeline.name}" has no stages, so there is nowhere to place the deal.`,
+        };
       }
+
+      const pipelineId = pipeline.id;
+      const stageId = stage.id;
 
       // Get the account owner to assign the deal to
       const owner = await ctx.prisma.account.findUnique({
@@ -474,7 +532,7 @@ const createDeal: BuiltinTool = {
 
       return {
         ok: true,
-        detail: `Deal "${deal.title}" created in pipeline "${pipeline.name}" (value: ${currency} ${deal.value})`,
+        detail: `Deal "${deal.title}" created in pipeline "${pipeline.name}" at stage "${stage.name}" (value: ${currency} ${deal.value})`,
       };
     } catch (error) {
       return {

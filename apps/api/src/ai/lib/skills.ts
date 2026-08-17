@@ -285,7 +285,9 @@ export const AGENT_SKILLS: SkillDefinition[] = [
         'Deal creation: when a customer discusses a potential opportunity or project that fits your business, ' +
         `consider creating a deal if you are at least ${threshold} confident they are serious. ` +
         'Extract: the deal name from what they said, their likely budget or deal size, and any timeline they mentioned. ' +
-        'Call `create_deal` once with a title, value (if mentioned), and any contact details — do not ask follow-up questions first. ' +
+        'Call `create_deal` once with a title, a value if they named one, and the requirements in `notes` — ' +
+        'do not ask follow-up questions first, and do not ask for or invent a pipeline or stage id: ' +
+        'the workspace default is chosen for you. ' +
         'Confirm that the deal was recorded, then carry on the conversation naturally.'
       );
     },
