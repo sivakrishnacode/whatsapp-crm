@@ -121,10 +121,11 @@ export function evaluateConditionPredicate(args: {
 }
 
 /**
- * Tiny `{{vars.foo}}` interpolation. Used by send_message + collect_input
- * prompt text so a captured `name` can show up in the next prompt
- * ("Thanks {{vars.name}}, what's your email?"). Missing vars render as
- * empty string — the same behavior as the automations engine.
+ * Tiny `{{vars.foo}}` interpolation. DEPRECATED — use the automation engine's
+ * `interpolate()` instead, which supports contact, message, conversation, etc.
+ *
+ * @deprecated Use `interpolate()` from automation-interpolation.util instead.
+ * Kept for backward compatibility in test utilities only.
  */
 export function interpolateVars(
   template: string,

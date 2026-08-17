@@ -11,10 +11,11 @@ import { SegmentMembershipService } from '../../common/segments/segment-membersh
 import { decideFallback, resolveFallbackPolicy } from '../flow-fallback.util';
 import {
   evaluateConditionPredicate,
-  interpolateVars,
   matchReplyId,
   matchesKeywordTrigger,
 } from './flow-engine-helpers.util';
+import { interpolate } from '../../automations/services/automation-interpolation.util';
+import type { AutomationContext } from '../../automations/automation.types';
 import type {
   AiHandoffNodeConfig,
   AskLocationNodeConfig,
@@ -215,6 +216,52 @@ export class FlowDispatchService {
       this.logger.error(`loadAllNodes error: ${(err as Error).message}`);
     }
     return map;
+  }
+
+  /**
+   * Build an AutomationContext from a flow run so that interpolation
+   * can handle {{contact.name}}, {{message.text}}, etc. — not just {{vars.x}}.
+   *
+   * Contact fields are fetched on demand rather than on every run, since
+   * most flow nodes don't reference them.
+   */
+  private async buildFlowContext(
+    run: FlowRun,
+    vars: Record<string, unknown>,
+  ): Promise<AutomationContext> {
+    const context: AutomationContext = {
+      vars,
+      conversation_id: run.conversationId ?? undefined,
+    };
+
+    // Fetch contact fields if this run has a contact
+    if (run.contactId) {
+      try {
+        const contact = await this.prisma.contacts.findUnique({
+          where: { id: run.contactId },
+          select: {
+            name: true,
+            phone: true,
+            email: true,
+            company: true,
+          },
+        });
+        if (contact) {
+          context.contact = {
+            name: contact.name ?? null,
+            phone: contact.phone ?? null,
+            email: contact.email ?? null,
+            company: contact.company ?? null,
+          };
+        }
+      } catch (err) {
+        this.logger.warn(
+          `buildFlowContext: could not fetch contact ${run.contactId}`,
+        );
+      }
+    }
+
+    return context;
   }
 
   private async logEvent(
@@ -507,17 +554,21 @@ export class FlowDispatchService {
     node: FlowNode,
     cfg: HttpRequestNodeConfig,
     vars: Record<string, unknown>,
+    context?: AutomationContext,
   ): Promise<{ failed: boolean; vars: Record<string, unknown> }> {
+    // Build context if not provided (for backward compat with callers outside the main loop)
+    const flowContext = context ?? (await this.buildFlowContext(run, vars));
+
     const method = (cfg.method ?? 'GET').toUpperCase();
-    const url = interpolateVars(cfg.url ?? '', vars);
+    const url = interpolate(cfg.url ?? '', flowContext);
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(cfg.headers ?? {})) {
-      if (k?.trim()) headers[k] = interpolateVars(String(v ?? ''), vars);
+      if (k?.trim()) headers[k] = interpolate(String(v ?? ''), flowContext);
     }
     const body =
       method === 'GET' || !cfg.body
         ? undefined
-        : interpolateVars(cfg.body, vars);
+        : interpolate(cfg.body, flowContext);
     if (body && !headers['Content-Type'] && !headers['content-type']) {
       headers['Content-Type'] = 'application/json';
     }
@@ -788,6 +839,10 @@ export class FlowDispatchService {
     nodes: Map<string, FlowNode>,
     vars: Record<string, unknown>,
   ): Promise<{ outcome: 'advanced' | 'completed' | 'handed_off' }> {
+    // Build flow context once for all interpolation in this run.
+    // This includes contact fields so {{contact.name}} works, not just {{vars.x}}.
+    const flowContext = await this.buildFlowContext(run, vars);
+
     let currentKey: string | null = startNodeKey;
     // Defensive cap — if a flow has a cycle (which the validator
     // SHOULD catch but doesn't yet in v1), we bail rather than loop.
@@ -823,7 +878,7 @@ export class FlowDispatchService {
               accountId: run.accountId,
               conversationId: run.conversationId!,
               contactId: run.contactId!,
-              text: interpolateVars(cfg.text, vars),
+              text: interpolate(cfg.text, flowContext),
             });
           await this.logEvent(run.id, 'message_sent', node.nodeKey, {
             node_type: 'send_message',
@@ -851,7 +906,7 @@ export class FlowDispatchService {
               kind: cfg.media_type,
               link: cfg.media_url,
               caption: cfg.caption
-                ? interpolateVars(cfg.caption, vars)
+                ? interpolate(cfg.caption, flowContext)
                 : undefined,
               filename: cfg.filename,
             });
@@ -881,7 +936,7 @@ export class FlowDispatchService {
               accountId: run.accountId,
               conversationId: run.conversationId!,
               contactId: run.contactId!,
-              text: interpolateVars(cfg.prompt_text, vars),
+              text: interpolate(cfg.prompt_text, flowContext),
             });
           await this.logEvent(run.id, 'message_sent', node.nodeKey, {
             node_type: 'collect_input',
@@ -1041,7 +1096,7 @@ export class FlowDispatchService {
             templateName: cfg.template_name,
             language: cfg.language,
             params: (cfg.body_params ?? []).map((p) =>
-              interpolateVars(p, vars),
+              interpolate(p, flowContext),
             ),
           });
         } catch (err) {
@@ -1067,7 +1122,7 @@ export class FlowDispatchService {
             productRetailerIds: cfg.product_retailer_ids ?? [],
             headerText: cfg.header_text,
             bodyText: cfg.body_text
-              ? interpolateVars(cfg.body_text, vars)
+              ? interpolate(cfg.body_text, flowContext)
               : undefined,
             footerText: cfg.footer_text,
           });
@@ -1089,7 +1144,7 @@ export class FlowDispatchService {
         const cfg = node.config as unknown as
           AskLocationNodeConfig | AskMediaNodeConfig;
         try {
-          const prompt = interpolateVars(cfg.prompt_text, vars);
+          const prompt = interpolate(cfg.prompt_text, flowContext);
           if (node.nodeType === 'ask_location') {
             await this.metaSend.sendLocationRequest({
               accountId: run.accountId,
@@ -1165,7 +1220,7 @@ export class FlowDispatchService {
       }
       if (node.nodeType === 'set_attribute') {
         const cfg = node.config as unknown as SetAttributeNodeConfig;
-        const value = interpolateVars(cfg.value ?? '', vars);
+        const value = interpolate(cfg.value ?? '', flowContext);
         try {
           if (cfg.target === 'var') {
             const nextVars = { ...vars, [cfg.key]: value };
@@ -1192,7 +1247,7 @@ export class FlowDispatchService {
       }
       if (node.nodeType === 'http_request') {
         const cfg = node.config as unknown as HttpRequestNodeConfig;
-        const outcome = await this.executeHttpRequest(run, node, cfg, vars);
+        const outcome = await this.executeHttpRequest(run, node, cfg, vars, flowContext);
         if (outcome.failed) {
           await this.endRun(run.id, 'failed', 'http_request_failed');
           return { outcome: 'completed' };
@@ -1281,6 +1336,7 @@ export class FlowDispatchService {
     // re-SELECT of the whole row.
     let vars = (run.vars ?? {}) as Record<string, unknown>;
     let repromptCount = run.repromptCount;
+    const flowContext = await this.buildFlowContext(run, vars);
 
     // Note: we intentionally do NOT persist the raw customer text. A
     // `collect_input` prompt that asks "what's your card number?" would
@@ -1491,7 +1547,7 @@ export class FlowDispatchService {
             accountId: run.accountId,
             conversationId: run.conversationId!,
             contactId: run.contactId!,
-            bodyText: interpolateVars(cfg.prompt_text, vars),
+            bodyText: interpolate(cfg.prompt_text, flowContext),
           });
         } catch (err) {
           await this.logEvent(run.id, 'error', currentNode.nodeKey, {
@@ -1511,7 +1567,7 @@ export class FlowDispatchService {
             accountId: run.accountId,
             conversationId: run.conversationId!,
             contactId: run.contactId!,
-            text: interpolateVars(cfg.prompt_text, vars),
+            text: interpolate(cfg.prompt_text, flowContext),
           });
         } catch (err) {
           await this.logEvent(run.id, 'error', currentNode.nodeKey, {
