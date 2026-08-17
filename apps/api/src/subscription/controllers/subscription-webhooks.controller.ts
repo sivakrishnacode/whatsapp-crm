@@ -112,11 +112,38 @@ export class SubscriptionWebhooksController {
             return res.status(HttpStatus.OK).json({ received: true });
           }
 
-          // Calculate period dates
-          const trialStart = plan.trial_days ? new Date() : null;
-          const trialEnd = plan.trial_days
-            ? new Date(Date.now() + plan.trial_days * 24 * 60 * 60 * 1000)
+          // ONE TRIAL PER WORKSPACE, EVER (migration 074). Check if trial was
+          // already granted before giving out another one on plan change.
+          const [existing, profile] = await Promise.all([
+            this.prisma.user_subscriptions.findUnique({
+              where: { user_id: userId },
+              select: { trial_start_at: true, trial_end_at: true },
+            }),
+            this.prisma.profile.findUnique({
+              where: { userId },
+              select: { accountId: true },
+            }),
+          ]);
+
+          const onboarding = profile
+            ? await this.prisma.account_onboarding.findUnique({
+                where: { account_id: profile.accountId },
+                select: { trial_granted_at: true },
+              })
             : null;
+
+          const trialAlreadyUsed =
+            onboarding?.trial_granted_at != null ||
+            existing?.trial_start_at != null;
+          const grantTrial = (plan.trial_days ?? 0) > 0 && !trialAlreadyUsed;
+
+          // Calculate period dates: grant new trial only if not already used
+          const trialStart = grantTrial ? new Date() : null;
+          const trialEnd = grantTrial
+            ? new Date(
+                Date.now() + (plan.trial_days ?? 0) * 24 * 60 * 60 * 1000,
+              )
+            : (existing?.trial_end_at ?? null);
 
           const now = new Date();
           const periodStart = trialEnd || now;
@@ -125,13 +152,22 @@ export class SubscriptionWebhooksController {
             periodEnd.getMonth() + (billingCycle === 'yearly' ? 12 : 1),
           );
 
+          // Status depends on trial window: if trial was already used, check if
+          // the carried-forward window is still running.
+          const status =
+            grantTrial || (trialEnd && trialEnd.getTime() > now.getTime())
+              ? 'trial'
+              : trialAlreadyUsed
+                ? 'expired'
+                : 'active';
+
           // Update or create user subscription
           await this.prisma.user_subscriptions.upsert({
             where: { user_id: userId },
             create: {
               user_id: userId,
               plan_id: plan.id,
-              status: trialEnd ? 'trial' : 'active',
+              status,
               billing_cycle: billingCycle,
               trial_start_at: trialStart,
               trial_end_at: trialEnd,
@@ -143,10 +179,14 @@ export class SubscriptionWebhooksController {
             },
             update: {
               plan_id: plan.id,
-              status: trialEnd ? 'trial' : 'active',
+              status,
               billing_cycle: billingCycle,
-              trial_start_at: trialStart,
-              trial_end_at: trialEnd,
+              ...(grantTrial
+                ? {
+                    trial_start_at: trialStart,
+                    trial_end_at: trialEnd,
+                  }
+                : {}),
               current_period_start: periodStart,
               current_period_end: periodEnd,
               cancel_at_period_end: false,
@@ -154,6 +194,17 @@ export class SubscriptionWebhooksController {
               payment_method: 'razorpay',
             },
           });
+
+          if (grantTrial && profile && !onboarding?.trial_granted_at) {
+            await this.prisma.account_onboarding.upsert({
+              where: { account_id: profile.accountId },
+              create: {
+                account_id: profile.accountId,
+                trial_granted_at: new Date(),
+              },
+              update: { trial_granted_at: new Date() },
+            });
+          }
 
           this.logger.log(`Razorpay subscription updated for user: ${userId}`);
           break;
@@ -184,10 +235,45 @@ export class SubscriptionWebhooksController {
             return res.status(HttpStatus.OK).json({ received: true });
           }
 
-          const trialStart = plan.trial_days ? new Date() : null;
-          const trialEnd = plan.trial_days
-            ? new Date(Date.now() + plan.trial_days * 24 * 60 * 60 * 1000)
+          // ONE TRIAL PER WORKSPACE, EVER (migration 074). Check if trial was
+          // already granted before giving out another one on plan change.
+          const [existing, profile] = await Promise.all([
+            this.prisma.user_subscriptions.findUnique({
+              where: { user_id: userId },
+              select: { trial_start_at: true, trial_end_at: true },
+            }),
+            this.prisma.profile.findUnique({
+              where: { userId },
+              select: { accountId: true },
+            }),
+          ]);
+
+          const onboarding = profile
+            ? await this.prisma.account_onboarding.findUnique({
+                where: { account_id: profile.accountId },
+                select: { trial_granted_at: true },
+              })
             : null;
+
+          const trialAlreadyUsed =
+            onboarding?.trial_granted_at != null ||
+            existing?.trial_start_at != null;
+          const grantTrial = (plan.trial_days ?? 0) > 0 && !trialAlreadyUsed;
+
+          const trialStart = grantTrial ? new Date() : null;
+          const trialEnd = grantTrial
+            ? new Date(
+                Date.now() + (plan.trial_days ?? 0) * 24 * 60 * 60 * 1000,
+              )
+            : (existing?.trial_end_at ?? null);
+
+          const now = new Date();
+          const status =
+            grantTrial || (trialEnd && trialEnd.getTime() > now.getTime())
+              ? 'trial'
+              : trialAlreadyUsed
+                ? 'expired'
+                : 'active';
 
           // Update or create user subscription
           await this.prisma.user_subscriptions.upsert({
@@ -195,7 +281,7 @@ export class SubscriptionWebhooksController {
             create: {
               user_id: userId,
               plan_id: plan.id,
-              status: trialEnd ? 'trial' : 'active',
+              status,
               billing_cycle: billingCycle,
               trial_start_at: trialStart,
               trial_end_at: trialEnd,
@@ -207,10 +293,14 @@ export class SubscriptionWebhooksController {
             },
             update: {
               plan_id: plan.id,
-              status: trialEnd ? 'trial' : 'active',
+              status,
               billing_cycle: billingCycle,
-              trial_start_at: trialStart,
-              trial_end_at: trialEnd,
+              ...(grantTrial
+                ? {
+                    trial_start_at: trialStart,
+                    trial_end_at: trialEnd,
+                  }
+                : {}),
               current_period_start: new Date(subscription.current_start * 1000),
               current_period_end: new Date(subscription.current_end * 1000),
               cancel_at_period_end: false,
@@ -218,6 +308,17 @@ export class SubscriptionWebhooksController {
               payment_method: 'razorpay',
             },
           });
+
+          if (grantTrial && profile && !onboarding?.trial_granted_at) {
+            await this.prisma.account_onboarding.upsert({
+              where: { account_id: profile.accountId },
+              create: {
+                account_id: profile.accountId,
+                trial_granted_at: new Date(),
+              },
+              update: { trial_granted_at: new Date() },
+            });
+          }
 
           this.logger.log(
             `Razorpay subscription activated for user: ${userId}`,
@@ -383,10 +484,45 @@ export class SubscriptionWebhooksController {
             session.subscription as string,
           );
 
-          const trialStart = plan.trial_days ? new Date() : null;
-          const trialEnd = plan.trial_days
-            ? new Date(Date.now() + plan.trial_days * 24 * 60 * 60 * 1000)
+          // ONE TRIAL PER WORKSPACE, EVER (migration 074). Check if trial was
+          // already granted before giving out another one on plan change.
+          const [existing, profile] = await Promise.all([
+            this.prisma.user_subscriptions.findUnique({
+              where: { user_id: userId },
+              select: { trial_start_at: true, trial_end_at: true },
+            }),
+            this.prisma.profile.findUnique({
+              where: { userId },
+              select: { accountId: true },
+            }),
+          ]);
+
+          const onboarding = profile
+            ? await this.prisma.account_onboarding.findUnique({
+                where: { account_id: profile.accountId },
+                select: { trial_granted_at: true },
+              })
             : null;
+
+          const trialAlreadyUsed =
+            onboarding?.trial_granted_at != null ||
+            existing?.trial_start_at != null;
+          const grantTrial = (plan.trial_days ?? 0) > 0 && !trialAlreadyUsed;
+
+          const trialStart = grantTrial ? new Date() : null;
+          const trialEnd = grantTrial
+            ? new Date(
+                Date.now() + (plan.trial_days ?? 0) * 24 * 60 * 60 * 1000,
+              )
+            : (existing?.trial_end_at ?? null);
+
+          const now = new Date();
+          const status =
+            grantTrial || (trialEnd && trialEnd.getTime() > now.getTime())
+              ? 'trial'
+              : trialAlreadyUsed
+                ? 'expired'
+                : 'active';
 
           // Update or create user subscription
           await this.prisma.user_subscriptions.upsert({
@@ -394,7 +530,7 @@ export class SubscriptionWebhooksController {
             create: {
               user_id: userId,
               plan_id: plan.id,
-              status: trialEnd ? 'trial' : 'active',
+              status,
               billing_cycle: billingCycle as any,
               trial_start_at: trialStart,
               trial_end_at: trialEnd,
@@ -410,10 +546,14 @@ export class SubscriptionWebhooksController {
             },
             update: {
               plan_id: plan.id,
-              status: trialEnd ? 'trial' : 'active',
+              status,
               billing_cycle: billingCycle as any,
-              trial_start_at: trialStart,
-              trial_end_at: trialEnd,
+              ...(grantTrial
+                ? {
+                    trial_start_at: trialStart,
+                    trial_end_at: trialEnd,
+                  }
+                : {}),
               current_period_start: new Date(
                 subscription.current_period_start * 1000,
               ),
@@ -425,6 +565,17 @@ export class SubscriptionWebhooksController {
               payment_method: 'stripe',
             },
           });
+
+          if (grantTrial && profile && !onboarding?.trial_granted_at) {
+            await this.prisma.account_onboarding.upsert({
+              where: { account_id: profile.accountId },
+              create: {
+                account_id: profile.accountId,
+                trial_granted_at: new Date(),
+              },
+              update: { trial_granted_at: new Date() },
+            });
+          }
 
           this.logger.log(
             `Stripe subscription checkout completed for user: ${userId}`,
