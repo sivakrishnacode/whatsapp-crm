@@ -299,6 +299,15 @@ export interface Conversation {
    * conversation half an hour later is the same surprise, just delayed.
    */
   ai_autoreply_disabled?: boolean;
+  /**
+   * Which AI agent owns this thread (migration 084).
+   *
+   * Set on the first AI reply and then STICKY — the resolver consults it
+   * before channel and priority, so a thread never changes personality
+   * mid-conversation. Writing it by hand from the inbox's Owner control is
+   * therefore how you hand a conversation to a specific agent.
+   */
+  ai_agent_id?: string | null;
   created_at: string;
   updated_at: string;
   contact?: Contact;

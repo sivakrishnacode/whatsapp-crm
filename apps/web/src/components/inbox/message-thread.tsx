@@ -82,6 +82,12 @@ function renderTemplateBody(body: string, params: string[]): string {
   });
 }
 
+/** Just enough of an agent to offer it as an owner. */
+interface OwnerAgent {
+  id: string;
+  name: string;
+}
+
 interface MessageThreadProps {
   conversation: Conversation | null;
   contact: Contact | null;
@@ -96,6 +102,13 @@ interface MessageThreadProps {
   ) => void;
   /** Reflect an AI-pause toggle back into the page's conversation state. */
   onAiAutoReplyChange: (conversationId: string, disabled: boolean) => void;
+  /**
+   * Reflect an owner change to an AI agent back into the page's state.
+   * Optional so existing callers keep compiling; without it the header
+   * still writes the latch, it just won't re-render the new owner until
+   * the next fetch.
+   */
+  onAiAgentChange?: (conversationId: string, aiAgentId: string | null) => void;
   /**
    * On mobile, the thread is shown full-screen with the conversation list
    * hidden. This callback lets the page deselect the active conversation
@@ -189,6 +202,7 @@ export function MessageThread({
   onStatusChange,
   onAssignChange,
   onAiAutoReplyChange,
+  onAiAgentChange,
   onBack,
   resyncToken = 0,
   onRefresh,
@@ -212,6 +226,13 @@ export function MessageThread({
   const oldestMessageAtRef = useRef<string | null>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  /**
+   * The workspace's AI agents, so the Owner dropdown can hand a thread to
+   * one. Only ACTIVE agents are offered: assigning a paused agent would
+   * set a latch the resolver then refuses (it filters on `is_active`),
+   * leaving a thread owned by something that will never answer.
+   */
+  const [aiAgents, setAiAgents] = useState<OwnerAgent[]>([]);
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   // Purely visual spin state for the manual-refresh button. The actual
   // refetch is fire-and-forget through `onRefresh` (which bumps the
@@ -254,6 +275,31 @@ export function MessageThread({
           return;
         }
         setProfiles((data as Profile[]) ?? []);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Agents come from the API, not from PostgREST: `ai_agents` carries the
+  // workspace's AI configuration and the list endpoint is already the one
+  // place that decides what a client may see of it.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/ai/agents", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (cancelled || !body) return;
+        const rows = Array.isArray(body?.agents) ? body.agents : [];
+        setAiAgents(
+          rows
+            .filter((a: OwnerAgent & { is_active?: boolean }) => a.is_active)
+            .map((a: OwnerAgent) => ({ id: a.id, name: a.name })),
+        );
+      })
+      .catch(() => {
+        // Non-fatal: the dropdown falls back to teammates only. Owning a
+        // thread by hand must not depend on the AI list loading.
       });
     return () => {
       cancelled = true;
@@ -1067,6 +1113,60 @@ export function MessageThread({
   );
 
   /**
+   * Hand the thread to one of the workspace's AI agents.
+   *
+   * ⚠️ THREE COLUMNS, ONE MEANING. Ownership is spread across
+   * `assigned_agent_id` (a human, which silences the bot at
+   * AiReplyService's gate), `ai_agent_id` (the sticky routing latch the
+   * resolver reads FIRST) and `ai_autoreply_disabled` (a per-thread
+   * pause, set by a handoff). Writing only the latch would produce a
+   * thread that says an agent owns it and stays mute — which is exactly
+   * the class of confusion this control exists to remove. So picking an
+   * agent asserts all three.
+   *
+   * `ai_agent_id` is left ALONE when a human takes over, deliberately:
+   * the human gate silences the bot anyway, and keeping the latch means
+   * unassigning later resumes the same agent rather than re-routing to
+   * whoever happens to be first by priority — a customer should not get a
+   * new name and a new tone because a thread changed hands twice.
+   *
+   * Known residual: this is a PostgREST write, so RLS (row-level) permits
+   * any uuid in `ai_agent_id` for a row the caller owns — a crafted
+   * request could name another tenant's agent. It buys nothing: the
+   * resolver looks the latch up with `{id, account_id, is_active}`, so a
+   * foreign id simply misses and routing proceeds normally, and this
+   * dropdown resolves names from the account's own list so it renders as
+   * unowned. Closing it properly means a CHECK/trigger or moving the
+   * write behind the API.
+   */
+  const handleAssignAiAgent = useCallback(
+    async (aiAgentId: string) => {
+      if (!conversation) return;
+
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("conversations")
+        .update({
+          ai_agent_id: aiAgentId,
+          assigned_agent_id: null,
+          ai_autoreply_disabled: false,
+        })
+        .eq("id", conversation.id);
+
+      if (error) {
+        console.error("Failed to assign AI agent:", error);
+        toast.error("Could not hand this conversation to the agent");
+        return;
+      }
+
+      onAssignChange(conversation.id, null);
+      onAiAgentChange?.(conversation.id, aiAgentId);
+      onAiAutoReplyChange(conversation.id, false);
+    },
+    [conversation, onAssignChange, onAiAgentChange, onAiAutoReplyChange],
+  );
+
+  /**
    * Turn the AI bot back on (or off) for this thread.
    *
    * The pause is applied automatically by the API the moment a human
@@ -1126,9 +1226,35 @@ export function MessageThread({
   const collisionWarning = collisionLabel(viewers ?? []);
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
-  const assignLabel = assignedAgentId
-    ? (currentAssignee?.full_name ?? "Assigned")
-    : "Assign";
+
+  /**
+   * WHO OWNS THIS THREAD — one answer, derived in the order the runtime
+   * resolves it.
+   *
+   * A human assignment wins because that is what AiReplyService checks
+   * first: with `assigned_agent_id` set the bot is silent no matter what
+   * the AI columns say. Then a paused bot, then the agent on the latch,
+   * then nobody-in-particular (an active agent may still pick it up by
+   * routing, which "AI" without a name honestly describes).
+   *
+   * This replaced a separate `AI on` badge that read
+   * `ai_autoreply_disabled` alone — so a thread assigned to a teammate
+   * displayed "AI on" while the assignment was the very thing keeping the
+   * bot quiet. Two controls, two different fields, one contradiction.
+   */
+  const ownerAgent = conversation.ai_agent_id
+    ? aiAgents.find((a) => a.id === conversation.ai_agent_id)
+    : undefined;
+  const aiPaused = conversation.ai_autoreply_disabled === true;
+
+  const owner: { label: string; kind: 'human' | 'ai' | 'paused' | 'none' } =
+    assignedAgentId
+      ? { label: currentAssignee?.full_name ?? 'Assigned', kind: 'human' }
+      : aiPaused
+        ? { label: 'AI paused', kind: 'paused' }
+        : ownerAgent
+          ? { label: ownerAgent.name, kind: 'ai' }
+          : { label: 'Unassigned', kind: 'none' };
 
   return (
     // `min-w-0` is load-bearing: the page already puts min-w-0 on the
@@ -1227,34 +1353,42 @@ export function MessageThread({
             </button>
           )}
 
-          {/* AI pause indicator + switch.
-              Always rendered, not only when paused: "why is the bot
-              quiet" and "why did the bot just answer" are the same
-              question, and a control that appears only in one state
-              answers neither. */}
+          {/* Pause / resume the bot on this thread.
+              Kept as its own switch even though the Owner control below
+              can hand the thread to an agent: "stop replying for a
+              minute" and "this belongs to Nila" are different intents,
+              and folding the pause into the owner list would mean
+              silencing the bot required choosing a new owner. Always
+              rendered, not only when paused — "why is the bot quiet" and
+              "why did the bot just answer" are the same question, and a
+              control that appears in one state answers neither. */}
           <button
             type="button"
             onClick={handleAiAutoReplyToggle}
-            aria-pressed={!conversation.ai_autoreply_disabled}
+            aria-pressed={!aiPaused}
             title={
-              conversation.ai_autoreply_disabled
+              aiPaused
                 ? "AI replies are paused on this conversation — click to resume"
-                : "AI replies are on for this conversation — click to pause"
+                : assignedAgentId
+                  ? "A teammate owns this conversation, so the AI is standing down. Clear the owner to let it reply."
+                  : "AI replies are on for this conversation — click to pause"
             }
             className={cn(
               "inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs transition-colors hover:bg-muted",
-              conversation.ai_autoreply_disabled
+              // Dimmed while a human owns the thread: the bot is not
+              // going to answer, whatever this flag says on its own.
+              aiPaused || assignedAgentId
                 ? "text-muted-foreground"
                 : "text-primary",
             )}
           >
-            {conversation.ai_autoreply_disabled ? (
+            {aiPaused ? (
               <BotOff className="h-3.5 w-3.5" />
             ) : (
               <Bot className="h-3.5 w-3.5" />
             )}
             <span className="hidden sm:inline">
-              {conversation.ai_autoreply_disabled ? "AI paused" : "AI on"}
+              {aiPaused ? "AI paused" : assignedAgentId ? "AI standing by" : "AI on"}
             </span>
           </button>
 
@@ -1283,22 +1417,60 @@ export function MessageThread({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Assign dropdown */}
+          {/* Owner — one control for "who has this thread": an AI agent or
+              a teammate. See the `owner` derivation above for why these
+              cannot be two separate indicators. */}
           <DropdownMenu>
             <DropdownMenuTrigger
+              title={`Owner: ${owner.label}`}
               className={cn(
                 "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                assignedAgentId ? "text-primary" : "text-muted-foreground"
+                owner.kind === 'none' || owner.kind === 'paused'
+                  ? "text-muted-foreground"
+                  : "text-primary"
               )}
             >
-              <UserPlus className="h-3 w-3" />
-              <span className="hidden sm:inline">{assignLabel}</span>
+              {owner.kind === 'ai' ? (
+                <Bot className="h-3 w-3" />
+              ) : (
+                <UserPlus className="h-3 w-3" />
+              )}
+              <span className="hidden sm:inline">{owner.label}</span>
               <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
               className="border-border bg-popover"
             >
+              {aiAgents.length > 0 && (
+                <>
+                  <div className="px-2 py-1.5 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
+                    AI agents
+                  </div>
+                  {aiAgents.map((agent) => {
+                    const isSelected =
+                      owner.kind === 'ai' && agent.id === conversation.ai_agent_id;
+                    return (
+                      <DropdownMenuItem
+                        key={agent.id}
+                        onClick={() => handleAssignAiAgent(agent.id)}
+                        className={cn(
+                          "text-sm",
+                          isSelected ? "text-primary" : "text-popover-foreground"
+                        )}
+                      >
+                        <Bot className="mr-2 h-3.5 w-3.5 shrink-0" />
+                        <span className="flex-1">{agent.name}</span>
+                        {isSelected && <Check className="ml-2 h-3 w-3" />}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                  <DropdownMenuSeparator className="bg-border" />
+                  <div className="px-2 py-1.5 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
+                    Teammates
+                  </div>
+                </>
+              )}
               {profiles.length === 0 ? (
                 <DropdownMenuItem disabled className="text-sm text-muted-foreground">
                   No teammates available
@@ -1341,6 +1513,9 @@ export function MessageThread({
                     onClick={() => handleAssignChange(null)}
                     className="text-sm text-muted-foreground"
                   >
+                    {/* Clears the HUMAN only. `ai_agent_id` stays, so an
+                        agent that had the thread earlier picks it back up
+                        rather than the customer meeting a new persona. */}
                     Unassign
                   </DropdownMenuItem>
                 </>

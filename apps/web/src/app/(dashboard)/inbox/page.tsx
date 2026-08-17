@@ -614,6 +614,26 @@ export default function InboxPage() {
     [],
   );
 
+  /**
+   * A thread was handed to an AI agent from the Owner control. Mirrors
+   * the latch into local state so the header names the new owner without
+   * waiting for a refetch — the write already cleared the human
+   * assignment and the pause, and those have their own callbacks.
+   */
+  const handleAiAgentChange = useCallback(
+    (conversationId: string, aiAgentId: string | null) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === conversationId ? { ...c, ai_agent_id: aiAgentId } : c,
+        ),
+      );
+      setActiveConversation((prev) =>
+        prev?.id === conversationId ? { ...prev, ai_agent_id: aiAgentId } : prev,
+      );
+    },
+    [],
+  );
+
   const handleAssignChange = useCallback(
     (conversationId: string, assignedAgentId: string | null) => {
       setConversations((prev) =>
@@ -813,6 +833,7 @@ export default function InboxPage() {
             onStatusChange={handleStatusChange}
             onAssignChange={handleAssignChange}
             onAiAutoReplyChange={handleAiAutoReplyChange}
+            onAiAgentChange={handleAiAgentChange}
             onBack={handleCloseConversation}
             resyncToken={resyncToken}
             onRefresh={handleManualRefresh}
