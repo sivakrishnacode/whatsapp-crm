@@ -4,22 +4,23 @@
  * The step picker — a centred modal, not a dropdown.
  *
  * WHY A MODAL
- *   There are ~24 built-in steps plus a list of apps. A popover anchored
- *   to a button puts that in a 300px column at the edge of the screen,
- *   which is a scroll container, and a scroll container is where features
- *   go to be undiscovered. Centred, it gets the width for a category rail
- *   and a two-column grid, and it is where the eye already is.
+ *   There are ~24 built-in steps plus a list of Google actions. A popover
+ *   anchored to a button puts that in a 300px column at the edge of the
+ *   screen, which is a scroll container, and a scroll container is where
+ *   features go to be undiscovered. Centred, it gets the width for a
+ *   category rail and a two-column grid, and it is where the eye already
+ *   is.
  *
  * WHAT IT SHOWS, IN ORDER
  *   Search (typing beats browsing once you know the name) → categories →
  *   the steps in that category.
  *
  * TWO KINDS OF "APP", AND THE DIFFERENCE IS SHOWN, NOT HIDDEN
- *   CONNECTED APPS come first: Google Sheets, Gmail, Calendar, Meet.
+ *   GOOGLE ACTIONS come first: Google Sheets, Gmail, Calendar, Meet.
  *   Each ACTION is its own entry ("Google Sheets · Append row") because
  *   that is what somebody is looking for — nobody wants "an app", they
- *   want to append a row. Picking one adds an `app_action` step whose
- *   credentials are an OAuth connection nobody has to paste.
+ *   want to append a row. Picking one adds a `google_action` step whose
+ *   data flows through the Apps Script bridge.
  *
  *   PRESETS come second and are honestly labelled: they add an HTTP
  *   request step pre-filled for a service, and each says what key it
@@ -28,7 +29,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Ban, Search, X } from 'lucide-react';
+import { Ban, Search, X, Zap } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -41,14 +42,8 @@ import {
 } from '@/lib/automations/step-meta';
 import { APP_PRESETS, type AppPreset } from '@/lib/automations/app-presets';
 import { stepAvailability } from '@/lib/automations/availability';
-import {
-  connectionsFor,
-  missingScopes,
-  type CatalogAction,
-  type CatalogApp,
-} from '@/lib/automations/connectors';
+import type { GoogleScriptAction } from '@/lib/automations/connectors';
 import { useAutomationResources } from './resources';
-import { AppIcon } from '@/components/integrations/app-icon';
 import type { AutomationStepType, AutomationTriggerType } from '@/types';
 
 type RailId = StepCategory | 'all' | 'apps';
@@ -60,8 +55,8 @@ export interface AddStepDialogProps {
   onPickStep: (type: AutomationStepType) => void;
   /** An app preset — an HTTP step with its config pre-filled. */
   onPickApp: (preset: AppPreset) => void;
-  /** A real connector action — adds an `app_action` step. */
-  onPickAction: (app: CatalogApp, action: CatalogAction) => void;
+  /** A Google action — adds a `google_action` step. */
+  onPickAction: (action: GoogleScriptAction) => void;
   channels: string[];
   triggerType: AutomationTriggerType;
 }
@@ -75,7 +70,8 @@ export function AddStepDialog({
   channels,
   triggerType,
 }: AddStepDialogProps) {
-  const { apps: catalog, connections } = useAutomationResources();
+  const { googleActions, googleServiceLabels, googleConnection } =
+    useAutomationResources();
   const [rail, setRail] = useState<RailId>('all');
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
@@ -84,9 +80,6 @@ export function AddStepDialog({
     return ADDABLE_STEPS.filter((type) => {
       const meta = STEP_META[type];
       if (!meta) return false;
-      // Search ignores the rail: somebody typing "webhook" wants the
-      // webhook step, not to be told it lives under a bucket they did
-      // not click.
       if (q) {
         return (
           meta.label.toLowerCase().includes(q) ||
@@ -99,32 +92,30 @@ export function AddStepDialog({
   }, [rail, q]);
 
   /**
-   * Every action of every connected app, flattened.
+   * Every action from the Google Script bridge catalogue, flattened.
    *
-   * Flattened rather than grouped by app because the list is short and
-   * the thing being chosen is an action. Grouping would add a level of
-   * clicking to reach the only leaf anyone wants.
+   * Flattened rather than grouped by service because the list is short
+   * and the thing being chosen is an action.
    */
   const actions = useMemo(() => {
-    const all = catalog.flatMap((app) =>
-      app.actions.map((action) => ({ app, action })),
-    );
     if (q) {
-      return all.filter(
-        ({ app, action }) =>
-          app.name.toLowerCase().includes(q) ||
+      return googleActions.filter(
+        (action) =>
           action.label.toLowerCase().includes(q) ||
-          action.description.toLowerCase().includes(q),
+          action.description.toLowerCase().includes(q) ||
+          (googleServiceLabels[action.service] ?? action.service)
+            .toLowerCase()
+            .includes(q)
       );
     }
-    return rail === 'all' || rail === 'apps' ? all : [];
-  }, [catalog, rail, q]);
+    return rail === 'all' || rail === 'apps' ? googleActions : [];
+  }, [googleActions, googleServiceLabels, rail, q]);
 
   const apps = useMemo(() => {
     if (q) {
       return APP_PRESETS.filter(
         (a) =>
-          a.name.toLowerCase().includes(q) || a.blurb.toLowerCase().includes(q),
+          a.name.toLowerCase().includes(q) || a.blurb.toLowerCase().includes(q)
       );
     }
     return rail === 'all' || rail === 'apps' ? APP_PRESETS : [];
@@ -135,6 +126,10 @@ export function AddStepDialog({
     setQuery('');
     setRail('all');
   };
+
+  const bridgeConnected =
+    googleConnection?.status === 'connected' ||
+    googleConnection?.status === 'error';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -187,7 +182,7 @@ export function AddStepDialog({
                   'w-full px-4 py-1.5 text-left text-[13px] transition-colors',
                   rail === c.id && !q
                     ? 'bg-muted text-foreground font-medium'
-                    : 'text-muted-foreground hover:text-foreground',
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {c.label}
@@ -196,11 +191,13 @@ export function AddStepDialog({
           </nav>
 
           <div className="min-w-0 flex-1 overflow-y-auto overscroll-contain p-3">
-            {steps.length === 0 && apps.length === 0 && actions.length === 0 && (
-              <p className="text-muted-foreground px-3 py-10 text-center text-sm">
-                Nothing called “{query}”.
-              </p>
-            )}
+            {steps.length === 0 &&
+              apps.length === 0 &&
+              actions.length === 0 && (
+                <p className="text-muted-foreground px-3 py-10 text-center text-sm">
+                  Nothing called &ldquo;{query}&rdquo;.
+                </p>
+              )}
 
             {steps.length > 0 && (
               <>
@@ -211,7 +208,7 @@ export function AddStepDialog({
                     const availability = stepAvailability(
                       type,
                       channels,
-                      triggerType,
+                      triggerType
                     );
                     const unusable = availability.status === 'never';
                     return (
@@ -224,9 +221,7 @@ export function AddStepDialog({
                         }}
                         className={cn(
                           'hover:bg-muted flex items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors',
-                          // Dimmed WITH a reason, never hidden: a step
-                          // missing from a menu reads as a bug.
-                          unusable && 'opacity-55',
+                          unusable && 'opacity-55'
                         )}
                       >
                         <StepIconChip
@@ -241,7 +236,7 @@ export function AddStepDialog({
                             {unusable && (
                               <span className="text-destructive flex items-center gap-0.5 text-[9.5px] tracking-wide uppercase">
                                 <Ban size={10} />
-                                won’t run here
+                                won&apos;t run here
                               </span>
                             )}
                           </span>
@@ -259,47 +254,37 @@ export function AddStepDialog({
             {actions.length > 0 && (
               <>
                 <SectionLabel>
-                  Connected apps
+                  Google
                   <span className="text-muted-foreground ml-2 text-[10.5px] normal-case">
-                    sign in once — no keys to paste
+                    via Apps Script bridge — one setup, all services
                   </span>
                 </SectionLabel>
                 <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
-                  {actions.map(({ app, action }) => {
-                    // Per ACTION, not per provider: one Google connection
-                    // covers all four Google cards, but only with the
-                    // scopes actually granted. A Sheets-only grant must
-                    // not present "Gmail · Send email" as ready to run.
-                    const connected = connectionsFor(connections, app).some(
-                      (c) =>
-                        c.status === 'active' &&
-                        missingScopes(c, action).length === 0,
-                    );
+                  {actions.map((action) => {
+                    const serviceName =
+                      googleServiceLabels[action.service] ?? action.service;
                     return (
                       <button
-                        key={`${app.app}:${action.id}`}
+                        key={action.id}
                         type="button"
                         onClick={() => {
-                          onPickAction(app, action);
+                          onPickAction(action);
                           close();
                         }}
                         className="hover:bg-muted flex items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors"
                       >
-                        <AppIcon
-                          app={app}
-                          size={30}
-                          className="mt-0.5 rounded-lg"
-                        />
+                        <div
+                          className="mt-0.5 flex size-[30px] shrink-0 items-center justify-center rounded-lg"
+                          style={{ background: 'oklch(0.45 0.12 145)' }}
+                        >
+                          <Zap size={15} className="text-white" />
+                        </div>
                         <span className="min-w-0 flex-1">
                           <span className="text-foreground flex items-center gap-1.5 text-[13px] font-medium">
-                            {app.name} · {action.label}
-                            {/* Not connected is shown but never blocks the
-                                pick: adding the step then connecting is a
-                                perfectly reasonable order, and the
-                                inspector offers the Connect button. */}
-                            {!connected && (
+                            {serviceName} · {action.label}
+                            {!bridgeConnected && (
                               <span className="text-muted-foreground text-[9.5px] tracking-wide uppercase">
-                                connect first
+                                set up first
                               </span>
                             )}
                           </span>
@@ -319,8 +304,8 @@ export function AddStepDialog({
                 <SectionLabel>
                   Other services
                   <span className="text-muted-foreground ml-2 text-[10.5px] normal-case">
-                    each one adds an HTTP request step, pre-filled — you
-                    supply the key
+                    each one adds an HTTP request step, pre-filled — you supply
+                    the key
                   </span>
                 </SectionLabel>
                 <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
@@ -335,27 +320,23 @@ export function AddStepDialog({
                       className="hover:bg-muted flex items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors"
                     >
                       <span
-                        className="mt-0.5 flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
-                        style={{
-                          background: `color-mix(in oklch, ${app.hue} 16%, transparent)`,
-                          color: `color-mix(in oklch, ${app.hue}, var(--foreground) 22%)`,
-                        }}
+                        className="mt-0.5 flex size-[30px] shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white"
+                        style={{ background: app.hue }}
                         aria-hidden
                       >
                         {app.monogram}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="text-foreground block text-[13px] font-medium">
+                        <span className="text-foreground text-[13px] font-medium">
                           {app.name}
                         </span>
                         <span className="text-muted-foreground block text-[11.5px] leading-snug">
                           {app.blurb}
-                        </span>
-                        {/* Said before the pick, not after: this is the
-                            difference between a preset and a connector,
-                            and finding out later feels like a bait. */}
-                        <span className="text-muted-foreground/80 mt-0.5 block text-[10.5px] leading-snug italic">
-                          {app.credentialHint}
+                          {app.credentialHint && (
+                            <span className="text-muted-foreground/60 ml-1">
+                              — needs {app.credentialHint}
+                            </span>
+                          )}
                         </span>
                       </span>
                     </button>
@@ -372,8 +353,8 @@ export function AddStepDialog({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-muted-foreground px-3 pt-2 pb-1.5 text-[10.5px] font-semibold tracking-wider uppercase">
+    <h3 className="text-muted-foreground mt-3 mb-1 px-1 text-[10.5px] font-semibold tracking-wider uppercase first:mt-0">
       {children}
-    </div>
+    </h3>
   );
 }

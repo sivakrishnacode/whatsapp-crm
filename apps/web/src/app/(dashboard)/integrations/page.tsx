@@ -259,8 +259,8 @@ export default function IntegrationsPage() {
         </p>
       </div>
 
-      {/* Connected apps first: they are the ones that need no key, and
-          they are what the automations editor points people at. */}
+      {/* The Google bridge first: the one integration that needs no key,
+          and the one the automations editor points people at. */}
       <ConnectedApps />
 
       <div>

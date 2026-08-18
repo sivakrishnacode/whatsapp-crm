@@ -1,4 +1,4 @@
-import type { AccountRole } from "@/lib/auth/roles";
+import type { AccountRole } from '@/lib/auth/roles';
 
 export interface Profile {
   id: string;
@@ -77,7 +77,7 @@ export interface AccountInvitation {
   id: string;
   account_id: string;
   /** Roles offered via invite — owner is never offered. */
-  role: Exclude<AccountRole, "owner">;
+  role: Exclude<AccountRole, 'owner'>;
   created_by_user_id: string | null;
   label: string | null;
   created_at: string;
@@ -226,12 +226,7 @@ export interface SegmentFilter {
 
 /** Which surface filed a contact into a segment. */
 export type SegmentMemberSource =
-  | 'manual'
-  | 'import'
-  | 'automation'
-  | 'flow'
-  | 'api'
-  | 'broadcast';
+  'manual' | 'import' | 'automation' | 'flow' | 'api' | 'broadcast';
 
 export interface CustomField {
   id: string;
@@ -371,7 +366,8 @@ export type ContentType =
   | 'share'
   /** WhatsApp itself could not forward what was sent. */
   | 'unsupported';
-export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+export type MessageStatus =
+  'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
 export interface Message {
   id: string;
@@ -466,7 +462,11 @@ export interface MessageMetadata {
     name?: string | null;
     address?: string | null;
   };
-  error?: { code?: number | null; title?: string | null; detail?: string | null };
+  error?: {
+    code?: number | null;
+    title?: string | null;
+    detail?: string | null;
+  };
   flow_response?: Record<string, unknown>;
   animated?: boolean;
   /** Instagram keys — owned by that channel, listed so they aren't stripped. */
@@ -649,13 +649,9 @@ export interface Deal {
  * "nothing has arrived" is the correct and expected state.
  */
 export type BroadcastStatus =
-  | 'draft'
-  | 'queued'
-  | 'scheduled'
-  | 'sending'
-  | 'sent'
-  | 'failed';
-export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';
+  'draft' | 'queued' | 'scheduled' | 'sending' | 'sent' | 'failed';
+export type RecipientStatus =
+  'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';
 
 export interface Broadcast {
   id: string;
@@ -768,12 +764,19 @@ export type AutomationStepType =
   // HTTP request whose response later steps can read. `send_webhook` is
   // its fire-and-forget ancestor, kept so existing automations run.
   | 'http_request'
-  // A named action on a connected app — "Google Sheets: Append row".
+  // A named action on a connected app — \"Google Sheets: Append row\".
   // ONE step type for every app and every action: the app and action are
   // data in step_config, resolved through the connector catalogue served
   // by GET /api/connections/catalog. The picker still lists each action
   // separately. See docs/app-connections.md.
+  // ⚠️ DEPRECATED — replaced by `google_action`. Kept so saved automations
+  // still render; the executor no longer handles it.
   | 'app_action'
+  // A Google action executed via the workspace's Apps Script bridge.
+  // Config is `{ action, input }` — no connection_id, no app field.
+  // The bridge serves Gmail, Calendar, Meet and Sheets through one
+  // deployment. Catalogue served by GET /api/google-script/catalog.
+  | 'google_action'
   | 'send_webhook'
   | 'close_conversation'
   | 'set_conversation_status'
@@ -874,10 +877,7 @@ export interface WaitStepConfig {
 }
 
 export type ConditionSubject =
-  | 'contact_field'
-  | 'tag_presence'
-  | 'message_content'
-  | 'time_of_day';
+  'contact_field' | 'tag_presence' | 'message_content' | 'time_of_day';
 
 export interface ConditionStepConfig {
   subject: ConditionSubject;

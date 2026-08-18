@@ -27,7 +27,7 @@ import type {
   AutomationStepType,
   AutomationTriggerConfig,
   AutomationTriggerType,
-} from '@/types'
+} from '@/types';
 
 export type TemplateSlug =
   // Greeting & availability
@@ -64,7 +64,7 @@ export type TemplateSlug =
   // Ops & integrations
   | 'log_conversation_to_sheet'
   | 'email_lead_summary'
-  | 'book_calendar_event'
+  | 'book_calendar_event';
 
 export type TemplateCategory =
   | 'greeting'
@@ -73,7 +73,7 @@ export type TemplateCategory =
   | 'support'
   | 'commerce'
   | 'follow_up'
-  | 'integrations'
+  | 'integrations';
 
 export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
   { id: 'greeting', label: 'Greeting & availability' },
@@ -83,7 +83,7 @@ export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
   { id: 'commerce', label: 'Commerce' },
   { id: 'follow_up', label: 'Follow-up' },
   { id: 'integrations', label: 'Integrations' },
-]
+];
 
 /**
  * What a template needs before it can actually run.
@@ -91,50 +91,35 @@ export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
  * THREE KINDS, BECAUSE THE FIX IS DIFFERENT FOR EACH
  *   `channel` — the automation only fires on a channel you have
  *               connected. Fixed in Settings → channels.
- *   `app`     — an `app_action` step needs an OAuth connection. Fixed by
- *               connecting the app; the gallery checks this live against
- *               `GET /api/connections` and offers the connect button.
+ *   `app`     — a `google_action` step needs the workspace's Apps Script
+ *               bridge. Fixed in Integrations → Google; the gallery
+ *               checks this live against `GET /api/google-script`.
  *   `setup`   — a step names something inside this workspace (a tag, a
  *               pipeline stage, a form). Fixed in the builder, and the
  *               only honest thing the gallery can do is say so up front.
  */
-export type TemplateRequirementKind = 'channel' | 'app' | 'setup'
+export type TemplateRequirementKind = 'channel' | 'app' | 'setup';
 
 export interface TemplateRequirement {
-  id: string
-  label: string
-  kind: TemplateRequirementKind
-  /** `app_connections.provider`, for `kind: 'app'` — what we check live. */
-  provider?: string
-  /** Connector id in the catalogue (e.g. `google_sheets`), for `kind: 'app'`. */
-  app?: string
+  id: string;
+  label: string;
+  kind: TemplateRequirementKind;
 }
 
 export const REQUIREMENTS = {
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', kind: 'channel' },
   instagram: { id: 'instagram', label: 'Instagram', kind: 'channel' },
   web: { id: 'web', label: 'Web chat', kind: 'channel' },
-  google_sheets: {
-    id: 'google_sheets',
-    label: 'Google Sheets',
-    kind: 'app',
-    provider: 'google',
-    app: 'google_sheets',
-  },
-  gmail: {
-    id: 'gmail',
-    label: 'Gmail',
-    kind: 'app',
-    provider: 'google',
-    app: 'gmail',
-  },
-  google_calendar: {
-    id: 'google_calendar',
-    label: 'Google Calendar',
-    kind: 'app',
-    provider: 'google',
-    app: 'google_calendar',
-  },
+  /**
+   * ONE requirement for all four Google products, not three.
+   *
+   * Gmail, Calendar, Meet and Sheets arrive through a single Apps Script
+   * deployment, so "is Google connected?" has one answer. The predecessor
+   * needed one per app because incremental OAuth consent meant a workspace
+   * could hold Sheets access and not Gmail — nothing here is granted
+   * incrementally.
+   */
+  google: { id: 'google', label: 'Google', kind: 'app' },
   tag: { id: 'tag', label: 'A tag', kind: 'setup' },
   pipeline: { id: 'pipeline', label: 'A pipeline stage', kind: 'setup' },
   form: { id: 'form', label: 'A published form', kind: 'setup' },
@@ -148,31 +133,31 @@ export const REQUIREMENTS = {
     label: 'Your own API endpoint',
     kind: 'setup',
   },
-} satisfies Record<string, TemplateRequirement>
+} satisfies Record<string, TemplateRequirement>;
 
-export type TemplateRequirementId = keyof typeof REQUIREMENTS
+export type TemplateRequirementId = keyof typeof REQUIREMENTS;
 
 export interface TemplateStepSeed {
-  step_type: AutomationStepType
-  step_config: AutomationStepConfig
-  branch?: 'yes' | 'no' | null
+  step_type: AutomationStepType;
+  step_config: AutomationStepConfig;
+  branch?: 'yes' | 'no' | null;
   /** Index (within this seed list) of the Condition parent, if nested. */
-  parent_index?: number | null
+  parent_index?: number | null;
 }
 
 export interface AutomationTemplateDefinition {
-  slug: TemplateSlug
-  name: string
-  description: string
-  category: TemplateCategory
-  trigger_type: AutomationTriggerType
-  trigger_config: AutomationTriggerConfig
+  slug: TemplateSlug;
+  name: string;
+  description: string;
+  category: TemplateCategory;
+  trigger_type: AutomationTriggerType;
+  trigger_config: AutomationTriggerConfig;
   /** Pre-scoped channels. Empty = every channel, the usual default. */
-  channels?: string[]
-  requirements?: TemplateRequirementId[]
+  channels?: string[];
+  requirements?: TemplateRequirementId[];
   /** Two or three words each — what the automation does, for the card. */
-  highlights?: string[]
-  steps: TemplateStepSeed[]
+  highlights?: string[];
+  steps: TemplateStepSeed[];
 }
 
 export const AUTOMATION_TEMPLATES: Record<
@@ -289,7 +274,10 @@ export const AUTOMATION_TEMPLATES: Record<
           ],
         },
       },
-      { step_type: 'assign_conversation', step_config: { mode: 'round_robin' } },
+      {
+        step_type: 'assign_conversation',
+        step_config: { mode: 'round_robin' },
+      },
     ],
   },
 
@@ -316,7 +304,10 @@ export const AUTOMATION_TEMPLATES: Record<
         },
       },
       { step_type: 'wait', step_config: { amount: 10, unit: 'minutes' } },
-      { step_type: 'assign_conversation', step_config: { mode: 'round_robin' } },
+      {
+        step_type: 'assign_conversation',
+        step_config: { mode: 'round_robin' },
+      },
     ],
   },
 
@@ -351,7 +342,10 @@ export const AUTOMATION_TEMPLATES: Record<
           body: '{{ contact.name }} asked about pricing: "{{ message.text }}"',
         },
       },
-      { step_type: 'assign_conversation', step_config: { mode: 'round_robin' } },
+      {
+        step_type: 'assign_conversation',
+        step_config: { mode: 'round_robin' },
+      },
     ],
   },
 
@@ -362,16 +356,18 @@ export const AUTOMATION_TEMPLATES: Record<
     category: 'lead_capture',
     trigger_type: 'first_inbound_message',
     trigger_config: {},
-    requirements: ['google_sheets'],
+    requirements: ['google'],
     highlights: ['One row per lead', 'No manual entry'],
     steps: [
       {
-        step_type: 'app_action',
+        step_type: 'google_action',
         step_config: {
-          connection_id: '',
-          app: 'google_sheets',
-          action: 'append_row',
+          action: 'sheet_append',
           input: {
+            // Blank: the author pastes the id from their sheet's URL. There
+            // is no picker to prefill it from — nothing lists a customer's
+            // files, because that would need a Drive scope.
+            spreadsheet_id: '',
             values: [
               '{{ now.date }}',
               '{{ contact.name }}',
@@ -446,7 +442,10 @@ export const AUTOMATION_TEMPLATES: Record<
           body: '{{ contact.name }} said: "{{ message.text }}"',
         },
       },
-      { step_type: 'assign_conversation', step_config: { mode: 'round_robin' } },
+      {
+        step_type: 'assign_conversation',
+        step_config: { mode: 'round_robin' },
+      },
       {
         step_type: 'send_message',
         step_config: {
@@ -463,7 +462,8 @@ export const AUTOMATION_TEMPLATES: Record<
   vip_fast_lane: {
     slug: 'vip_fast_lane',
     name: 'VIP fast lane',
-    description: 'Jump tagged VIP customers straight to the front of the queue.',
+    description:
+      'Jump tagged VIP customers straight to the front of the queue.',
     category: 'lead_capture',
     trigger_type: 'new_message_received',
     trigger_config: {},
@@ -506,7 +506,10 @@ export const AUTOMATION_TEMPLATES: Record<
     description: 'Turn a comment on your post into a private conversation.',
     category: 'lead_capture',
     trigger_type: 'instagram_comment',
-    trigger_config: { keywords: ['price', 'link', 'info'], match_type: 'contains' },
+    trigger_config: {
+      keywords: ['price', 'link', 'info'],
+      match_type: 'contains',
+    },
     channels: ['instagram'],
     requirements: ['instagram'],
     highlights: ['Public → private', 'Keyword filtered'],
@@ -514,7 +517,7 @@ export const AUTOMATION_TEMPLATES: Record<
       {
         step_type: 'send_message',
         step_config: {
-          text: "Hey! Thanks for commenting 🙌 Sending the details right here — what would you like to know first?",
+          text: 'Hey! Thanks for commenting 🙌 Sending the details right here — what would you like to know first?',
         },
       },
       { step_type: 'add_tag', step_config: { tag_id: '' } },
@@ -539,7 +542,10 @@ export const AUTOMATION_TEMPLATES: Record<
         },
       },
       { step_type: 'wait', step_config: { amount: 30, unit: 'minutes' } },
-      { step_type: 'assign_conversation', step_config: { mode: 'round_robin' } },
+      {
+        step_type: 'assign_conversation',
+        step_config: { mode: 'round_robin' },
+      },
     ],
   },
 
@@ -612,7 +618,8 @@ export const AUTOMATION_TEMPLATES: Record<
       {
         step_type: 'send_buttons',
         step_config: {
-          body_text: 'Quick reminder about your upcoming appointment — are we still good to go?',
+          body_text:
+            'Quick reminder about your upcoming appointment — are we still good to go?',
           buttons: [
             { id: 'confirm', title: "Yes, I'll be there" },
             { id: 'reschedule', title: 'Need to reschedule' },
@@ -635,7 +642,7 @@ export const AUTOMATION_TEMPLATES: Record<
       {
         step_type: 'send_message',
         step_config: {
-          text: "No problem at all — thanks for letting us know. Want to pick another time?",
+          text: 'No problem at all — thanks for letting us know. Want to pick another time?',
         },
       },
       {
@@ -682,7 +689,10 @@ export const AUTOMATION_TEMPLATES: Record<
         step_type: 'set_conversation_status',
         step_config: { status: 'pending' },
       },
-      { step_type: 'assign_conversation', step_config: { mode: 'round_robin' } },
+      {
+        step_type: 'assign_conversation',
+        step_config: { mode: 'round_robin' },
+      },
     ],
   },
 
@@ -946,16 +956,15 @@ export const AUTOMATION_TEMPLATES: Record<
     category: 'integrations',
     trigger_type: 'new_message_received',
     trigger_config: {},
-    requirements: ['google_sheets'],
+    requirements: ['google'],
     highlights: ['Row per message', 'Reportable history'],
     steps: [
       {
-        step_type: 'app_action',
+        step_type: 'google_action',
         step_config: {
-          connection_id: '',
-          app: 'google_sheets',
-          action: 'append_row',
+          action: 'sheet_append',
           input: {
+            spreadsheet_id: '',
             values: [
               '{{ now.iso }}',
               '{{ contact.name }}',
@@ -979,14 +988,12 @@ export const AUTOMATION_TEMPLATES: Record<
     category: 'integrations',
     trigger_type: 'first_inbound_message',
     trigger_config: {},
-    requirements: ['gmail'],
+    requirements: ['google'],
     highlights: ['Sends via Gmail', 'Full first message'],
     steps: [
       {
-        step_type: 'app_action',
+        step_type: 'google_action',
         step_config: {
-          connection_id: '',
-          app: 'gmail',
           action: 'send_email',
           input: {
             to: [''],
@@ -1015,18 +1022,25 @@ export const AUTOMATION_TEMPLATES: Record<
       keywords: ['schedule', 'calendar', 'call me'],
       match_type: 'contains',
     },
-    requirements: ['google_calendar'],
+    requirements: ['google'],
     highlights: ['Writes to Calendar', 'Confirms in chat'],
     steps: [
       {
-        step_type: 'app_action',
+        step_type: 'google_action',
         step_config: {
-          connection_id: '',
-          app: 'google_calendar',
           action: 'create_event',
           input: {
-            summary: 'Follow-up call — {{ contact.name }}',
+            // `title`, not `summary`: the bridge's field name. A stale key
+            // would save and then fail activation as a missing required
+            // field, which is the catalogue doing its job.
+            title: 'Follow-up call — {{ contact.name }}',
             description: 'Requested in chat: {{ message.text }}',
+            add_meet: true,
+            // Blank on purpose, and activation will say so: only the author
+            // knows when the call should be. A template that guessed a time
+            // would put real events in real diaries at the wrong hour.
+            starts_at: '',
+            ends_at: '',
           },
         },
       },
@@ -1038,23 +1052,25 @@ export const AUTOMATION_TEMPLATES: Record<
       },
     ],
   },
-}
+};
 
-export const TEMPLATE_SLUGS = Object.keys(AUTOMATION_TEMPLATES) as TemplateSlug[]
+export const TEMPLATE_SLUGS = Object.keys(
+  AUTOMATION_TEMPLATES
+) as TemplateSlug[];
 
 export function getTemplate(slug: string): AutomationTemplateDefinition | null {
-  return AUTOMATION_TEMPLATES[slug as TemplateSlug] ?? null
+  return AUTOMATION_TEMPLATES[slug as TemplateSlug] ?? null;
 }
 
 export function templateRequirements(
-  template: AutomationTemplateDefinition,
+  template: AutomationTemplateDefinition
 ): TemplateRequirement[] {
-  return (template.requirements ?? []).map((id) => REQUIREMENTS[id])
+  return (template.requirements ?? []).map((id) => REQUIREMENTS[id]);
 }
 
 /** How many steps a template lays down, counting both branches. */
 export function templateStepCount(
-  template: AutomationTemplateDefinition,
+  template: AutomationTemplateDefinition
 ): number {
-  return template.steps.length
+  return template.steps.length;
 }

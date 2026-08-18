@@ -39,6 +39,7 @@ import {
 import {
   STEP_META,
   appActionLabel,
+  googleActionLabel,
   StepIconChip,
   stepColors,
 } from '@/lib/automations/step-meta';
@@ -76,18 +77,24 @@ export function StepInspector({
   onDelete: () => void;
   onClose: () => void;
 }) {
-  const { apps } = useAutomationResources();
+  const { apps, googleActions, googleServiceLabels } = useAutomationResources();
   const meta = STEP_META[step.step_type];
-  // Same reason as the node card: an app action's name comes from the
-  // catalogue, so the inspector header says which app and action rather
-  // than the generic type label.
+  // An app/google action's name comes from the catalogue, so the
+  // inspector header says which service and action rather than the
+  // generic type label.
   const headerLabel =
-    step.step_type === 'app_action'
-      ? appActionLabel(
-          step.step_config as { app?: string; action?: string },
-          apps,
+    step.step_type === 'google_action'
+      ? googleActionLabel(
+          step.step_config as { action?: string },
+          googleActions,
+          googleServiceLabels
         )
-      : (meta?.label ?? step.step_type);
+      : step.step_type === 'app_action'
+        ? appActionLabel(
+            step.step_config as { app?: string; action?: string },
+            apps
+          )
+        : (meta?.label ?? step.step_type);
   const c = stepColors(step.step_type);
   const cfg = step.step_config;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -156,7 +163,7 @@ export function StepInspector({
         defaultValue="configure"
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        <TabsList className="border-border bg-transparent flex-none gap-1 border-b px-3 py-1.5">
+        <TabsList className="border-border flex-none gap-1 border-b bg-transparent px-3 py-1.5">
           <TabsTrigger value="setup" className="text-xs">
             Setup
           </TabsTrigger>
@@ -181,7 +188,12 @@ export function StepInspector({
               onClick={() => setChangingType(true)}
               className="border-border bg-muted hover:border-primary/40 flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors"
             >
-              <StepIconChip type={step.step_type} size={22} iconSize={12} className="rounded-md" />
+              <StepIconChip
+                type={step.step_type}
+                size={22}
+                iconSize={12}
+                className="rounded-md"
+              />
               <span className="text-foreground text-[12.5px]">
                 {headerLabel}
               </span>
@@ -203,7 +215,7 @@ export function StepInspector({
                   ? 'text-destructive'
                   : availability.status === 'partial'
                     ? 'text-warning'
-                    : 'text-muted-foreground',
+                    : 'text-muted-foreground'
               )}
             >
               {availability.reason ?? 'Every channel this automation runs on.'}
@@ -224,134 +236,138 @@ export function StepInspector({
           value="configure"
           className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4"
         >
-        {/* Said here as well as on the card, because this is where
+          {/* Said here as well as on the card, because this is where
             somebody is when they are choosing the template that will
             never send. */}
-        {availability.status !== 'ok' && (
-          <div
-            className={cn(
-              'flex items-start gap-2 rounded-md border p-2.5 text-[11.5px] leading-relaxed',
-              availability.status === 'never'
-                ? 'border-destructive/40 bg-destructive-surface text-destructive'
-                : 'border-warning/40 bg-warning-surface text-warning',
-            )}
-          >
-            {availability.status === 'never' ? (
-              <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            ) : (
-              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            )}
-            <span>{availability.reason}</span>
-          </div>
-        )}
+          {availability.status !== 'ok' && (
+            <div
+              className={cn(
+                'flex items-start gap-2 rounded-md border p-2.5 text-[11.5px] leading-relaxed',
+                availability.status === 'never'
+                  ? 'border-destructive/40 bg-destructive-surface text-destructive'
+                  : 'border-warning/40 bg-warning-surface text-warning'
+              )}
+            >
+              {availability.status === 'never' ? (
+                <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              )}
+              <span>{availability.reason}</span>
+            </div>
+          )}
 
-        <StepFields
-          // Remounting per step keeps local drafts (KV-table rows, the
-          // variable-name draft) from leaking across a selection change.
-          key={step.key}
-          type={step.step_type}
-          config={cfg}
-          onChange={onChangeConfig}
-          groups={groups}
-        />
+          <StepFields
+            // Remounting per step keeps local drafts (KV-table rows, the
+            // variable-name draft) from leaking across a selection change.
+            key={step.key}
+            type={step.step_type}
+            config={cfg}
+            onChange={onChangeConfig}
+            groups={groups}
+          />
 
-        <Separator />
+          <Separator />
 
-        {/* base-ui's Accordion is single-open by default and takes no
+          {/* base-ui's Accordion is single-open by default and takes no
             `type` prop — it is not the Radix one. */}
-        <Accordion>
-          <AccordionItem value="advanced">
-            <AccordionTrigger className="text-muted-foreground text-xs font-medium">
-              Advanced
-            </AccordionTrigger>
-            <AccordionContent className="space-y-4 pt-1">
-              <FieldBlock
-                label="If this step fails"
-                hint="Stopping is right when what follows depends on this step. Carrying on is right for a last-mile notification — a third party being down should not cancel the tag and the deal that already worked."
-              >
-                <div className="space-y-1.5">
-                  {(
-                    [
-                      ['fail', 'Stop the run'],
-                      ['continue', 'Carry on to the next step'],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <label
-                      key={value}
-                      className="flex cursor-pointer items-center gap-2 text-[12.5px]"
-                    >
-                      <input
-                        type="radio"
-                        name={`on_error_${step.key}`}
-                        checked={(cfg.on_error ?? 'fail') === value}
-                        onChange={() => onChangeConfig({ on_error: value })}
-                        className="accent-primary"
-                      />
-                      <span className="text-foreground">{label}</span>
-                    </label>
-                  ))}
-                </div>
-              </FieldBlock>
-
-              {meta?.outputs && meta.outputs.length > 0 && (
+          <Accordion>
+            <AccordionItem value="advanced">
+              <AccordionTrigger className="text-muted-foreground text-xs font-medium">
+                Advanced
+              </AccordionTrigger>
+              <AccordionContent className="space-y-4 pt-1">
                 <FieldBlock
-                  label="Also save the result as"
-                  hint="Optional. Shorter to reference than the full step path when you use it repeatedly."
+                  label="If this step fails"
+                  hint="Stopping is right when what follows depends on this step. Carrying on is right for a last-mile notification — a third party being down should not cancel the tag and the deal that already worked."
                 >
-                  <div className="flex items-center">
-                    <span className="bg-muted text-muted-foreground rounded-l-lg px-2 py-1.5 font-mono text-[11px]">
-                      vars.
-                    </span>
-                    <Input
-                      value={String(cfg.save_as ?? '')}
-                      onChange={(e) => onChangeConfig({ save_as: e.target.value })}
-                      placeholder="order"
-                      className="bg-muted rounded-l-none font-mono text-[12px]"
-                    />
+                  <div className="space-y-1.5">
+                    {(
+                      [
+                        ['fail', 'Stop the run'],
+                        ['continue', 'Carry on to the next step'],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <label
+                        key={value}
+                        className="flex cursor-pointer items-center gap-2 text-[12.5px]"
+                      >
+                        <input
+                          type="radio"
+                          name={`on_error_${step.key}`}
+                          checked={(cfg.on_error ?? 'fail') === value}
+                          onChange={() => onChangeConfig({ on_error: value })}
+                          className="accent-primary"
+                        />
+                        <span className="text-foreground">{label}</span>
+                      </label>
+                    ))}
                   </div>
                 </FieldBlock>
-              )}
 
-              <FieldBlock label="Note for your team">
-                <Textarea
-                  value={String(cfg.note ?? '')}
-                  onChange={(e) => onChangeConfig({ note: e.target.value })}
-                  rows={3}
-                  placeholder="Why this step exists…"
-                  className="bg-muted"
-                />
-              </FieldBlock>
-            </AccordionContent>
-          </AccordionItem>
-
-          {meta?.outputs && meta.outputs.length > 0 && (
-            <AccordionItem value="outputs">
-              <AccordionTrigger className="text-muted-foreground text-xs font-medium">
-                What this step produces
-              </AccordionTrigger>
-              <AccordionContent className="space-y-1 pt-1">
-                {meta.outputs.map((o) => (
-                  <button
-                    key={o.path}
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(
-                        `{{ steps.${step.key}.${o.path} }}`,
-                      );
-                      toast.success('Token copied');
-                    }}
-                    className="hover:bg-muted flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left"
+                {meta?.outputs && meta.outputs.length > 0 && (
+                  <FieldBlock
+                    label="Also save the result as"
+                    hint="Optional. Shorter to reference than the full step path when you use it repeatedly."
                   >
-                    <span className="text-foreground text-[12px]">{o.label}</span>
-                    <span className="text-muted-foreground truncate font-mono text-[10.5px]">
-                      steps.{step.key}.{o.path}
-                    </span>
-                  </button>
-                ))}
+                    <div className="flex items-center">
+                      <span className="bg-muted text-muted-foreground rounded-l-lg px-2 py-1.5 font-mono text-[11px]">
+                        vars.
+                      </span>
+                      <Input
+                        value={String(cfg.save_as ?? '')}
+                        onChange={(e) =>
+                          onChangeConfig({ save_as: e.target.value })
+                        }
+                        placeholder="order"
+                        className="bg-muted rounded-l-none font-mono text-[12px]"
+                      />
+                    </div>
+                  </FieldBlock>
+                )}
+
+                <FieldBlock label="Note for your team">
+                  <Textarea
+                    value={String(cfg.note ?? '')}
+                    onChange={(e) => onChangeConfig({ note: e.target.value })}
+                    rows={3}
+                    placeholder="Why this step exists…"
+                    className="bg-muted"
+                  />
+                </FieldBlock>
               </AccordionContent>
             </AccordionItem>
-          )}
-        </Accordion>
+
+            {meta?.outputs && meta.outputs.length > 0 && (
+              <AccordionItem value="outputs">
+                <AccordionTrigger className="text-muted-foreground text-xs font-medium">
+                  What this step produces
+                </AccordionTrigger>
+                <AccordionContent className="space-y-1 pt-1">
+                  {meta.outputs.map((o) => (
+                    <button
+                      key={o.path}
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(
+                          `{{ steps.${step.key}.${o.path} }}`
+                        );
+                        toast.success('Token copied');
+                      }}
+                      className="hover:bg-muted flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left"
+                    >
+                      <span className="text-foreground text-[12px]">
+                        {o.label}
+                      </span>
+                      <span className="text-muted-foreground truncate font-mono text-[10.5px]">
+                        steps.{step.key}.{o.path}
+                      </span>
+                    </button>
+                  ))}
+                </AccordionContent>
+              </AccordionItem>
+            )}
+          </Accordion>
         </TabsContent>
 
         <TabsContent
@@ -407,20 +423,15 @@ export function StepInspector({
         open={changingType}
         onOpenChange={setChangingType}
         onPickStep={(type) => onChangeType(type)}
-        onPickAction={(app, action) => {
-          // Changing an existing step INTO an app action. The connection
-          // is left unset deliberately — this path has no way to know
-          // which account was meant, and guessing one would silently
-          // decide whose mailbox an email goes out from.
-          onChangeType('app_action');
+        onPickAction={(action) => {
+          // Changing an existing step INTO a google action.
+          onChangeType('google_action');
           onChangeConfig({
-            app: app.app,
             action: action.id,
-            connection_id: '',
             input: Object.fromEntries(
               action.inputs
                 .filter((spec) => spec.default !== undefined)
-                .map((spec) => [spec.key, spec.default]),
+                .map((spec) => [spec.key, spec.default])
             ),
           });
         }}
@@ -483,7 +494,7 @@ function ReferenceName({
           aria-label="Reference name"
           className={cn(
             'text-foreground hover:bg-muted focus:bg-muted min-w-0 flex-1 rounded-r bg-transparent px-1.5 py-1 font-mono text-[12px] outline-none',
-            duplicate && 'text-destructive underline decoration-current',
+            duplicate && 'text-destructive underline decoration-current'
           )}
         />
         <button

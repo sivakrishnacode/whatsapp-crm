@@ -33,12 +33,17 @@ import {
   type BuilderStep,
 } from '@/lib/automations/graph';
 import { STEP_META } from '@/lib/automations/step-meta';
-import { stepAvailability, type Availability } from '@/lib/automations/availability';
+import {
+  stepAvailability,
+  type Availability,
+} from '@/lib/automations/availability';
 import { validateStep } from '@/lib/automations/validate';
 import { declaredVariables, precedingSteps } from '@/lib/automations/tokens';
 import type {
   AppConnection,
   CatalogApp,
+  GoogleScriptAction,
+  GoogleScriptConnection,
 } from '@/lib/automations/connectors';
 import type { AutomationStepType, AutomationTriggerType } from '@/types';
 
@@ -65,6 +70,9 @@ export interface DiagnosticsInput {
   /** Connected-app catalogue + this workspace's connections. */
   apps?: CatalogApp[];
   connections?: AppConnection[];
+  /** Google Script bridge catalogue and connection status. */
+  googleActions?: GoogleScriptAction[];
+  googleConnection?: GoogleScriptConnection | null;
   currentAutomationId?: string;
 }
 
@@ -126,7 +134,7 @@ export function runDiagnostics(input: DiagnosticsInput): Diagnostic[] {
 
 function checkDuplicateKeys(
   flat: ReturnType<typeof flattenSteps>,
-  out: Diagnostic[],
+  out: Diagnostic[]
 ): void {
   const seen = new Map<string, number>();
   for (const { step } of flat) {
@@ -165,7 +173,10 @@ function checkTrigger(input: DiagnosticsInput, out: Diagnostic[]): void {
     });
   }
 
-  if (input.triggerType === 'time_based' && !String(cfg.schedule ?? '').trim()) {
+  if (
+    input.triggerType === 'time_based' &&
+    !String(cfg.schedule ?? '').trim()
+  ) {
     out.push({
       level: 'error',
       stepKey: null,
@@ -202,7 +213,8 @@ function checkReplyWindow(input: DiagnosticsInput, out: Diagnostic[]): void {
       if (step.step_type === 'wait') {
         const amount = Number(step.step_config.amount ?? 0);
         const unit = String(step.step_config.unit ?? 'hours');
-        elapsed += (Number.isFinite(amount) ? amount : 0) *
+        elapsed +=
+          (Number.isFinite(amount) ? amount : 0) *
           (WAIT_UNIT_MINUTES[unit] ?? 60);
       }
       if (step.step_type === 'wait_until') {
@@ -211,7 +223,10 @@ function checkReplyWindow(input: DiagnosticsInput, out: Diagnostic[]): void {
         elapsed += WHATSAPP_WINDOW_MINUTES;
       }
 
-      if (SENDING_STEPS.has(step.step_type) && elapsed >= WHATSAPP_WINDOW_MINUTES) {
+      if (
+        SENDING_STEPS.has(step.step_type) &&
+        elapsed >= WHATSAPP_WINDOW_MINUTES
+      ) {
         out.push({
           level: 'warning',
           stepKey: step.key,
@@ -285,12 +300,12 @@ function checkRequiredFields(step: BuilderStep, out: Diagnostic[]): void {
 function checkAvailability(
   step: BuilderStep,
   input: DiagnosticsInput,
-  out: Diagnostic[],
+  out: Diagnostic[]
 ): void {
   const availability: Availability = stepAvailability(
     step.step_type,
     input.channels,
-    input.triggerType,
+    input.triggerType
   );
   if (availability.status === 'ok' || !availability.reason) return;
   out.push({
@@ -315,7 +330,7 @@ function checkAvailability(
 function checkTokens(
   step: BuilderStep,
   input: DiagnosticsInput,
-  out: Diagnostic[],
+  out: Diagnostic[]
 ): void {
   // Before the early return below: an unclosed `{{` produces NO parsed
   // tokens, so checking it after "are there any tokens?" meant the one
@@ -327,7 +342,7 @@ function checkTokens(
   if (tokens.length === 0) return;
 
   const upstream = new Set(
-    precedingSteps(input.steps, step.key).map((p) => p.step.key),
+    precedingSteps(input.steps, step.key).map((p) => p.step.key)
   );
   const variables = new Set(declaredVariables(input.steps));
 
@@ -367,8 +382,7 @@ function checkTokens(
           level: 'warning',
           stepKey: step.key,
           title: `Nothing sets “${name}”`,
-          detail:
-            `{{ ${token} }} reads a variable that no Set variable step — and no “save the result as” — ever writes. It will be empty.`,
+          detail: `{{ ${token} }} reads a variable that no Set variable step — and no “save the result as” — ever writes. It will be empty.`,
         });
       }
       continue;
@@ -394,10 +408,7 @@ function checkTokens(
     }
 
     // Trigger-specific tokens that this trigger cannot supply.
-    if (
-      namespace === 'message' &&
-      input.triggerType === 'time_based'
-    ) {
+    if (namespace === 'message' && input.triggerType === 'time_based') {
       out.push({
         level: 'warning',
         stepKey: step.key,
@@ -406,10 +417,7 @@ function checkTokens(
           'A scheduled automation is not started by a message, so {{ message.text }} is always empty.',
       });
     }
-    if (
-      namespace === 'form' &&
-      input.triggerType !== 'form_submitted'
-    ) {
+    if (namespace === 'form' && input.triggerType !== 'form_submitted') {
       out.push({
         level: 'warning',
         stepKey: step.key,
@@ -442,7 +450,7 @@ function checkMalformedTokens(step: BuilderStep, out: Diagnostic[]): void {
 function checkStepSpecifics(
   step: BuilderStep,
   input: DiagnosticsInput,
-  out: Diagnostic[],
+  out: Diagnostic[]
 ): void {
   const cfg = step.step_config;
 
@@ -504,7 +512,7 @@ function checkStepSpecifics(
       }
 
       const connection = input.connections?.find(
-        (c) => c.id === cfg.connection_id,
+        (c) => c.id === cfg.connection_id
       );
       if (!cfg.connection_id || !connection) {
         out.push({
@@ -562,6 +570,74 @@ function checkStepSpecifics(
       break;
     }
 
+    case 'google_action': {
+      // Degrade silently when the catalogue has not loaded.
+      if (!input.googleActions?.length) break;
+
+      const action = input.googleActions.find((a) => a.id === cfg.action);
+      if (!action) {
+        out.push({
+          level: 'error',
+          stepKey: step.key,
+          title: cfg.action
+            ? `Unknown action "${String(cfg.action)}"`
+            : 'No action chosen',
+          detail: 'Choose a Google action from the list.',
+        });
+        break;
+      }
+
+      const conn = input.googleConnection;
+      if (
+        !conn ||
+        conn.status === 'not_configured' ||
+        conn.status === 'provisioned'
+      ) {
+        out.push({
+          level: 'error',
+          stepKey: step.key,
+          title: 'Google is not connected',
+          detail:
+            'Set up the Google Apps Script bridge in Integrations before this step can run.',
+        });
+        break;
+      }
+
+      if (conn.status === 'error') {
+        out.push({
+          level: 'error',
+          stepKey: step.key,
+          title: 'Google connection has an error',
+          detail: conn.lastError ?? 'Check the bridge setup in Integrations.',
+        });
+        break;
+      }
+
+      for (const spec of action.inputs) {
+        if (!spec.required) continue;
+        const value = (cfg.input as Record<string, unknown> | undefined)?.[
+          spec.key
+        ];
+        const empty =
+          value === undefined ||
+          value === null ||
+          (typeof value === 'string' && value.trim() === '') ||
+          (Array.isArray(value) && value.length === 0) ||
+          (spec.kind === 'key_values' &&
+            typeof value === 'object' &&
+            Object.keys(value as object).length === 0);
+        if (empty) {
+          out.push({
+            level: 'error',
+            stepKey: step.key,
+            title: `"${spec.label}" is empty`,
+            detail: `${action.label} cannot run without it.`,
+          });
+        }
+      }
+      break;
+    }
+
     case 'start_flow': {
       const flow = input.flows?.find((f) => f.id === cfg.flow_id);
       if (flow && flow.status !== 'active') {
@@ -577,7 +653,10 @@ function checkStepSpecifics(
     }
 
     case 'run_automation': {
-      if (cfg.automation_id && cfg.automation_id === input.currentAutomationId) {
+      if (
+        cfg.automation_id &&
+        cfg.automation_id === input.currentAutomationId
+      ) {
         out.push({
           level: 'error',
           stepKey: step.key,
@@ -606,7 +685,11 @@ function checkStepSpecifics(
       // The SSRF guard refuses anything that resolves to a private
       // address, so these fail at run time with a message the author
       // will not connect to what they typed.
-      if (/localhost|127\.0\.0\.1|::1|\b10\.|\b192\.168\.|\b172\.(1[6-9]|2\d|3[01])\./.test(url)) {
+      if (
+        /localhost|127\.0\.0\.1|::1|\b10\.|\b192\.168\.|\b172\.(1[6-9]|2\d|3[01])\./.test(
+          url
+        )
+      ) {
         out.push({
           level: 'error',
           stepKey: step.key,
@@ -647,8 +730,7 @@ function checkStepSpecifics(
           level: 'warning',
           stepKey: step.key,
           title: 'Very long wait',
-          detail:
-            `This pauses for ${formatMinutes(minutes)}. The run is held on the queue that whole time and resumes even if the contact has since replied or unsubscribed.`,
+          detail: `This pauses for ${formatMinutes(minutes)}. The run is held on the queue that whole time and resumes even if the contact has since replied or unsubscribed.`,
         });
       }
       break;
@@ -737,9 +819,7 @@ function formatMinutes(minutes: number): string {
 }
 
 /** Worst level present, for a card badge or a header chip. */
-export function worstLevel(
-  diagnostics: Diagnostic[],
-): DiagnosticLevel | null {
+export function worstLevel(diagnostics: Diagnostic[]): DiagnosticLevel | null {
   if (diagnostics.some((d) => d.level === 'error')) return 'error';
   if (diagnostics.some((d) => d.level === 'warning')) return 'warning';
   if (diagnostics.some((d) => d.level === 'info')) return 'info';
@@ -747,7 +827,7 @@ export function worstLevel(
 }
 
 export function groupByStep(
-  diagnostics: Diagnostic[],
+  diagnostics: Diagnostic[]
 ): Map<string | null, Diagnostic[]> {
   const map = new Map<string | null, Diagnostic[]>();
   for (const d of diagnostics) {

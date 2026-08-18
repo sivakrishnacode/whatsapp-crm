@@ -24,24 +24,20 @@
  * reads — the same reasoning as `availability.ts` refusing to warn about
  * partial channel support on unscoped automations.
  *
- * APP REQUIREMENTS ARE CHECKED BY SCOPE, NOT BY PROVIDER
- *   "Has a Google connection" is not the question — Gmail send and
- *   Sheets append are different scopes, and incremental consent means a
- *   workspace can genuinely have one and not the other. The check reads
- *   the SCOPES the template's own `app_action` steps need out of the
- *   served catalogue and compares them against the connection, using the
- *   same `missingScopes()` the step inspector uses.
+ * APP REQUIREMENTS ARE ONE QUESTION, NOT MANY
+ *   Gmail, Calendar, Meet and Sheets all arrive through the workspace's
+ *   single Apps Script bridge, so "is Google connected?" has one answer
+ *   and one check: `GET /api/google-script`. The predecessor compared
+ *   OAuth scopes per app, which died with the connector schema.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 
 import { useChannelStatus } from '@/hooks/use-channel-status';
 import {
-  connectUrl,
-  findAction,
-  findApp,
-  type AppConnection,
-  type CatalogApp,
+  googleConnectionFromSummary,
+  type GoogleScriptConnection,
+  type GoogleScriptSummary,
 } from '@/lib/automations/connectors';
 import {
   templateRequirements,
@@ -62,74 +58,58 @@ export interface ResolvedRequirement {
   detail?: string;
 }
 
-export interface ConnectionsSnapshot {
-  connections: AppConnection[];
-  apps: CatalogApp[];
+export interface GoogleBridgeSnapshot {
+  /** The bridge's connection status, or null before the fetch resolves. */
+  google: GoogleScriptConnection | null;
   loading: boolean;
 }
 
 const CHANNEL_IDS = new Set(['whatsapp', 'instagram', 'web']);
 
 /**
- * Connections + catalogue, fetched once for the whole gallery.
+ * Bridge status, fetched once for the whole gallery.
  *
- * Two dozen cards resolving their own requirements would be two dozen
- * pairs of requests. Same reasoning as `ChannelStatusProvider`, at a
- * smaller scale — so this stays a hook the gallery calls once and passes
- * down, rather than a context nothing else needs.
+ * Two dozen cards resolving their own requirement would be two dozen
+ * requests. Same reasoning as `ChannelStatusProvider`, at a smaller
+ * scale — so this stays a hook the gallery calls once and passes down,
+ * rather than a context nothing else needs.
  */
-export function useConnectionsSnapshot(): ConnectionsSnapshot {
-  const [connections, setConnections] = useState<AppConnection[]>([]);
-  const [apps, setApps] = useState<CatalogApp[]>([]);
+export function useGoogleBridgeSnapshot(): GoogleBridgeSnapshot {
+  const [google, setGoogle] = useState<GoogleScriptConnection | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [list, catalog] = await Promise.allSettled([
-        fetch('/api/connections', { cache: 'no-store' }).then((r) => r.json()),
-        fetch('/api/connections/catalog', { cache: 'no-store' }).then((r) =>
-          r.json(),
-        ),
-      ]);
-      if (cancelled) return;
-      if (list.status === 'fulfilled') {
-        setConnections((list.value?.connections ?? []) as AppConnection[]);
+      try {
+        const res = await fetch('/api/google-script', { cache: 'no-store' });
+        if (res.ok) {
+          const json = (await res.json()) as {
+            connection?: GoogleScriptSummary;
+          };
+          if (!cancelled) {
+            setGoogle(googleConnectionFromSummary(json.connection));
+          }
+        }
+      } catch {
+        // Leave null — the gallery shows "checking" only while loading,
+        // and a template that needs nothing else still works.
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      if (catalog.status === 'fulfilled') {
-        setApps((catalog.value?.apps ?? []) as CatalogApp[]);
-      }
-      // Loading ends either way. A gallery stuck on "checking…" because
-      // one endpoint 500'd tells the user nothing and hides the
-      // templates that need no connection at all.
-      setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  return { connections, apps, loading };
-}
-
-/** Which app actions a template's steps actually invoke. */
-function appActionsIn(
-  template: AutomationTemplateDefinition,
-): { app: string; action: string }[] {
-  const out: { app: string; action: string }[] = [];
-  for (const seed of template.steps) {
-    if (seed.step_type !== 'app_action') continue;
-    const cfg = seed.step_config as { app?: string; action?: string };
-    if (cfg.app && cfg.action) out.push({ app: cfg.app, action: cfg.action });
-  }
-  return out;
+  return { google, loading };
 }
 
 export function resolveRequirements(
   template: AutomationTemplateDefinition,
-  snapshot: ConnectionsSnapshot,
-  channelStates: Record<string, { state: string }>,
-  returnTo: string,
+  snapshot: GoogleBridgeSnapshot,
+  channelStates: Record<string, { state: string }>
 ): ResolvedRequirement[] {
   return templateRequirements(template).map((requirement) => {
     if (requirement.kind === 'setup') {
@@ -152,7 +132,11 @@ export function resolveRequirements(
       // the connect button. They were one href only because the
       // landing page used to BE Channel Settings.
       return status.state === 'connected'
-        ? { requirement, state: 'ready' as const, href: channelLandingHref(id as ChannelId) }
+        ? {
+            requirement,
+            state: 'ready' as const,
+            href: channelLandingHref(id as ChannelId),
+          }
         : {
             requirement,
             state: 'missing' as const,
@@ -161,43 +145,21 @@ export function resolveRequirements(
           };
     }
 
-    // kind === 'app'
+    // kind === 'app' — the Google Apps Script bridge, the one and only.
     if (snapshot.loading) return { requirement, state: 'checking' as const };
 
-    const app = findApp(snapshot.apps, requirement.app);
-    if (!app) {
-      // The catalogue is the authority on what exists. If it does not
-      // list the app, saying "not connected" would send someone to an
-      // OAuth flow that isn't there.
-      return {
-        requirement,
-        state: 'missing' as const,
-        detail: `${requirement.label} is not available on this workspace.`,
-      };
-    }
-
-    const needed = appActionsIn(template)
-      .filter((a) => a.app === requirement.app)
-      .flatMap((a) => findAction(app, a.action)?.scopes ?? []);
-
-    // Same comparison as `missingScopes()` in connectors.ts, but across
-    // the union of every action this template calls rather than one —
-    // a template with a Sheets step and a Gmail step needs both.
-    const satisfied = snapshot.connections.some(
-      (c) =>
-        c.provider === requirement.provider &&
-        c.status === 'active' &&
-        needed.every((scope) => c.scopes.includes(scope)),
-    );
-
-    const href = connectUrl(app, returnTo);
-    return satisfied
+    const connected =
+      snapshot.google?.status === 'connected' ||
+      snapshot.google?.status === 'error';
+    const href = '/integrations';
+    return connected
       ? { requirement, state: 'ready' as const, href }
       : {
           requirement,
           state: 'missing' as const,
           href,
-          detail: `Connect ${requirement.label} to let this automation write to it.`,
+          detail:
+            'Set up the Google bridge in Integrations — Gmail, Calendar, Meet and Sheets all go through it.',
         };
   });
 }
@@ -205,12 +167,11 @@ export function resolveRequirements(
 /** Requirements for one template, resolved against live workspace state. */
 export function useTemplateReadiness(
   template: AutomationTemplateDefinition,
-  snapshot: ConnectionsSnapshot,
-  returnTo: string,
+  snapshot: GoogleBridgeSnapshot
 ): ResolvedRequirement[] {
   const channelStates = useChannelStatus();
   return useMemo(
-    () => resolveRequirements(template, snapshot, channelStates, returnTo),
-    [template, snapshot, channelStates, returnTo],
+    () => resolveRequirements(template, snapshot, channelStates),
+    [template, snapshot, channelStates]
   );
 }

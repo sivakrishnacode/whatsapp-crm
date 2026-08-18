@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
-import type { NextConfig } from "next";
-import createNextIntlPlugin from "next-intl/plugin";
+import { existsSync } from 'node:fs';
+import type { NextConfig } from 'next';
+import createNextIntlPlugin from 'next-intl/plugin';
 
-const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
+const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
 /**
  * Baseline security headers applied to every response.
@@ -22,22 +22,22 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
  */
 const SECURITY_HEADERS = [
   {
-    key: "Strict-Transport-Security",
-    value: "max-age=63072000; includeSubDomains; preload",
+    key: 'Strict-Transport-Security',
+    value: 'max-age=63072000; includeSubDomains; preload',
   },
-  { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "X-Frame-Options", value: "DENY" },
-  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   {
     // Microphone is allowed for same-origin (`self`) so the inbox
     // composer can record voice notes via MediaRecorder. Everything
     // else stays denied — a compromised dependency can't silently grab
     // the camera / geolocation / etc.
-    key: "Permissions-Policy",
-    value: "camera=(), microphone=(self), geolocation=(), payment=(), usb=()",
+    key: 'Permissions-Policy',
+    value: 'camera=(), microphone=(self), geolocation=(), payment=(), usb=()',
   },
   {
-    key: "Content-Security-Policy-Report-Only",
+    key: 'Content-Security-Policy-Report-Only',
     value: [
       "default-src 'self'",
       // Next.js needs 'unsafe-inline' for its inline hydration script
@@ -60,7 +60,7 @@ const SECURITY_HEADERS = [
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
-    ].join("; "),
+    ].join('; '),
   },
 ] as const;
 
@@ -123,10 +123,10 @@ const nextConfig: NextConfig = {
     // NEST_API_URL=http://localhost:8001 would otherwise get baked in.
     // Dockerfile sets DOCKERIZED=true so the build takes this branch.
     const isDocker =
-      existsSync("/.dockerenv") || process.env.DOCKERIZED === "true";
+      existsSync('/.dockerenv') || process.env.DOCKERIZED === 'true';
     const nestApiUrl = isDocker
-      ? "http://api:8001"
-      : process.env.NEST_API_URL || "http://localhost:8001";
+      ? 'http://api:8001'
+      : process.env.NEST_API_URL || 'http://localhost:8001';
     return {
       // `beforeFiles` so these take priority over the still-present
       // src/app/api/** route handlers they're replacing — Next's default
@@ -134,67 +134,142 @@ const nextConfig: NextConfig = {
       // filesystem route matches, which would let the old handlers keep
       // silently shadowing the new backend until their files are deleted.
       beforeFiles: [
-        { source: "/api/_internal/nest-health", destination: `${nestApiUrl}/health` },
-        { source: "/api/automations", destination: `${nestApiUrl}/automations` },
-        { source: "/api/automations/:path*", destination: `${nestApiUrl}/automations/:path*` },
-        { source: "/api/flows", destination: `${nestApiUrl}/flows` },
-        { source: "/api/flows/:path*", destination: `${nestApiUrl}/flows/:path*` },
-        { source: "/api/v1/:path*", destination: `${nestApiUrl}/v1/:path*` },
-        { source: "/api/whatsapp/:path*", destination: `${nestApiUrl}/whatsapp/:path*` },
+        {
+          source: '/api/_internal/nest-health',
+          destination: `${nestApiUrl}/health`,
+        },
+        {
+          source: '/api/automations',
+          destination: `${nestApiUrl}/automations`,
+        },
+        {
+          source: '/api/automations/:path*',
+          destination: `${nestApiUrl}/automations/:path*`,
+        },
+        { source: '/api/flows', destination: `${nestApiUrl}/flows` },
+        {
+          source: '/api/flows/:path*',
+          destination: `${nestApiUrl}/flows/:path*`,
+        },
+        { source: '/api/v1/:path*', destination: `${nestApiUrl}/v1/:path*` },
+        {
+          source: '/api/whatsapp/:path*',
+          destination: `${nestApiUrl}/whatsapp/:path*`,
+        },
         // Dashboard-facing Instagram endpoints (config, send, comments).
         // NOT the webhook or the OAuth callback — Meta calls those on the
         // API's own public domain, so they never pass through here.
-        { source: "/api/instagram/:path*", destination: `${nestApiUrl}/instagram/:path*` },
+        {
+          source: '/api/instagram/:path*',
+          destination: `${nestApiUrl}/instagram/:path*`,
+        },
         // Web channel — dashboard-facing widget configuration.
-        { source: "/api/web/:path*", destination: `${nestApiUrl}/web/:path*` },
+        { source: '/api/web/:path*', destination: `${nestApiUrl}/web/:path*` },
         // The widget's own visitor-facing surface, called by anonymous
         // browsers on customers' websites. Same-origin through this proxy
         // so the widget iframe never makes a cross-origin request and CORS
         // stays out of the picture — the origin allowlist in
         // widget-key.guard is what actually gates access, not CORS.
-        { source: "/api/public/:path*", destination: `${nestApiUrl}/public/:path*` },
+        {
+          source: '/api/public/:path*',
+          destination: `${nestApiUrl}/public/:path*`,
+        },
         // Phase 5 Migrations
-        { source: "/api/account", destination: `${nestApiUrl}/account` },
-        { source: "/api/account/:path*", destination: `${nestApiUrl}/account/:path*` },
-        { source: "/api/invitations/:path*", destination: `${nestApiUrl}/invitations/:path*` },
-        { source: "/api/subscription", destination: `${nestApiUrl}/subscription` },
-        { source: "/api/subscription/:path*", destination: `${nestApiUrl}/subscription/:path*` },
+        { source: '/api/account', destination: `${nestApiUrl}/account` },
+        {
+          source: '/api/account/:path*',
+          destination: `${nestApiUrl}/account/:path*`,
+        },
+        {
+          source: '/api/invitations/:path*',
+          destination: `${nestApiUrl}/invitations/:path*`,
+        },
+        {
+          source: '/api/subscription',
+          destination: `${nestApiUrl}/subscription`,
+        },
+        {
+          source: '/api/subscription/:path*',
+          destination: `${nestApiUrl}/subscription/:path*`,
+        },
         // Guided signup (`/welcome`). Note this is the API surface, not
         // the /onboarding *page*, which is the channel checklist and is
         // rendered by this app.
-        { source: "/api/onboarding", destination: `${nestApiUrl}/onboarding` },
-        { source: "/api/onboarding/:path*", destination: `${nestApiUrl}/onboarding/:path*` },
-        { source: "/api/webhooks/:path*", destination: `${nestApiUrl}/webhooks/:path*` },
-        { source: "/api/ecommerce/:path*", destination: `${nestApiUrl}/ecommerce/:path*` },
-        { source: "/api/integrations/:path*", destination: `${nestApiUrl}/integrations/:path*` },
-        // OAuth app connections (Google Sheets/Gmail/Calendar/Meet).
-        // Includes /api/connections/oauth/callback: Google is configured
-        // with THIS origin as the redirect URI, so the callback must be
-        // reachable here and not only on the API's own domain. Same
-        // arrangement as the Ads Manager callback above.
-        { source: "/api/connections/:path*", destination: `${nestApiUrl}/connections/:path*` },
-        { source: "/api/connections", destination: `${nestApiUrl}/connections` },
-        { source: "/api/internal/:path*", destination: `${nestApiUrl}/internal/:path*` },
-        { source: "/api/ai/:path*", destination: `${nestApiUrl}/ai/:path*` },
-        { source: "/api/ctwa/:path*", destination: `${nestApiUrl}/ctwa/:path*` },
+        { source: '/api/onboarding', destination: `${nestApiUrl}/onboarding` },
+        {
+          source: '/api/onboarding/:path*',
+          destination: `${nestApiUrl}/onboarding/:path*`,
+        },
+        {
+          source: '/api/webhooks/:path*',
+          destination: `${nestApiUrl}/webhooks/:path*`,
+        },
+        {
+          source: '/api/ecommerce/:path*',
+          destination: `${nestApiUrl}/ecommerce/:path*`,
+        },
+        {
+          source: '/api/integrations/:path*',
+          destination: `${nestApiUrl}/integrations/:path*`,
+        },
+        // Google Apps Script bridge — the dashboard's Google integration.
+        // Replaces the old OAuth app connections for Google services.
+        {
+          source: '/api/google-script',
+          destination: `${nestApiUrl}/google-script`,
+        },
+        {
+          source: '/api/google-script/:path*',
+          destination: `${nestApiUrl}/google-script/:path*`,
+        },
+        // OAuth app connections — DEPRECATED, kept for backward compat.
+        // The old Google connector endpoints no longer exist on the API;
+        // these rewrites are retained so any stale client requests 404
+        // cleanly through Nest rather than hitting a Next.js handler.
+        {
+          source: '/api/connections/:path*',
+          destination: `${nestApiUrl}/connections/:path*`,
+        },
+        {
+          source: '/api/connections',
+          destination: `${nestApiUrl}/connections`,
+        },
+        {
+          source: '/api/internal/:path*',
+          destination: `${nestApiUrl}/internal/:path*`,
+        },
+        { source: '/api/ai/:path*', destination: `${nestApiUrl}/ai/:path*` },
+        {
+          source: '/api/ctwa/:path*',
+          destination: `${nestApiUrl}/ctwa/:path*`,
+        },
         // Meta Ads Manager. Includes the OAuth callback
         // (/api/ads/oauth/callback) — unlike the Instagram callback,
         // which Meta calls on the API's own domain, this one is
         // registered as a redirect URI on whichever origin the operator
         // configures in META_ADS_REDIRECT_URI. Proxying it here means
         // either origin works.
-        { source: "/api/ads/:path*", destination: `${nestApiUrl}/ads/:path*` },
-        { source: "/api/campaigns/:path*", destination: `${nestApiUrl}/campaigns/:path*` },
+        { source: '/api/ads/:path*', destination: `${nestApiUrl}/ads/:path*` },
+        {
+          source: '/api/campaigns/:path*',
+          destination: `${nestApiUrl}/campaigns/:path*`,
+        },
         // Phase 4 — Form builder
-        { source: "/api/forms", destination: `${nestApiUrl}/forms` },
-        { source: "/api/forms/:path*", destination: `${nestApiUrl}/forms/:path*` },
+        { source: '/api/forms', destination: `${nestApiUrl}/forms` },
+        {
+          source: '/api/forms/:path*',
+          destination: `${nestApiUrl}/forms/:path*`,
+        },
         // Phase 6 — Appointments
         // Booking lives under /api/forms and /api/public/forms: a booking IS
         // a form carrying a slot-picker field, so it needs no routes of its
         // own. There were /api/appointments* rewrites here pointing at Nest
         // controllers that never existed — every call 404'd.
-        { source: "/api/bookings", destination: `${nestApiUrl}/bookings` },
-        { source: "/api/bookings/:path*", destination: `${nestApiUrl}/bookings/:path*` },
+        { source: '/api/bookings', destination: `${nestApiUrl}/bookings` },
+        {
+          source: '/api/bookings/:path*',
+          destination: `${nestApiUrl}/bookings/:path*`,
+        },
       ],
 
       afterFiles: [],
@@ -220,18 +295,22 @@ const nextConfig: NextConfig = {
    */
   async redirects() {
     const moved: [string, string][] = [
-      ["/broadcasts", "/channels/whatsapp/broadcasts"],
-      ["/campaigns", "/channels/whatsapp/campaigns"],
-      ["/templates", "/channels/whatsapp/templates"],
-      ["/whatsapp-flows", "/channels/whatsapp/flows"],
-      ["/ecommerce", "/channels/whatsapp/commerce"],
-      ["/ctwa", "/channels/whatsapp/ctwa"],
+      ['/broadcasts', '/channels/whatsapp/broadcasts'],
+      ['/campaigns', '/channels/whatsapp/campaigns'],
+      ['/templates', '/channels/whatsapp/templates'],
+      ['/whatsapp-flows', '/channels/whatsapp/flows'],
+      ['/ecommerce', '/channels/whatsapp/commerce'],
+      ['/ctwa', '/channels/whatsapp/ctwa'],
     ];
     return [
       ...moved.flatMap(([from, to]) => [
         { source: from, destination: to, permanent: false },
         // Nested paths too: /broadcasts/new, /broadcasts/<id>, /whatsapp-flows/<id>.
-        { source: `${from}/:path*`, destination: `${to}/:path*`, permanent: false },
+        {
+          source: `${from}/:path*`,
+          destination: `${to}/:path*`,
+          permanent: false,
+        },
       ]),
       // WhatsApp setup is no longer a Settings tab — it is one screen at
       // its channel route, reached from the channel rail. The old
@@ -239,9 +318,9 @@ const nextConfig: NextConfig = {
       // `resolveSection` to the Overview landing, which looks like the
       // page silently ignored the link.
       {
-        source: "/settings",
-        has: [{ type: "query" as const, key: "tab", value: "whatsapp" }],
-        destination: "/channels/whatsapp/settings",
+        source: '/settings',
+        has: [{ type: 'query' as const, key: 'tab', value: 'whatsapp' }],
+        destination: '/channels/whatsapp/settings',
         permanent: false,
       },
     ];
@@ -249,16 +328,16 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/api/:path*",
-        headers: [{ key: "Cache-Control", value: "no-store" }],
+        source: '/api/:path*',
+        headers: [{ key: 'Cache-Control', value: 'no-store' }],
       },
       {
-        source: "/:path((?!_next/static|_next/image|api).*)",
+        source: '/:path((?!_next/static|_next/image|api).*)',
         headers: [
           {
-            key: "Cache-Control",
+            key: 'Cache-Control',
             value:
-              "public, max-age=0, s-maxage=300, stale-while-revalidate=86400",
+              'public, max-age=0, s-maxage=300, stale-while-revalidate=86400',
           },
         ],
       },
@@ -268,26 +347,42 @@ const nextConfig: NextConfig = {
         // policy don't hurt).
         //
         // EXCLUDES /widget, /f, /book — see the next rules for why.
-        source: "/:path((?!widget/|f/|book/).*)",
+        source: '/:path((?!widget/|f/|book/).*)',
         headers: [...SECURITY_HEADERS],
       },
       {
         // Forms can be embedded in iframes on customer sites.
         // We apply the same baseline security headers but omit
         // X-Frame-Options and relax frame-ancestors in CSP.
-        source: "/f/:path*",
-        headers: SECURITY_HEADERS.filter(h => h.key !== "X-Frame-Options").map(h => 
-          h.key === "Content-Security-Policy-Report-Only" 
-            ? { ...h, value: h.value.replace("frame-ancestors 'none'", "frame-ancestors *") }
+        source: '/f/:path*',
+        headers: SECURITY_HEADERS.filter(
+          (h) => h.key !== 'X-Frame-Options'
+        ).map((h) =>
+          h.key === 'Content-Security-Policy-Report-Only'
+            ? {
+                ...h,
+                value: h.value.replace(
+                  "frame-ancestors 'none'",
+                  'frame-ancestors *'
+                ),
+              }
             : h
         ),
       },
       {
         // Booking pages can be embedded in iframes on customer sites.
-        source: "/book/:path*",
-        headers: SECURITY_HEADERS.filter(h => h.key !== "X-Frame-Options").map(h => 
-          h.key === "Content-Security-Policy-Report-Only" 
-            ? { ...h, value: h.value.replace("frame-ancestors 'none'", "frame-ancestors *") }
+        source: '/book/:path*',
+        headers: SECURITY_HEADERS.filter(
+          (h) => h.key !== 'X-Frame-Options'
+        ).map((h) =>
+          h.key === 'Content-Security-Policy-Report-Only'
+            ? {
+                ...h,
+                value: h.value.replace(
+                  "frame-ancestors 'none'",
+                  'frame-ancestors *'
+                ),
+              }
             : h
         ),
       },
@@ -318,17 +413,18 @@ const nextConfig: NextConfig = {
          * covers non-browser callers. Framing the widget from a
          * disallowed origin therefore renders an error, not a chat.
          */
-        source: "/widget/:path*",
+        source: '/widget/:path*',
         headers: [
-          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
           // No Referer to third-party sites from inside the frame.
-          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: 'Referrer-Policy', value: 'no-referrer' },
           {
-            key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+            key: 'Permissions-Policy',
+            value:
+              'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
           },
           {
-            key: "Content-Security-Policy",
+            key: 'Content-Security-Policy',
             // Enforced, not report-only, unlike the app-wide policy: this
             // is a small surface we fully control, so there is no legacy
             // to shake out first.
@@ -346,7 +442,7 @@ const nextConfig: NextConfig = {
               "connect-src 'self'",
               "base-uri 'self'",
               "form-action 'self'",
-            ].join("; "),
+            ].join('; '),
           },
         ],
       },

@@ -124,7 +124,9 @@ export interface StepColors {
   text: string;
 }
 
-function colorsForCategory(cat: StepCategory | 'trigger' | 'neutral'): StepColors {
+function colorsForCategory(
+  cat: StepCategory | 'trigger' | 'neutral'
+): StepColors {
   const t = CATEGORY_HUE[cat];
   const solid = `oklch(${t.l} ${t.c} ${t.h})`;
   return {
@@ -403,6 +405,15 @@ export const STEP_META: Record<AutomationStepType, StepMeta> = {
     category: 'data',
     blurb: 'Runs an action on a connected app',
     hidden: true,
+    deprecated: true,
+    outputs: [],
+  },
+  google_action: {
+    label: 'Google action',
+    icon: Zap,
+    category: 'data',
+    blurb: 'Runs an action via the Google Apps Script bridge',
+    hidden: true,
     // Real outputs are per action and come from the catalogue —
     // `outputsForStep()` merges them in for the token picker.
     outputs: [],
@@ -446,23 +457,20 @@ export const ADDABLE_STEPS: AutomationStepType[] = STEP_CATEGORIES.flatMap(
       (type) =>
         STEP_META[type].category === category.id &&
         !STEP_META[type].deprecated &&
-        !STEP_META[type].hidden,
-    ),
+        !STEP_META[type].hidden
+    )
 );
 
 /**
- * What a step is actually called, for `app_action` steps.
- *
- * The card, the inspector header and the diagnostics list all show a
- * step's name, and for an app action that name lives in the catalogue
- * rather than in STEP_META. Falling back to the app id (then to the
- * generic label) means a catalogue that has not loaded yet, or an app
- * that has been withdrawn, still renders something a human can place —
- * "google_sheets: append_row" beats "App action".
+ * What a step is actually called, for `app_action` steps (DEPRECATED).
  */
 export function appActionLabel(
   config: { app?: string; action?: string } | undefined,
-  apps: { app: string; name: string; actions: { id: string; label: string }[] }[],
+  apps: {
+    app: string;
+    name: string;
+    actions: { id: string; label: string }[];
+  }[]
 ): string {
   const appId = config?.app;
   const actionId = config?.action;
@@ -471,6 +479,29 @@ export function appActionLabel(
   const app = apps.find((a) => a.app === appId);
   const action = app?.actions.find((a) => a.id === actionId);
   return `${app?.name ?? appId}: ${action?.label ?? actionId}`;
+}
+
+/**
+ * What a step is actually called, for `google_action` steps.
+ *
+ * The card, the inspector header and the diagnostics list all show a
+ * step's name, and for a Google action that name lives in the bridge
+ * catalogue rather than in STEP_META. Falling back to the action id
+ * means a catalogue that has not loaded yet still renders something
+ * recognisable — "sheet_append" beats "Google action".
+ */
+export function googleActionLabel(
+  config: { action?: string } | undefined,
+  actions: { id: string; label: string; service: string }[],
+  serviceLabels?: Record<string, string>
+): string {
+  const actionId = config?.action;
+  if (!actionId) return STEP_META.google_action.label;
+
+  const action = actions.find((a) => a.id === actionId);
+  if (!action) return actionId;
+  const serviceName = serviceLabels?.[action.service] ?? action.service;
+  return `${serviceName} · ${action.label}`;
 }
 
 export function groupStepsByCategory(types: AutomationStepType[]): {
@@ -508,7 +539,7 @@ export function StepIconChip({
     <span
       className={cn(
         'flex shrink-0 items-center justify-center rounded-lg',
-        className,
+        className
       )}
       // `line`, never `solid`: the raw hue measures 2.2–2.9:1 for six of
       // the nine categories against the chip in light mode, under WCAG
@@ -532,9 +563,7 @@ export function StepIconChip({
  * shape that cannot produce malformed JSON), `wait` to one hour, a
  * condition to one empty rule so the editor has a row to render.
  */
-export function blankConfig(
-  type: AutomationStepType,
-): Record<string, unknown> {
+export function blankConfig(type: AutomationStepType): Record<string, unknown> {
   switch (type) {
     case 'send_message':
       return { text: '' };
@@ -618,7 +647,9 @@ export function blankConfig(
 // ============================================================
 
 export function truncate(s: string, max = 64): string {
-  const clean = String(s ?? '').replace(/\s+/g, ' ').trim();
+  const clean = String(s ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (clean.length <= max) return clean;
   return clean.slice(0, max - 1) + '…';
 }
@@ -632,16 +663,19 @@ export function truncate(s: string, max = 64): string {
  */
 export function summarizeStep(
   type: AutomationStepType,
-  cfg: Record<string, unknown>,
+  cfg: Record<string, unknown>
 ): string | null {
-  const s = (k: string) => (typeof cfg[k] === 'string' ? (cfg[k] as string) : '');
+  const s = (k: string) =>
+    typeof cfg[k] === 'string' ? (cfg[k] as string) : '';
   switch (type) {
     case 'send_message':
       return s('text') ? truncate(s('text')) : null;
     case 'send_template':
       return s('template_name') || null;
     case 'send_media':
-      return s('link') ? `${cfg.kind ?? 'image'} · ${truncate(s('link'), 40)}` : null;
+      return s('link')
+        ? `${cfg.kind ?? 'image'} · ${truncate(s('link'), 40)}`
+        : null;
     case 'send_buttons': {
       const buttons = Array.isArray(cfg.buttons) ? cfg.buttons : [];
       const titles = buttons
@@ -653,13 +687,18 @@ export function summarizeStep(
       const sections = Array.isArray(cfg.sections) ? cfg.sections : [];
       const rows = sections.reduce(
         (n, sec) =>
-          n + (Array.isArray((sec as { rows?: unknown[] })?.rows) ? (sec as { rows: unknown[] }).rows.length : 0),
-        0,
+          n +
+          (Array.isArray((sec as { rows?: unknown[] })?.rows)
+            ? (sec as { rows: unknown[] }).rows.length
+            : 0),
+        0
       );
       return rows > 0 ? `${rows} option${rows === 1 ? '' : 's'}` : null;
     }
     case 'update_contact_field':
-      return s('field') ? `${s('field')} = ${truncate(s('value'), 24) || '—'}` : null;
+      return s('field')
+        ? `${s('field')} = ${truncate(s('value'), 24) || '—'}`
+        : null;
     case 'add_note':
       return s('text') ? truncate(s('text')) : null;
     case 'create_deal':
@@ -691,13 +730,17 @@ export function summarizeStep(
       }
       const days = Array.isArray(cfg.days) ? (cfg.days as number[]) : [];
       const when = s('time') || '09:00';
-      return days.length > 0 ? `${when} on ${days.length} day(s)` : `${when} ${s('timezone') || 'UTC'}`;
+      return days.length > 0
+        ? `${when} on ${days.length} day(s)`
+        : `${when} ${s('timezone') || 'UTC'}`;
     }
     case 'condition': {
       const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
       if (rules.length === 0) {
         // Legacy single-rule shape — still live in existing automations.
-        return cfg.subject ? `if ${String(cfg.subject).replace(/_/g, ' ')}` : null;
+        return cfg.subject
+          ? `if ${String(cfg.subject).replace(/_/g, ' ')}`
+          : null;
       }
       const first = rules[0] as { subject?: string };
       const rest = rules.length - 1;
@@ -713,7 +756,9 @@ export function summarizeStep(
         ? `${String(cfg.method ?? 'POST')} ${truncate(s('url'), 40)}`
         : null;
     case 'set_variable':
-      return s('name') ? `${s('name')} = ${truncate(s('value'), 24) || '—'}` : null;
+      return s('name')
+        ? `${s('name')} = ${truncate(s('value'), 24) || '—'}`
+        : null;
     default:
       return null;
   }

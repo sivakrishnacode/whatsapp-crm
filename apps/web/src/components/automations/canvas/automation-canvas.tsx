@@ -585,20 +585,11 @@ function CanvasInner({
         onPickApp={(preset: AppPreset) =>
           addStep(preset.stepType, { ...preset.config }, preset.id)
         }
-        onPickAction={(app, action) => {
-          // Pre-select the connection when there is exactly ONE usable
-          // account for this app — which is the normal case, and saves a
-          // dropdown that has one entry. With two, choosing for them
-          // would silently pick which mailbox an email is sent from.
-          const usable = connectionsFor(connections, app).filter(
-            (c) => c.status === 'active'
-          );
+        onPickAction={(action) => {
           addStep(
-            'app_action',
+            'google_action',
             {
-              app: app.app,
               action: action.id,
-              connection_id: usable.length === 1 ? usable[0].id : '',
               // Defaults from the spec, so a field with a sensible value
               // starts holding it rather than being empty and required.
               input: Object.fromEntries(
@@ -608,8 +599,8 @@ function CanvasInner({
               ),
             },
             // Names the step after the action, so its output reads
-            // `steps.append_row.row_number` rather than
-            // `steps.app_action_3.row_number`.
+            // `steps.sheet_append.row_number` rather than
+            // `steps.google_action_3.row_number`.
             action.id
           );
         }}

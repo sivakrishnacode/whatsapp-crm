@@ -34,6 +34,7 @@ import {
   STEP_META,
   StepIconChip,
   appActionLabel,
+  googleActionLabel,
   TRIGGER_COLORS,
   stepColors,
   summarizeStep,
@@ -68,7 +69,7 @@ function cardStyle(
   c: StepColors,
   selected: boolean,
   disabled: boolean,
-  invalid: boolean,
+  invalid: boolean
 ): React.CSSProperties {
   return {
     '--nc-line': c.line,
@@ -171,7 +172,7 @@ export function TriggerNodeCard({ data, selected }: NodeProps) {
 
 export function StepNodeCard({ data, selected }: NodeProps) {
   const { step, invalid, rejoinTarget, availability } = data as StepNodeData;
-  const { apps } = useAutomationResources();
+  const { apps, googleActions, googleServiceLabels } = useAutomationResources();
   const meta = STEP_META[step.step_type];
   const c = stepColors(step.step_type);
   const cfg = step.step_config;
@@ -179,14 +180,20 @@ export function StepNodeCard({ data, selected }: NodeProps) {
   const continueOnError = cfg.on_error === 'continue';
   const saveAs = typeof cfg.save_as === 'string' ? cfg.save_as.trim() : '';
   const summary = summarizeStep(step.step_type, cfg);
-  // An app action's real name lives in the connector catalogue, not in
-  // STEP_META — one step type covers every app, so the static label
-  // would put "App action" on a card that is really "Google Sheets:
+  // A google/app action's real name lives in the catalogue, not in
+  // STEP_META — one step type covers every action, so the static label
+  // would put "Google action" on a card that is really "Google Sheets ·
   // Append row".
   const label =
-    step.step_type === 'app_action'
-      ? appActionLabel(cfg as { app?: string; action?: string }, apps)
-      : (meta?.label ?? step.step_type);
+    step.step_type === 'google_action'
+      ? googleActionLabel(
+          cfg as { action?: string },
+          googleActions,
+          googleServiceLabels
+        )
+      : step.step_type === 'app_action'
+        ? appActionLabel(cfg as { app?: string; action?: string }, apps)
+        : (meta?.label ?? step.step_type);
   const branching = Boolean(meta?.branching);
   const categoryLabel = meta?.category ?? 'step';
 
@@ -195,7 +202,7 @@ export function StepNodeCard({ data, selected }: NodeProps) {
       style={cardStyle(c, Boolean(selected), disabled, invalid)}
       className={cn(
         'bg-card w-[264px] rounded-xl text-left transition-[box-shadow,border-color] duration-150',
-        disabled ? 'border border-dashed' : 'border',
+        disabled ? 'border border-dashed' : 'border'
       )}
       aria-selected={selected ? 'true' : 'false'}
     >
@@ -210,7 +217,12 @@ export function StepNodeCard({ data, selected }: NodeProps) {
       <div className="px-3.5 py-3">
         {/* Row 1 — chip, category, badges */}
         <div className="flex items-center gap-2">
-          <StepIconChip type={step.step_type} size={24} iconSize={14} className="rounded-md" />
+          <StepIconChip
+            type={step.step_type}
+            size={24}
+            iconSize={14}
+            className="rounded-md"
+          />
           <span
             className="truncate text-[10.5px] font-semibold tracking-wider uppercase"
             style={{ color: 'var(--nc-text)' }}
@@ -322,7 +334,10 @@ export function StepNodeCard({ data, selected }: NodeProps) {
           type="source"
           id="continue"
           position={Position.Bottom}
-          style={{ borderColor: 'var(--muted-foreground)', background: 'transparent' }}
+          style={{
+            borderColor: 'var(--muted-foreground)',
+            background: 'transparent',
+          }}
           className={cn(HANDLE_CLASS, '!border-dashed !bg-transparent')}
         />
       )}
@@ -331,7 +346,10 @@ export function StepNodeCard({ data, selected }: NodeProps) {
           type="target"
           id="rejoin"
           position={Position.Bottom}
-          style={{ borderColor: 'var(--muted-foreground)', background: 'transparent' }}
+          style={{
+            borderColor: 'var(--muted-foreground)',
+            background: 'transparent',
+          }}
           className={cn(HANDLE_CLASS, '!border-dashed !bg-transparent')}
         />
       )}

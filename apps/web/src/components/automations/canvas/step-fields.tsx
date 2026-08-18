@@ -23,13 +23,10 @@ import { tint } from '@/lib/tint';
 import { collectTemplateSlots } from '@/lib/whatsapp/template-slots';
 import type { TokenGroup } from '@/lib/automations/tokens';
 import type { AutomationStepType, MessageTemplate } from '@/types';
-import {
-  FieldBlock,
-  KeyValueTable,
-  TokenInput,
-} from './token-field';
+import { FieldBlock, KeyValueTable, TokenInput } from './token-field';
 import { useAutomationResources } from './resources';
 import { AppActionFields } from './app-action-fields';
+import { GoogleActionFields } from './google-action-fields';
 
 const SELECT_CLASS =
   'border-border bg-muted text-foreground focus:border-primary h-8 w-full rounded-lg border px-2 py-1 text-sm focus:outline-none';
@@ -125,9 +122,13 @@ export function StepFields(props: StepFieldsProps) {
     case 'random_split':
       return <RandomSplitFields {...props} />;
     case 'app_action':
-      // Rendered entirely from the action's FieldSpec list — see
-      // app-action-fields.tsx. No per-app form exists or should.
+      // DEPRECATED — old OAuth connector steps. Still renderable so
+      // saved automations do not break, but the connector endpoints
+      // are gone so this form will show a migration notice.
       return <AppActionFields {...props} />;
+    case 'google_action':
+      // Google Apps Script bridge — the replacement for app_action.
+      return <GoogleActionFields {...props} />;
     case 'http_request':
     case 'send_webhook':
       return <HttpRequestFields {...props} />;
@@ -254,7 +255,10 @@ function SendButtonsFields({ config, onChange, groups }: StepFieldsProps) {
             <button
               type="button"
               onClick={() =>
-                set([...buttons, { id: `btn_${buttons.length + 1}`, title: '' }])
+                set([
+                  ...buttons,
+                  { id: `btn_${buttons.length + 1}`, title: '' },
+                ])
               }
               className="text-muted-foreground hover:text-foreground border-border hover:border-primary/40 w-full rounded-md border border-dashed py-1.5 text-[11.5px]"
             >
@@ -292,7 +296,10 @@ function SendListFields({ config, onChange, groups }: StepFieldsProps) {
         onChange={(v) => onChange({ body_text: v })}
         groups={groups}
       />
-      <FieldBlock label="Button label" hint="What opens the list — e.g. “View options”.">
+      <FieldBlock
+        label="Button label"
+        hint="What opens the list — e.g. “View options”."
+      >
         <Input
           value={str(config.button_label)}
           onChange={(e) => onChange({ button_label: e.target.value })}
@@ -307,7 +314,10 @@ function SendListFields({ config, onChange, groups }: StepFieldsProps) {
       >
         <div className="space-y-3">
           {sections.map((section, si) => (
-            <div key={si} className="border-border space-y-1.5 rounded-lg border p-2">
+            <div
+              key={si}
+              className="border-border space-y-1.5 rounded-lg border p-2"
+            >
               <div className="flex gap-1.5">
                 <Input
                   value={section.title ?? ''}
@@ -376,7 +386,10 @@ function SendListFields({ config, onChange, groups }: StepFieldsProps) {
                 onClick={() => {
                   const next = [...sections];
                   const rows = [...(section.rows ?? [])];
-                  rows.push({ id: `row_${si + 1}_${rows.length + 1}`, title: '' });
+                  rows.push({
+                    id: `row_${si + 1}_${rows.length + 1}`,
+                    title: '',
+                  });
                   next[si] = { ...section, rows };
                   set(next);
                 }}
@@ -389,7 +402,10 @@ function SendListFields({ config, onChange, groups }: StepFieldsProps) {
           <button
             type="button"
             onClick={() =>
-              set([...sections, { title: `Section ${sections.length + 1}`, rows: [] }])
+              set([
+                ...sections,
+                { title: `Section ${sections.length + 1}`, rows: [] },
+              ])
             }
             className="text-muted-foreground hover:text-foreground border-border w-full rounded-md border border-dashed py-1.5 text-[11.5px]"
           >
@@ -483,9 +499,11 @@ function SendTemplateFields({ config, onChange, groups }: StepFieldsProps) {
   const toValue = (name: string, lang: string) => `${name}::${lang}`;
   const current = templateName ? toValue(templateName, language) : '';
   const selected = templates.find(
-    (t) => toValue(t.name, t.language ?? 'en_US') === current,
+    (t) => toValue(t.name, t.language ?? 'en_US') === current
   );
-  const slots = selected ? collectTemplateSlots(selected as MessageTemplate) : null;
+  const slots = selected
+    ? collectTemplateSlots(selected as MessageTemplate)
+    : null;
   const variableKeys = slots?.bodyVars ?? [];
 
   return (
@@ -648,7 +666,7 @@ function SegmentFields({ config, onChange }: StepFieldsProps) {
           onChange={(e) => onChange({ segment_id: e.target.value })}
           className={cn(
             SELECT_CLASS,
-            selected?.kind === 'dynamic' && 'border-destructive',
+            selected?.kind === 'dynamic' && 'border-destructive'
           )}
         >
           <option value="">Select a segment…</option>
@@ -777,7 +795,7 @@ function PipelineStagePicker({
 }) {
   const { pipelines, stages } = useAutomationResources();
   const stageOptions = stages.filter(
-    (s) => !pipelineId || s.pipeline_id === pipelineId,
+    (s) => !pipelineId || s.pipeline_id === pipelineId
   );
   const selectedStage = stageOptions.find((s) => s.id === stageId);
 
@@ -790,7 +808,7 @@ function PipelineStagePicker({
             onChange={(e) => {
               const nextPipelineId = e.target.value;
               const firstStage = stages.find(
-                (s) => s.pipeline_id === nextPipelineId,
+                (s) => s.pipeline_id === nextPipelineId
               );
               // Stages belong to a pipeline, so keeping the old stage id
               // would point the deal at another board's column.
@@ -1031,15 +1049,18 @@ function WaitUntilFields({ config, onChange, groups }: StepFieldsProps) {
               onClick={() =>
                 onChange(
                   m.value === 'instant'
-                    ? { instant: '{{ vars.booking.starts_at }}', offset_minutes: -30 }
-                    : { instant: '', offset_minutes: 0 },
+                    ? {
+                        instant: '{{ vars.booking.starts_at }}',
+                        offset_minutes: -30,
+                      }
+                    : { instant: '', offset_minutes: 0 }
                 )
               }
               className={cn(
                 'flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors',
                 mode === m.value
                   ? 'border-primary/50 bg-primary/15 text-primary'
-                  : 'border-border bg-muted text-muted-foreground hover:text-foreground',
+                  : 'border-border bg-muted text-muted-foreground hover:text-foreground'
               )}
             >
               {m.label}
@@ -1071,66 +1092,69 @@ function WaitUntilFields({ config, onChange, groups }: StepFieldsProps) {
             />
           </FieldBlock>
           <p className="text-muted-foreground text-[11px] leading-relaxed">
-            If that moment has already passed when the run reaches this
-            step, it carries on immediately rather than skipping — a late
-            reminder still beats none. A held run is dropped if the booking
-            is cancelled or moved.
+            If that moment has already passed when the run reaches this step, it
+            carries on immediately rather than skipping — a late reminder still
+            beats none. A held run is dropped if the booking is cancelled or
+            moved.
           </p>
         </>
       ) : (
-      <>
-      <FieldBlock
-        label="Wait until"
-        hint="24-hour clock. “In 12 hours” and “at 9am” are different rules — this is the second one."
-      >
-        <Input
-          type="time"
-          value={str(config.time) || '09:00'}
-          onChange={(e) => onChange({ time: e.target.value })}
-          className="bg-muted"
-        />
-      </FieldBlock>
-      <FieldBlock
-        label="Timezone"
-        hint="An IANA zone such as Asia/Kolkata. Defaults to UTC — never the server’s local time, which would differ per deploy."
-      >
-        <Input
-          value={str(config.timezone) || 'UTC'}
-          onChange={(e) => onChange({ timezone: e.target.value })}
-          placeholder="UTC"
-          className="bg-muted font-mono text-[12px]"
-        />
-      </FieldBlock>
-      <FieldBlock label="Only on these days" hint="None selected = any day.">
-        <div className="flex flex-wrap gap-1.5">
-          {WEEKDAYS.map((label, index) => {
-            const active = days.includes(index);
-            return (
-              <button
-                key={label}
-                type="button"
-                aria-pressed={active}
-                onClick={() =>
-                  onChange({
-                    days: active
-                      ? days.filter((d) => d !== index)
-                      : [...days, index].sort(),
-                  })
-                }
-                className={cn(
-                  'rounded-full border px-2.5 py-0.5 text-[11px] transition-colors',
-                  active
-                    ? 'border-primary/50 bg-primary/15 text-primary'
-                    : 'border-border bg-muted text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </FieldBlock>
-      </>
+        <>
+          <FieldBlock
+            label="Wait until"
+            hint="24-hour clock. “In 12 hours” and “at 9am” are different rules — this is the second one."
+          >
+            <Input
+              type="time"
+              value={str(config.time) || '09:00'}
+              onChange={(e) => onChange({ time: e.target.value })}
+              className="bg-muted"
+            />
+          </FieldBlock>
+          <FieldBlock
+            label="Timezone"
+            hint="An IANA zone such as Asia/Kolkata. Defaults to UTC — never the server’s local time, which would differ per deploy."
+          >
+            <Input
+              value={str(config.timezone) || 'UTC'}
+              onChange={(e) => onChange({ timezone: e.target.value })}
+              placeholder="UTC"
+              className="bg-muted font-mono text-[12px]"
+            />
+          </FieldBlock>
+          <FieldBlock
+            label="Only on these days"
+            hint="None selected = any day."
+          >
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAYS.map((label, index) => {
+                const active = days.includes(index);
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() =>
+                      onChange({
+                        days: active
+                          ? days.filter((d) => d !== index)
+                          : [...days, index].sort(),
+                      })
+                    }
+                    className={cn(
+                      'rounded-full border px-2.5 py-0.5 text-[11px] transition-colors',
+                      active
+                        ? 'border-primary/50 bg-primary/15 text-primary'
+                        : 'border-border bg-muted text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </FieldBlock>
+        </>
       )}
     </>
   );
@@ -1160,15 +1184,31 @@ function RandomSplitFields({ config, onChange }: StepFieldsProps) {
   );
 }
 
-const CONDITION_SUBJECTS: { value: string; label: string; operandLabel: string | null }[] = [
+const CONDITION_SUBJECTS: {
+  value: string;
+  label: string;
+  operandLabel: string | null;
+}[] = [
   { value: 'tag_presence', label: 'Has tag', operandLabel: 'Tag' },
   { value: 'contact_field', label: 'Contact field', operandLabel: 'Field' },
   { value: 'message_content', label: 'Message text', operandLabel: null },
-  { value: 'expression', label: 'Data from an earlier step', operandLabel: 'Token path' },
+  {
+    value: 'expression',
+    label: 'Data from an earlier step',
+    operandLabel: 'Token path',
+  },
   { value: 'segment_membership', label: 'In segment', operandLabel: 'Segment' },
   { value: 'channel', label: 'Channel', operandLabel: null },
-  { value: 'time_of_day', label: 'Time of day', operandLabel: 'Window (HH:mm-HH:mm)' },
-  { value: 'day_of_week', label: 'Day of week', operandLabel: 'Days (mon,tue…)' },
+  {
+    value: 'time_of_day',
+    label: 'Time of day',
+    operandLabel: 'Window (HH:mm-HH:mm)',
+  },
+  {
+    value: 'day_of_week',
+    label: 'Day of week',
+    operandLabel: 'Days (mon,tue…)',
+  },
 ];
 
 const OPERATORS: { value: string; label: string; needsValue: boolean }[] = [
@@ -1210,7 +1250,12 @@ function ConditionFields({ config, onChange, groups }: StepFieldsProps) {
 
   const set = (next: Rule[]) =>
     // Clear the legacy fields on write so the two shapes cannot disagree.
-    onChange({ rules: next, subject: undefined, operand: undefined, value: undefined });
+    onChange({
+      rules: next,
+      subject: undefined,
+      operand: undefined,
+      value: undefined,
+    });
 
   return (
     <>
@@ -1229,15 +1274,22 @@ function ConditionFields({ config, onChange, groups }: StepFieldsProps) {
 
       <div className="space-y-3">
         {rules.map((rule, i) => {
-          const subject = CONDITION_SUBJECTS.find((s) => s.value === rule.subject);
-          const operator = OPERATORS.find((o) => o.value === (rule.operator ?? 'equals'));
+          const subject = CONDITION_SUBJECTS.find(
+            (s) => s.value === rule.subject
+          );
+          const operator = OPERATORS.find(
+            (o) => o.value === (rule.operator ?? 'equals')
+          );
           const patch = (p: Partial<Rule>) => {
             const next = [...rules];
             next[i] = { ...rule, ...p };
             set(next);
           };
           return (
-            <div key={i} className="border-border space-y-2 rounded-lg border p-2.5">
+            <div
+              key={i}
+              className="border-border space-y-2 rounded-lg border p-2.5"
+            >
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground text-[10px] tracking-wider uppercase">
                   {i === 0 ? 'If' : str(config.match) === 'any' ? 'Or' : 'And'}
@@ -1254,7 +1306,9 @@ function ConditionFields({ config, onChange, groups }: StepFieldsProps) {
 
               <select
                 value={rule.subject ?? ''}
-                onChange={(e) => patch({ subject: e.target.value, operand: '' })}
+                onChange={(e) =>
+                  patch({ subject: e.target.value, operand: '' })
+                }
                 className={SELECT_CLASS}
               >
                 <option value="">Choose what to check…</option>
@@ -1372,11 +1426,18 @@ function ConditionFields({ config, onChange, groups }: StepFieldsProps) {
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 
-function HttpRequestFields({ type, config, onChange, groups }: StepFieldsProps) {
+function HttpRequestFields({
+  type,
+  config,
+  onChange,
+  groups,
+}: StepFieldsProps) {
   const method = (str(config.method) || 'POST').toUpperCase();
   const bodyMode =
     str(config.body_mode) || (config.body_template ? 'raw' : 'json');
-  const auth = (config.auth as { type?: string } | undefined) ?? { type: 'none' };
+  const auth = (config.auth as { type?: string } | undefined) ?? {
+    type: 'none',
+  };
   const hasBody = method !== 'GET' && method !== 'DELETE';
 
   return (
@@ -1661,7 +1722,9 @@ function StartFlowFields({ config, onChange }: StepFieldsProps) {
             {f.status && f.status !== 'active' ? ` (${f.status})` : ''}
           </option>
         ))}
-        {value && !selected && <option value={value}>{value} (unknown flow)</option>}
+        {value && !selected && (
+          <option value={value}>{value} (unknown flow)</option>
+        )}
       </select>
     </FieldBlock>
   );

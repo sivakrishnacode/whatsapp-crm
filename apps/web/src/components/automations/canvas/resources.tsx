@@ -23,9 +23,14 @@ import {
 
 import { createClient } from '@/lib/supabase/client';
 import type { SampleData } from '@/lib/automations/tokens';
-import type {
-  AppConnection,
-  CatalogApp,
+import {
+  googleConnectionFromSummary,
+  type AppConnection,
+  type CatalogApp,
+  type GoogleScriptAction,
+  type GoogleScriptConnection,
+  type GoogleScriptSummary,
+  type GoogleServiceLabels,
 } from '@/lib/automations/connectors';
 import type {
   AccountMember,
@@ -59,11 +64,19 @@ interface PipelineStageOption {
 export interface AutomationResources {
   tags: TagRecord[];
   /**
-   * Connected-app catalogue and the workspace's connections.
+   * Google Apps Script bridge catalogue and connection status.
    *
-   * Both FETCHED, never hard-coded: the API validates against the same
-   * field specs it serves here, so one authority means a field cannot
-   * render without validating. See lib/automations/connectors.ts.
+   * FETCHED from `/api/google-script/catalog` and `/api/google-script`.
+   * The API validates against the same field specs it serves here, so
+   * one authority means a field cannot render without validating.
+   */
+  googleActions: GoogleScriptAction[];
+  googleServiceLabels: GoogleServiceLabels;
+  googleConnection: GoogleScriptConnection | null;
+  /**
+   * Old OAuth catalogue — DEPRECATED. Kept only so saved `app_action`
+   * steps can still render their labels. The endpoints are gone, so
+   * this will always be empty on new deployments.
    */
   apps: CatalogApp[];
   connections: AppConnection[];
@@ -84,6 +97,9 @@ export interface AutomationResources {
 
 const EMPTY: AutomationResources = {
   tags: [],
+  googleActions: [],
+  googleServiceLabels: {},
+  googleConnection: null,
   apps: [],
   connections: [],
   segments: [],
@@ -222,28 +238,37 @@ export function AutomationResourcesProvider({
       }
     })();
 
-    // The connected-app catalogue and this workspace's connections. Two
-    // requests rather than one because the catalogue is static per
-    // deploy while connections change whenever somebody connects an
-    // account — and only the second needs re-fetching after an OAuth
-    // round trip.
+    // The Google Apps Script bridge catalogue and connection status.
+    // Two requests: the catalogue is static per deploy, the connection
+    // status changes when someone sets up or disconnects the bridge.
     void (async () => {
       try {
-        const [catalogRes, connectionsRes] = await Promise.all([
-          fetch('/api/connections/catalog', { cache: 'no-store' }),
-          fetch('/api/connections', { cache: 'no-store' }),
+        const [catalogRes, statusRes] = await Promise.all([
+          fetch('/api/google-script/catalog', { cache: 'no-store' }),
+          fetch('/api/google-script', { cache: 'no-store' }),
         ]);
-        const apps = catalogRes.ok
-          ? ((await catalogRes.json()) as { apps?: CatalogApp[] }).apps ?? []
-          : [];
-        const connections = connectionsRes.ok
-          ? ((await connectionsRes.json()) as { connections?: AppConnection[] })
-              .connections ?? []
-          : [];
-        if (!cancelled) setState((s) => ({ ...s, apps, connections }));
+        const catalog = catalogRes.ok
+          ? ((await catalogRes.json()) as {
+              actions?: GoogleScriptAction[];
+              serviceLabels?: GoogleServiceLabels;
+            })
+          : {};
+        const status = statusRes.ok
+          ? ((await statusRes.json()) as {
+              connection?: GoogleScriptSummary;
+            })
+          : {};
+        if (!cancelled) {
+          setState((s) => ({
+            ...s,
+            googleActions: catalog.actions ?? [],
+            googleServiceLabels: catalog.serviceLabels ?? {},
+            googleConnection: googleConnectionFromSummary(status.connection),
+          }));
+        }
       } catch {
-        // Optional — only `app_action` steps need it, and the inspector
-        // says so plainly when the list is empty.
+        // Optional — only `google_action` steps need it, and the
+        // inspector says so plainly when the list is empty.
       }
     })();
 
@@ -284,7 +309,7 @@ export function AutomationResourcesProvider({
 
   const value = useMemo(
     () => ({ ...state, currentAutomationId }),
-    [state, currentAutomationId],
+    [state, currentAutomationId]
   );
 
   return (

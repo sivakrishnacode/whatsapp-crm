@@ -3,16 +3,18 @@
  *
  * ⚠️ THESE ARE TYPES AND HELPERS ONLY — NO CATALOGUE DATA LIVES HERE.
  *   The apps, their actions and every field spec are FETCHED from
- *   `GET /api/connections/catalog`, because the API is the authority:
+ *   `GET /api/google-script/catalog`, because the API is the authority:
  *   it validates against the same `FieldSpec` the editor renders from,
  *   and the executor runs the same action list. A second copy in the web
  *   bundle would be a field that renders but does not validate, or
- *   validates but does not render — the exact drift documented between
- *   `contact_matches_segment_rule()` and `lib/segments/rules.ts`.
+ *   validates but does not render.
  *
- *   Mirrors apps/api/src/connections/connections.types.ts. There is no
- *   shared types package yet, so change both together.
+ *   Mirrors apps/api/src/google-script/google-script.types.ts.
  */
+
+// ---------------------------------------------------------------------------
+// Field specs — shared between old app_action and new google_action
+// ---------------------------------------------------------------------------
 
 export type FieldKind =
   | 'text'
@@ -22,7 +24,8 @@ export type FieldKind =
   | 'select'
   | 'resource_select'
   | 'key_values'
-  | 'email_list';
+  | 'email_list'
+  | 'value_list';
 
 export interface FieldSpec {
   key: string;
@@ -39,6 +42,87 @@ export interface FieldSpec {
   default?: unknown;
 }
 
+// ---------------------------------------------------------------------------
+// Google Script bridge catalogue (the new system)
+// ---------------------------------------------------------------------------
+
+/** One action from the bridge's served catalogue. */
+export interface GoogleScriptAction {
+  id: string;
+  service: string;
+  label: string;
+  description: string;
+  inputs: FieldSpec[];
+  outputs: string[];
+  /** Sends/creates something real. The Test tab confirms before running. */
+  irreversible?: boolean;
+}
+
+/** Raw summary from GET /api/google-script. Mirrors
+ *  GoogleScriptConnectionSummary on the API. */
+export interface GoogleScriptSummary {
+  connected: boolean;
+  execUrlHint: string | null;
+  lastOkAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  createdAt: string | null;
+}
+
+export type GoogleScriptConnectionStatus =
+  'not_configured' | 'provisioned' | 'connected' | 'error';
+
+/**
+ * Connection status returned by GET /api/google-script, derived from the
+ * raw summary by `googleConnectionFromSummary()`.
+ */
+export interface GoogleScriptConnection {
+  status: GoogleScriptConnectionStatus;
+  /** The deployment id's trailing characters — enough to tell two apart. */
+  displayName: string | null;
+  connectedAt: string | null;
+  lastTestedAt: string | null;
+  lastError: string | null;
+}
+
+/**
+ * Map the API's summary onto the richer editorial shape the canvas and
+ * the Integrations card consume. The API is the authority on what exists;
+ * this only adds derived presentation state.
+ */
+export function googleConnectionFromSummary(
+  summary: GoogleScriptSummary | null | undefined
+): GoogleScriptConnection | null {
+  if (!summary) return null;
+  const status: GoogleScriptConnectionStatus = summary.lastError
+    ? 'error'
+    : summary.connected
+      ? 'connected'
+      : summary.createdAt
+        ? 'provisioned'
+        : 'not_configured';
+  return {
+    status,
+    displayName: summary.execUrlHint,
+    connectedAt: summary.createdAt,
+    lastTestedAt: summary.lastOkAt,
+    lastError: summary.lastError,
+  };
+}
+
+/** Config shape of a `google_action` step. No connection_id, no app. */
+export interface GoogleActionConfig {
+  action?: string;
+  input?: Record<string, unknown>;
+}
+
+/** Service labels from the catalogue (e.g. { sheets: 'Google Sheets' }). */
+export type GoogleServiceLabels = Record<string, string>;
+
+// ---------------------------------------------------------------------------
+// Old OAuth types (kept for backward compat with saved app_action steps)
+// ---------------------------------------------------------------------------
+
 export interface CatalogAction {
   id: string;
   label: string;
@@ -46,7 +130,6 @@ export interface CatalogAction {
   scopes: string[];
   inputs: FieldSpec[];
   outputs: string[];
-  /** Sends/creates something real. The Test tab confirms before running. */
   irreversible?: boolean;
 }
 
@@ -55,7 +138,6 @@ export interface CatalogApp {
   app: string;
   name: string;
   blurb: string;
-  /** Self-hosted product icon under /public/icons. Monogram is the fallback. */
   icon?: string;
   monogram: string;
   hue: string;
@@ -72,7 +154,7 @@ export interface AppConnection {
   createdAt: string;
 }
 
-/** Config shape of an `app_action` step. Mirrors AppActionStepConfig. */
+/** Config shape of an `app_action` step. DEPRECATED. */
 export interface AppActionConfig {
   connection_id?: string;
   app?: string;
@@ -80,90 +162,84 @@ export interface AppActionConfig {
   input?: Record<string, unknown>;
 }
 
+// ---------------------------------------------------------------------------
+// Helpers — Google Script bridge
+// ---------------------------------------------------------------------------
+
+export function findGoogleAction(
+  actions: GoogleScriptAction[],
+  actionId: string | undefined
+): GoogleScriptAction | undefined {
+  return actionId ? actions.find((a) => a.id === actionId) : undefined;
+}
+
+/** Group actions by their service field. */
+export function groupByService(
+  actions: GoogleScriptAction[],
+  labels: GoogleServiceLabels
+): { service: string; label: string; actions: GoogleScriptAction[] }[] {
+  const groups = new Map<string, GoogleScriptAction[]>();
+  for (const action of actions) {
+    const list = groups.get(action.service) ?? [];
+    list.push(action);
+    groups.set(action.service, list);
+  }
+  return Array.from(groups.entries()).map(([service, acts]) => ({
+    service,
+    label: labels[service] ?? service,
+    actions: acts,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Helpers — old OAuth (kept for app_action backward compat)
+// ---------------------------------------------------------------------------
+
 export function findApp(
   apps: CatalogApp[],
-  appId: string | undefined,
+  appId: string | undefined
 ): CatalogApp | undefined {
   return appId ? apps.find((a) => a.app === appId) : undefined;
 }
 
 export function findAction(
   app: CatalogApp | undefined,
-  actionId: string | undefined,
+  actionId: string | undefined
 ): CatalogAction | undefined {
   return actionId ? app?.actions.find((a) => a.id === actionId) : undefined;
 }
 
-/**
- * Connections usable for an app: right provider, and still working.
- *
- * A `needs_reauth` connection is deliberately still OFFERED rather than
- * filtered out — it is almost always the one the author meant, and a
- * dropdown that silently omits it looks like the account was never
- * connected. It is shown with its state instead, so the fix is obvious.
- */
 export function connectionsFor(
   connections: AppConnection[],
-  app: CatalogApp | undefined,
+  app: CatalogApp | undefined
 ): AppConnection[] {
   if (!app) return [];
   return connections.filter((c) => c.provider === app.provider);
 }
 
-/**
- * Every scope an app needs — the union of its actions'.
- *
- * Mirrors `ConnectorRegistryService.scopesForApp`, which is what the
- * connect flow actually asks Google for, so "granted" means the same
- * thing on both sides of the redirect.
- */
 export function appScopes(app: CatalogApp): string[] {
   return Array.from(new Set(app.actions.flatMap((a) => a.scopes)));
 }
 
-/**
- * Connections that can actually RUN this app: right provider AND every
- * scope the app needs already granted.
- *
- * ⚠️ NOT the same question as `connectionsFor`, and the difference is
- *   why both exist. SEVERAL APPS SHARE ONE PROVIDER — a single Google
- *   row serves Sheets, Gmail, Calendar and Meet — so provider alone
- *   answers "has this workspace linked a Google account?", never "will
- *   this app work?". Incremental consent means connecting Sheets grants
- *   `spreadsheets` and nothing else, and a Gmail action on that same
- *   connection is refused by the executor's scope check before the call.
- *
- *   Anything that reports a STATE to the user ("Connected") must ask
- *   this one; a picker offering the account the author obviously meant
- *   asks `connectionsFor` and warns with `missingScopes`.
- */
 export function connectionsGranting(
   connections: AppConnection[],
-  app: CatalogApp | undefined,
+  app: CatalogApp | undefined
 ): AppConnection[] {
   if (!app) return [];
   const needed = appScopes(app);
   return connectionsFor(connections, app).filter((c) =>
-    needed.every((scope) => c.scopes.includes(scope)),
+    needed.every((scope) => c.scopes.includes(scope))
   );
 }
 
-/**
- * Does this connection cover everything the action needs?
- *
- * Mirrors the server-side check in ConnectorExecutionService. It is a
- * warning in the editor and a refusal on the server — the editor's job
- * is to say so before activation, not to be the gate.
- */
 export function missingScopes(
   connection: AppConnection | undefined,
-  action: CatalogAction | undefined,
+  action: CatalogAction | undefined
 ): string[] {
   if (!connection || !action) return [];
   return action.scopes.filter((s) => !connection.scopes.includes(s));
 }
 
-/** Where to send the browser to connect (or widen) an app. */
 export function connectUrl(app: CatalogApp, returnTo: string): string {
   const params = new URLSearchParams({ app: app.app, returnTo });
   return `/api/connections/${app.provider}/oauth/start?${params.toString()}`;
