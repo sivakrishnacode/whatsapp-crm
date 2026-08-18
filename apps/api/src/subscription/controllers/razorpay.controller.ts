@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
   Controller,
   Post,
@@ -8,10 +9,23 @@ import {
 } from '@nestjs/common';
 import Razorpay from 'razorpay';
 import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
+import { RequireRole } from '../../auth/decorators/require-role.decorator';
 import { CurrentAccount } from '../../auth/decorators/current-account.decorator';
 import type { SupabaseAccountContext } from '../../auth/types/account-context.type';
 import { PrismaService } from '../../prisma/prisma.service';
 
+/**
+ * Plan checkout via Razorpay.
+ *
+ * ⚠️ EVERY ROUTE HERE IS OWNER-ONLY, and that is not tidiness.
+ * `user_subscriptions` is keyed by `accounts.owner_user_id` — the whole
+ * workspace's entitlement resolves through that one row — so a payment
+ * made by an admin or agent used to create a SECOND subscription row
+ * against their own user id. The money was taken, a row appeared, and the
+ * workspace stayed locked, because nothing reads a non-owner's row. Both
+ * routes now refuse, and the write below targets the owner explicitly
+ * rather than the caller.
+ */
 @Controller('subscription/razorpay')
 @UseGuards(SupabaseAuthGuard)
 export class RazorpayController {
@@ -32,7 +46,28 @@ export class RazorpayController {
         key_secret: keySecret,
       }),
       keyId,
+      keySecret,
     };
+  }
+
+  /**
+   * The subscription row that IS this workspace's entitlement.
+   *
+   * Resolved from `accounts.owner_user_id` rather than trusting the
+   * caller's profile role: the owner column is the authority every
+   * entitlement read already uses.
+   */
+  private async getOwnerUserId(accountId: string): Promise<string> {
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: { ownerUserId: true },
+    });
+
+    if (!account) {
+      throw new HttpException('Account not found', HttpStatus.NOT_FOUND);
+    }
+
+    return account.ownerUserId;
   }
 
   constructor(private readonly prisma: PrismaService) {}
@@ -42,6 +77,7 @@ export class RazorpayController {
    * Creates a Razorpay order for plan upgrade.
    */
   @Post('create-order')
+  @RequireRole('owner')
   async createOrder(
     @CurrentAccount() account: SupabaseAccountContext,
     @Body() body: { planName?: string; billingCycle?: string },
@@ -107,9 +143,28 @@ export class RazorpayController {
 
   /**
    * POST /api/subscription/razorpay/confirm-payment
-   * Confirms payment and updates subscription immediately.
+   * Razorpay Checkout's success callback: the browser telling us it paid.
+   *
+   * ⚠️ THE SIGNATURE IS THE WHOLE SECURITY OF THIS ENDPOINT. Razorpay
+   * signs `<order_id>|<payment_id>` with our key secret, which the browser
+   * never has. Without that check every field here is just a claim, and
+   * "I paid for GROWTH" was a claim any signed-in user could POST — a
+   * self-serve free upgrade, and (once the trial-ended screen sends people
+   * here) a self-serve unlock. `POST /ai/credits/verify` has always done
+   * this correctly; this is the same check.
+   *
+   * ⚠️ A PAYMENT MUST NOT GRANT A TRIAL. This used to set
+   * `status = 'trial'` and a fresh `trial_end_at` whenever the plan had
+   * `trial_days`, which every selectable plan does. So paying ₹300 bought
+   * a *trial*: the customer was recorded as not-yet-paying, they lapsed
+   * again 15 days later, MRR did not count them, and it walked straight
+   * through migration 074's one-trial-per-workspace latch. Payment now
+   * lands `active` with the billing period starting today, and the trial
+   * columns are left exactly as they are — they are the historical record
+   * of the trial this account already had.
    */
   @Post('confirm-payment')
+  @RequireRole('owner')
   async confirmPayment(
     @CurrentAccount() account: SupabaseAccountContext,
     @Body()
@@ -118,11 +173,24 @@ export class RazorpayController {
       billingCycle?: string;
       razorpayOrderId?: string;
       razorpayPaymentId?: string;
+      razorpaySignature?: string;
     },
   ) {
-    const { planName, billingCycle, razorpayOrderId, razorpayPaymentId } = body;
+    const {
+      planName,
+      billingCycle,
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    } = body;
 
-    if (!planName || !billingCycle || !razorpayOrderId) {
+    if (
+      !planName ||
+      !billingCycle ||
+      !razorpayOrderId ||
+      !razorpayPaymentId ||
+      !razorpaySignature
+    ) {
       throw new HttpException(
         'Missing required fields',
         HttpStatus.BAD_REQUEST,
@@ -134,58 +202,63 @@ export class RazorpayController {
       throw new HttpException('Invalid plan name', HttpStatus.BAD_REQUEST);
     }
 
+    const { keySecret } = this.getRazorpayInstance();
+    const expected = createHmac('sha256', keySecret)
+      .update(`${razorpayOrderId.trim()}|${razorpayPaymentId.trim()}`)
+      .digest('hex');
+
+    const given = Buffer.from(razorpaySignature.trim(), 'utf8');
+    const want = Buffer.from(expected, 'utf8');
+    if (given.length !== want.length || !timingSafeEqual(given, want)) {
+      throw new HttpException(
+        { error: 'Payment could not be verified.', code: 'bad_signature' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     try {
-      // 1. Get plan ID
-      const plan = await this.prisma.subscription_plans.findUnique({
-        where: { name: planName },
-        select: { id: true, trial_days: true },
-      });
+      const [plan, ownerUserId] = await Promise.all([
+        this.prisma.subscription_plans.findUnique({
+          where: { name: planName },
+          select: { id: true },
+        }),
+        this.getOwnerUserId(account.accountId),
+      ]);
 
       if (!plan) {
         throw new HttpException('Plan not found', HttpStatus.NOT_FOUND);
       }
 
-      // 2. Calculate dates
-      const trialStart = plan.trial_days ? new Date() : null;
-      const trialEnd = plan.trial_days
-        ? new Date(Date.now() + plan.trial_days * 24 * 60 * 60 * 1000)
-        : null;
-
+      // A paid period starts the moment it is paid for. No trial window is
+      // written here in either branch — see the header.
       const now = new Date();
-      const periodStart = trialEnd || now;
-      const periodEnd = new Date(periodStart);
+      const periodEnd = new Date(now);
       periodEnd.setMonth(
         periodEnd.getMonth() + (billingCycle === 'yearly' ? 12 : 1),
       );
 
-      // 3. Upsert user subscription
+      const paid = {
+        plan_id: plan.id,
+        status: 'active' as const,
+        billing_cycle: billingCycle as 'monthly' | 'yearly',
+        current_period_start: now,
+        current_period_end: periodEnd,
+        cancel_at_period_end: false,
+        razorpay_subscription_id: razorpayOrderId,
+        payment_method: 'razorpay' as const,
+      };
+
       await this.prisma.user_subscriptions.upsert({
-        where: { user_id: account.userId },
+        where: { user_id: ownerUserId },
+        // Only the create branch touches the trial columns, and only to
+        // say there was no trial: there is no row to preserve history on.
         create: {
-          user_id: account.userId,
-          plan_id: plan.id,
-          status: trialEnd ? 'trial' : 'active',
-          billing_cycle: billingCycle as 'monthly' | 'yearly',
-          trial_start_at: trialStart,
-          trial_end_at: trialEnd,
-          current_period_start: periodStart,
-          current_period_end: periodEnd,
-          cancel_at_period_end: false,
-          razorpay_subscription_id: razorpayOrderId,
-          payment_method: 'razorpay',
+          user_id: ownerUserId,
+          trial_start_at: null,
+          trial_end_at: null,
+          ...paid,
         },
-        update: {
-          plan_id: plan.id,
-          status: trialEnd ? 'trial' : 'active',
-          billing_cycle: billingCycle as 'monthly' | 'yearly',
-          trial_start_at: trialStart,
-          trial_end_at: trialEnd,
-          current_period_start: periodStart,
-          current_period_end: periodEnd,
-          cancel_at_period_end: false,
-          razorpay_subscription_id: razorpayOrderId,
-          payment_method: 'razorpay',
-        },
+        update: paid,
       });
 
       return { success: true, planName };

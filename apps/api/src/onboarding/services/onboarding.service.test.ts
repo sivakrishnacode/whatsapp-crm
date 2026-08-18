@@ -29,6 +29,8 @@ const STARTER = {
 function makePrismaMock() {
   return {
     account: { findUnique: vi.fn(), update: vi.fn() },
+    // The owner's profile, so a locked-out teammate can be told a name.
+    profile: { findUnique: vi.fn() },
     account_onboarding: { findUnique: vi.fn(), upsert: vi.fn() },
     subscription_plans: { findUnique: vi.fn() },
     user_subscriptions: { findUnique: vi.fn(), upsert: vi.fn() },
@@ -126,6 +128,10 @@ function primeState(
     account_onboarding: onboarding,
   });
   prisma.user_subscriptions.findUnique.mockResolvedValue(subscription);
+  prisma.profile.findUnique.mockResolvedValue({
+    fullName: 'Owner Ola',
+    email: 'owner@acme.test',
+  });
   // The trial latch (migration 074). Read from the same row getState
   // already loads, so it mirrors whatever `onboarding` says.
   prisma.account_onboarding.findUnique.mockResolvedValue(
@@ -181,7 +187,12 @@ describe('OnboardingService', () => {
         subscription: {
           status: 'trial',
           trial_end_at: new Date('2026-09-01T00:00:00Z'),
-          subscription_plans: { name: 'STARTER', display_name: 'Starter' },
+          subscription_plans: {
+            name: 'STARTER',
+            display_name: 'Starter',
+            price_monthly: 300,
+            price_yearly: 3000,
+          },
         },
       });
 
@@ -193,6 +204,10 @@ describe('OnboardingService', () => {
         planDisplayName: 'Starter',
         status: 'trial',
         trialEndsAt: '2026-09-01T00:00:00.000Z',
+        // Major units — what the locked screen prints as the amount due.
+        priceMonthly: 300,
+        priceYearly: 3000,
+        isEnquiryOnly: false,
       });
     });
 
@@ -211,6 +226,106 @@ describe('OnboardingService', () => {
       const state = await service.getState('acc-1');
 
       expect(state.step).toBe('plan');
+    });
+
+    /**
+     * ⚠️ THE REGRESSION THIS FILE EXISTS TO CATCH.
+     *
+     * A spent trial with nothing paid used to resolve to `plan`, where
+     * every button offered a free trial the 074 latch would refuse to
+     * grant. Pressing one returned `plan` again — a lockout with no exit
+     * inside the product, since `/pricing` lives behind the same gate.
+     */
+    it('sends a lapsed account with a spent trial to the billing screen', async () => {
+      primeState(prisma, subscriptions, {
+        onboarding: {
+          goals: [],
+          completed_at: new Date('2026-08-06T00:00:00Z'),
+          trial_granted_at: new Date('2026-08-06T00:00:00Z'),
+        },
+        subscription: {
+          status: 'expired',
+          trial_end_at: new Date('2026-08-18T00:00:00Z'),
+          subscription_plans: {
+            name: 'STARTER',
+            display_name: 'Starter',
+            price_monthly: 300,
+            price_yearly: 3000,
+          },
+        },
+      });
+
+      const state = await service.getState('acc-1');
+
+      expect(state.step).toBe('billing');
+      expect(state.trialAvailable).toBe(false);
+      // The screen needs the amount and the plan to name in its headline.
+      expect(state.subscription?.priceMonthly).toBe(300);
+    });
+
+    /**
+     * `past_due` is dunning, not the end. `get_account_entitlement` grades
+     * it `grace` and still allows writes, and the sweep sets it without a
+     * human involved — so locking the product on it would take a paying
+     * customer's inbox away over one late renewal webhook.
+     */
+    it('leaves a past_due account inside the product', async () => {
+      primeState(prisma, subscriptions, {
+        onboarding: {
+          goals: [],
+          completed_at: new Date(),
+          trial_granted_at: new Date('2026-01-01T00:00:00Z'),
+        },
+        subscription: {
+          status: 'past_due',
+          trial_end_at: new Date('2026-01-16T00:00:00Z'),
+          subscription_plans: { name: 'GROWTH', display_name: 'Growth' },
+        },
+      });
+
+      const state = await service.getState('acc-1');
+
+      expect(state.step).toBe('done');
+    });
+
+    /**
+     * With no subscription row there is no plan to renew, so "pay to
+     * continue" has nothing to name — picking one comes first.
+     */
+    it('sends an account with no subscription at all to the plan step', async () => {
+      primeState(prisma, subscriptions, {
+        onboarding: {
+          goals: [],
+          completed_at: new Date(),
+          trial_granted_at: new Date('2026-01-01T00:00:00Z'),
+        },
+        subscription: null,
+      });
+
+      const state = await service.getState('acc-1');
+
+      expect(state.step).toBe('plan');
+    });
+
+    /**
+     * Checkout is owner-only, and `user_subscriptions` is keyed by the
+     * owner — a teammate's payment would land on a row nothing reads.
+     */
+    it('marks only the owner as the owner, and names them for everyone else', async () => {
+      primeState(prisma, subscriptions, { ownerUserId: 'owner-1' });
+
+      const asOwner = await service.getState('acc-1', 'owner-1');
+      const asTeammate = await service.getState('acc-1', 'member-9');
+      const asServer = await service.getState('acc-1');
+
+      expect(asOwner.viewer.isOwner).toBe(true);
+      expect(asTeammate.viewer.isOwner).toBe(false);
+      // No viewer supplied: nobody is the owner, so no checkout is offered.
+      expect(asServer.viewer.isOwner).toBe(false);
+      expect(asTeammate.owner).toEqual({
+        name: 'Owner Ola',
+        email: 'owner@acme.test',
+      });
     });
 
     // The catalogue itself (which plans, in what order, FREE excluded)
@@ -446,7 +561,14 @@ describe('OnboardingService', () => {
       ).toBeUndefined();
     });
 
-    it('lands expired when the one trial has already lapsed', async () => {
+    /**
+     * ⚠️ This used to assert the opposite — that the write went through and
+     * landed `expired`. That was the permanent lockout: the wizard read
+     * `expired` as "not entitled", re-rendered the plan picker, and the
+     * button the customer had just pressed was the only thing on screen.
+     * Refusing sends them to `/billing`, which can actually take payment.
+     */
+    it('refuses a lapsed account whose one trial is already spent', async () => {
       prisma.subscription_plans.findUnique.mockResolvedValue(STARTER);
       primeState(prisma, subscriptions, {
         onboarding: {
@@ -461,11 +583,35 @@ describe('OnboardingService', () => {
         },
       });
 
+      await expect(service.selectPlan('acc-1', 'STARTER')).rejects.toThrow(
+        /free trial has ended/,
+      );
+      // Nothing written: a second press must not rewrite which plan an
+      // unpaid account is recorded against.
+      expect(prisma.user_subscriptions.upsert).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The other half of the same rule: a lapsed row with NO trial ever
+     * granted is somebody an operator expired by hand, and they are still
+     * owed the trial they never had. `plan` remains the right screen.
+     */
+    it('still starts the trial for a lapsed account that never had one', async () => {
+      prisma.subscription_plans.findUnique.mockResolvedValue(STARTER);
+      primeState(prisma, subscriptions, {
+        onboarding: { completed_at: new Date('2026-01-01T00:00:00Z') },
+        subscription: {
+          status: 'expired',
+          trial_start_at: null,
+          trial_end_at: null,
+          subscription_plans: { name: 'STARTER', display_name: 'Starter' },
+        },
+      });
+
       await service.selectPlan('acc-1', 'STARTER');
 
-      // Not 'active': they have consumed their trial and paid nothing.
       expect(upsertCall(prisma.user_subscriptions.upsert).update.status).toBe(
-        'expired',
+        'trial',
       );
     });
 

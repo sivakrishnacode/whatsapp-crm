@@ -19,39 +19,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { EnterpriseEnquiryDialog } from '@/components/onboarding/enterprise-enquiry-dialog';
 import { submitEnquiry, type EnquiryPayload } from '@/lib/onboarding/api';
-
-/**
- * The slice of Razorpay's checkout API this page uses. Typed here
- * rather than pulled from a package: the SDK ships as a script tag, so
- * there is no module to import types from.
- */
-interface RazorpayPaymentResponse {
-  razorpay_payment_id: string;
-  razorpay_order_id?: string;
-  razorpay_signature?: string;
-}
-
-interface RazorpayOptions {
-  key: string;
-  order_id: string;
-  amount: number;
-  currency: string;
-  name: string;
-  description: string;
-  handler: (response: RazorpayPaymentResponse) => void;
-  prefill: { name: string; email: string };
-  theme: { color: string };
-}
-
-interface RazorpayCheckout {
-  open: () => void;
-}
-
-declare global {
-  interface Window {
-    Razorpay?: new (options: RazorpayOptions) => RazorpayCheckout;
-  }
-}
+import { useRazorpayCheckout } from '@/hooks/use-razorpay-checkout';
 
 /** null on a limit column means unlimited, not zero. */
 function formatLimit(value: number | null): string {
@@ -64,21 +32,31 @@ export default function PricingPage() {
   const router = useRouter();
 
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
-  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [stripeLoading, setStripeLoading] = useState(false);
   const [enquiryOpen, setEnquiryOpen] = useState(false);
   const [enquirySubmitting, setEnquirySubmitting] = useState(false);
 
-  // Load Razorpay checkout script
-  useEffect(() => {
-    const script = document.createElement('script');
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    script.async = true;
-    document.body.appendChild(script);
+  /**
+   * ⚠️ Checkout lives in the shared hook, not here. The API verifies
+   * Razorpay's HMAC signature before it records anything, and this page's
+   * own copy of the flow never forwarded `razorpay_signature` — so a
+   * second copy is a second chance to take money and record nothing. The
+   * locked `/billing` screen uses the same hook.
+   */
+  const { pay: payWithRazorpay, pending: razorpayLoading } =
+    useRazorpayCheckout({
+      prefill: {
+        name: (user?.user_metadata?.full_name as string) || '',
+        email: user?.email || '',
+      },
+      onPaid: () => {
+        toast.success('Payment successful! Your plan is active.');
+        setSelectedPlan(null);
+        window.location.reload();
+      },
+    });
 
-    return () => {
-      document.body.removeChild(script);
-    };
-  }, []);
+  const paymentLoading = stripeLoading || razorpayLoading;
 
   const currentPlan = subscription?.plan_name ?? null;
 
@@ -140,7 +118,7 @@ export default function PricingPage() {
   };
 
   const handleStripeUpgrade = async (planName: string) => {
-    setPaymentLoading(true);
+    setStripeLoading(true);
     try {
       const response = await fetch('/api/subscription/stripe/create-checkout-session', {
         method: 'POST',
@@ -169,93 +147,7 @@ export default function PricingPage() {
       console.error('Stripe payment error:', error);
       toast.error('Failed to initiate Stripe payment');
     } finally {
-      setPaymentLoading(false);
-    }
-  };
-
-  const handleRazorpayUpgrade = async (planName: string) => {
-    // Publishable key — safe in the client, but it differs between test
-    // and live and must not be baked into the bundle as a literal.
-    const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
-    if (!razorpayKey) {
-      toast.error('Payments are not configured. Please contact support.');
-      return;
-    }
-
-    setPaymentLoading(true);
-    try {
-      const response = await fetch('/api/subscription/razorpay/create-order', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          planName,
-          billingCycle: 'monthly',
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        toast.error(data.error || 'Failed to create payment order');
-        return;
-      }
-
-      const options: RazorpayOptions = {
-        key: razorpayKey,
-        order_id: data.orderId,
-        amount: data.amount,
-        currency: data.currency,
-        name: 'Converse360',
-        description: `${planName} Plan - Monthly`,
-        handler: async function (response: RazorpayPaymentResponse) {
-          try {
-            const confirmResponse = await fetch('/api/subscription/razorpay/confirm-payment', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                planName,
-                billingCycle: 'monthly',
-                razorpayOrderId: data.orderId,
-                razorpayPaymentId: response.razorpay_payment_id,
-              }),
-            });
-
-            if (confirmResponse.ok) {
-              toast.success('Payment successful! Your plan has been upgraded.');
-              window.location.reload();
-            } else {
-              toast.error('Payment successful but failed to update subscription. Please contact support.');
-            }
-          } catch (error) {
-            console.error('Error confirming payment:', error);
-            toast.error('Payment successful but failed to update subscription. Please contact support.');
-          }
-        },
-        prefill: {
-          name: user?.user_metadata?.full_name || '',
-          email: user?.email || '',
-        },
-        theme: {
-          color: '#00ac55',
-        },
-      };
-
-      const Razorpay = window.Razorpay;
-      if (!Razorpay) {
-        toast.error('Checkout failed to load. Please refresh and try again.');
-        return;
-      }
-      new Razorpay(options).open();
-    } catch (error) {
-      console.error('Payment error:', error);
-      toast.error('Failed to initiate payment');
-    } finally {
-      setPaymentLoading(false);
-      setSelectedPlan(null);
+      setStripeLoading(false);
     }
   };
 
@@ -415,7 +307,7 @@ export default function PricingPage() {
               variant="outline"
               className="h-24 flex flex-col items-center justify-center gap-2 border-2 hover:border-primary hover:bg-primary/5 transition-all"
               disabled={paymentLoading}
-              onClick={() => selectedPlan && handleRazorpayUpgrade(selectedPlan)}
+              onClick={() => selectedPlan && payWithRazorpay(selectedPlan, 'monthly')}
             >
               {paymentLoading ? (
                 <Loader2 className="h-6 w-6 animate-spin" />

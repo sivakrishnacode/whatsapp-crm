@@ -35,14 +35,28 @@ function formatStorage(megabytes: number): string {
  * table, so a price edited in the admin panel shows up here without a
  * deploy. Enterprise arrives flagged `isEnquiryOnly` and renders a
  * "talk to sales" button instead of a price.
+ *
+ * ⚠️ THE TRIAL BADGE IS CONDITIONAL, AND MUST STAY THAT WAY.
+ * `plan.trialDays` says the PLAN offers a trial; `trialAvailable` says
+ * this WORKSPACE can still have one (migration 074 grants exactly one,
+ * ever). While only the first was consulted, an account that had spent
+ * its trial saw "15-day free trial" on every card and a button reading
+ * "Start free trial" that the server would refuse — which is how a lapsed
+ * workspace came to sit on this screen pressing a button that did
+ * nothing. A lapsed account now gets `/billing` instead of this step at
+ * all, but the two facts are still different questions and this component
+ * must answer with the right one.
  */
 export function PlanStep({
   plans,
+  trialAvailable,
   pendingPlan,
   onSelect,
   onEnquire,
 }: {
   plans: OnboardingPlan[];
+  /** Whether picking a plan would actually start a trial. */
+  trialAvailable: boolean;
   /** Name of the plan mid-request, so only its own button spins. */
   pendingPlan: string | null;
   onSelect: (planName: string) => void;
@@ -99,7 +113,7 @@ export function PlanStep({
               )}
             </div>
 
-            {plan.trialDays ? (
+            {plan.trialDays && trialAvailable ? (
               <span className="w-fit rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
                 {t("trialBadge", { days: plan.trialDays })}
               </span>
@@ -146,8 +160,10 @@ export function PlanStep({
                 </>
               ) : plan.isEnquiryOnly ? (
                 t("contactSales")
-              ) : (
+              ) : trialAvailable ? (
                 t("startTrial")
+              ) : (
+                t("choosePlan")
               )}
             </Button>
           </div>

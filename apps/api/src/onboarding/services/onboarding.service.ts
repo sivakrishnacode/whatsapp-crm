@@ -48,10 +48,29 @@ function paidWindow(now: Date) {
   };
 }
 
-/** Statuses that count as "this account has paid its way in". */
-const ENTITLED_STATUSES = ['active', 'trial'] as const;
+/**
+ * Statuses that count as "this account has paid its way in".
+ *
+ * ⚠️ `past_due` BELONGS HERE. It is the dunning state, and
+ * `get_account_entitlement` grades it `grace` — writes still work — which
+ * is exactly why `SubscriptionSweepService` is willing to set it
+ * automatically ("this sweep never takes the product away from anyone").
+ * While it was absent, the gate contradicted both: one late renewal
+ * webhook locked a paying customer out of their own inbox. Losing the
+ * product is reserved for `expired` and `cancelled`, which are the two
+ * states a human or a lapsed clock deliberately produced.
+ */
+const ENTITLED_STATUSES = ['active', 'trial', 'past_due'] as const;
 
-export type OnboardingStep = 'workspace' | 'plan' | 'done';
+/**
+ * `billing` is NOT a wizard step — it is the locked screen at `/billing`
+ * for a workspace whose trial is spent and whose subscription has
+ * lapsed. It is separate from `plan` because the two need opposite copy:
+ * `plan` offers a free trial, and offering one to an account that has
+ * already had its only trial (migration 074) is a button that cannot do
+ * what it says.
+ */
+export type OnboardingStep = 'workspace' | 'plan' | 'billing' | 'done';
 
 export interface OnboardingState {
   step: OnboardingStep;
@@ -69,6 +88,18 @@ export interface OnboardingState {
     planDisplayName: string;
     status: string;
     trialEndsAt: string | null;
+    /**
+     * Major units, like `subscription_plans.price_*` — NOT the minor
+     * units the ads and AI-credit tables use. The locked screen prints
+     * this as the amount due, so a unit slip here is a 100× quote.
+     */
+    priceMonthly: number;
+    priceYearly: number;
+    /**
+     * Quoted by a human, so "pay to continue" is not expressible: the
+     * locked screen sends these accounts to sales instead of checkout.
+     */
+    isEnquiryOnly: boolean;
   } | null;
   /**
    * Whether picking a plan would still start a trial. False once this
@@ -77,6 +108,22 @@ export interface OnboardingState {
    * instead of offering a free fortnight it will not deliver.
    */
   trialAvailable: boolean;
+  /**
+   * Who is looking, and who they have to ask.
+   *
+   * Checkout is owner-only everywhere in this product (`ownerOnly` in
+   * settings-sections.ts) and `user_subscriptions` is keyed by
+   * `accounts.owner_user_id`, so a teammate's payment has nowhere to
+   * land. The locked screen therefore shows them who to nudge rather
+   * than a button that would file their money against the wrong row.
+   */
+  viewer: {
+    isOwner: boolean;
+  };
+  owner: {
+    name: string | null;
+    email: string | null;
+  };
   plans: PlanView[];
 }
 
@@ -105,8 +152,19 @@ export class OnboardingService {
     private readonly subscriptions: SubscriptionService,
   ) {}
 
-  /** Everything `/welcome` needs to render, in one round trip. */
-  async getState(accountId: string): Promise<OnboardingState> {
+  /**
+   * Everything `/welcome` and `/billing` need to render, in one round
+   * trip.
+   *
+   * `viewerUserId` is optional only so the existing tests and any
+   * server-side caller can ask about an account without pretending to be
+   * somebody; when it is absent nobody is treated as the owner, which is
+   * the safe direction (no checkout offered).
+   */
+  async getState(
+    accountId: string,
+    viewerUserId?: string,
+  ): Promise<OnboardingState> {
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
       select: {
@@ -121,21 +179,31 @@ export class OnboardingService {
       throw new BadRequestException('Account not found');
     }
 
-    const [subscription, plans] = await Promise.all([
+    const [subscription, plans, owner] = await Promise.all([
       this.findOwnerSubscription(account.ownerUserId),
       this.subscriptions.listSelectablePlans(),
+      // The owner's own profile, so a locked-out teammate is told a name
+      // and an address instead of "contact the account owner".
+      this.prisma.profile.findUnique({
+        where: { userId: account.ownerUserId },
+        select: { fullName: true, email: true },
+      }),
     ]);
 
     const onboarding = account.account_onboarding;
     const isEntitled =
       subscription !== null &&
       (ENTITLED_STATUSES as readonly string[]).includes(subscription.status);
+    const trialAvailable =
+      onboarding?.trial_granted_at == null && subscription?.trialEndsAt == null;
 
     return {
       step: this.resolveStep({
         hasWorkspace: onboarding !== null,
         isCompleted: onboarding?.completed_at != null,
         isEntitled,
+        hasSubscription: subscription !== null,
+        trialAvailable,
       }),
       workspace: {
         name: account.name,
@@ -146,9 +214,12 @@ export class OnboardingService {
         referralOther: onboarding?.referral_other ?? null,
       },
       subscription,
-      trialAvailable:
-        onboarding?.trial_granted_at == null &&
-        subscription?.trialEndsAt == null,
+      trialAvailable,
+      viewer: { isOwner: viewerUserId === account.ownerUserId },
+      owner: {
+        name: owner?.fullName ?? null,
+        email: owner?.email ?? null,
+      },
       plans,
     };
   }
@@ -162,6 +233,7 @@ export class OnboardingService {
   async saveWorkspace(
     accountId: string,
     dto: SaveWorkspaceDto,
+    viewerUserId?: string,
   ): Promise<OnboardingState> {
     const name = dto.workspaceName.trim();
     if (name.length === 0) {
@@ -215,7 +287,7 @@ export class OnboardingService {
       }),
     ]);
 
-    return this.getState(accountId);
+    return this.getState(accountId, viewerUserId);
   }
 
   /**
@@ -236,6 +308,7 @@ export class OnboardingService {
   async selectPlan(
     accountId: string,
     planName: string,
+    viewerUserId?: string,
   ): Promise<OnboardingState> {
     const plan = await this.findSelectablePlan(planName);
     const ownerUserId = await this.getOwnerUserId(accountId);
@@ -246,6 +319,40 @@ export class OnboardingService {
         'This workspace already has a paid plan. Change it from Settings → ' +
           'Plan & billing.',
       );
+    }
+
+    /**
+     * ⚠️ A SPENT TRIAL CANNOT BE RESTARTED HERE, SO SAY SO.
+     *
+     * `startSubscription` would accept this call and quietly carry the
+     * lapsed window forward, leaving the status `expired` — the same
+     * state it was already in. The wizard read that as "still not
+     * entitled" and re-rendered the plan picker, so the user pressed the
+     * button again. An error is the honest answer, and it is what routes
+     * them to the one screen that can actually help.
+     */
+    const entitled =
+      existing !== null &&
+      (ENTITLED_STATUSES as readonly string[]).includes(existing.status);
+
+    if (existing !== null && !entitled) {
+      const onboarding = await this.prisma.account_onboarding.findUnique({
+        where: { account_id: accountId },
+        select: { trial_granted_at: true },
+      });
+      // The same two facts `startSubscription` calls `trialAlreadyUsed`:
+      // the latch, or a trial window already on the row. `trialEndsAt` is
+      // written in the same group as `trial_start_at` (see trialWindow),
+      // so either one answers it.
+      const trialSpent =
+        onboarding?.trial_granted_at != null || existing.trialEndsAt != null;
+
+      if (trialSpent) {
+        throw new BadRequestException(
+          'Your free trial has ended. Choose a plan and pay to continue, ' +
+            'or contact support if you need more time.',
+        );
+      }
     }
 
     await this.startSubscription({
@@ -260,7 +367,7 @@ export class OnboardingService {
       `Account ${accountId} onboarded onto ${plan.name} (owner ${ownerUserId})`,
     );
 
-    return this.getState(accountId);
+    return this.getState(accountId, viewerUserId);
   }
 
   /**
@@ -317,7 +424,7 @@ export class OnboardingService {
         `Enterprise enquiry recorded for account ${accountId}; ` +
           `left on ${existing.planName} (${existing.status})`,
       );
-      return this.getState(accountId);
+      return this.getState(accountId, userId);
     }
 
     const plan = await this.findSelectablePlan(ENTERPRISE_PLAN);
@@ -333,7 +440,7 @@ export class OnboardingService {
       `Enterprise enquiry recorded for account ${accountId}; provisioned trial`,
     );
 
-    return this.getState(accountId);
+    return this.getState(accountId, userId);
   }
 
   // ----------------------------------------------------------------
@@ -344,12 +451,40 @@ export class OnboardingService {
     hasWorkspace,
     isCompleted,
     isEntitled,
+    hasSubscription,
+    trialAvailable,
   }: {
     hasWorkspace: boolean;
     isCompleted: boolean;
     isEntitled: boolean;
+    hasSubscription: boolean;
+    trialAvailable: boolean;
   }): OnboardingStep {
     if (!hasWorkspace) return 'workspace';
+
+    /**
+     * ⚠️ THE LAPSED CASE IS NOT THE PLAN STEP, AND SENDING IT THERE WAS A
+     * PERMANENT LOCKOUT.
+     *
+     * A spent trial with no payment used to fall through to `plan`, where
+     * every card advertised a free trial and every button said "Start
+     * free trial". Pressing one called `selectPlan`, whose 074 latch
+     * correctly refused to grant a second trial and carried the lapsed
+     * window forward — landing `expired` again, returning `plan` again.
+     * The button did nothing, for ever, and `/pricing` was unreachable
+     * because it lives inside the gated dashboard. The only exit was an
+     * operator editing the database.
+     *
+     * The three conditions are all load-bearing:
+     *   - not entitled — there is nothing wrong with an account in good
+     *     standing, including one in `past_due` dunning.
+     *   - no trial left — if one is still available, `plan` is the honest
+     *     screen; it can genuinely start it.
+     *   - a subscription row exists — with nothing to renew, "pay to
+     *     continue" has no plan to name, so picking one comes first.
+     */
+    if (!isEntitled && !trialAvailable && hasSubscription) return 'billing';
+
     // completed_at alone is not enough: an admin can cancel or expire a
     // subscription afterwards, and that account has to come back here
     // and choose again rather than keep the keys.
@@ -397,17 +532,31 @@ export class OnboardingService {
       select: {
         status: true,
         trial_end_at: true,
-        subscription_plans: { select: { name: true, display_name: true } },
+        subscription_plans: {
+          select: {
+            name: true,
+            display_name: true,
+            price_monthly: true,
+            price_yearly: true,
+          },
+        },
       },
     });
 
     if (!subscription) return null;
 
+    const plan = subscription.subscription_plans;
+
     return {
-      planName: subscription.subscription_plans.name,
-      planDisplayName: subscription.subscription_plans.display_name,
+      planName: plan.name,
+      planDisplayName: plan.display_name,
       status: subscription.status,
       trialEndsAt: subscription.trial_end_at?.toISOString() ?? null,
+      // Prisma hands DECIMAL back as its own Decimal type; Number() here
+      // rather than at the edge so the JSON body carries a number.
+      priceMonthly: Number(plan.price_monthly ?? 0),
+      priceYearly: Number(plan.price_yearly ?? 0),
+      isEnquiryOnly: plan.name === ENTERPRISE_PLAN,
     };
   }
 

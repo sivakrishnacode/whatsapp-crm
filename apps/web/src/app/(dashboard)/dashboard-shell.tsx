@@ -13,6 +13,8 @@ import { PrimaryRail } from "@/components/layout/primary-rail";
 import { SecondaryPanel } from "@/components/layout/secondary-panel";
 import { Header } from "@/components/layout/header";
 import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
+import { BillingStandingProvider } from "@/components/billing/billing-standing";
+import { TrialNoticeBanner } from "@/components/billing/trial-notice-banner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { resolveNavContext } from "@/lib/nav/nav-config";
 
@@ -58,15 +60,19 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // replace(), not push(): an un-onboarded account pressing Back
     // should not be able to step into the dashboard it was just sent
     // away from.
-    if (onboarding === "required") {
-      router.replace("/welcome");
+    //
+    // The destination comes from the gate rather than being hardcoded
+    // here: a lapsed account belongs on /billing, not in the signup
+    // wizard. See the note in use-onboarding-gate.ts.
+    if (onboarding.redirectTo) {
+      router.replace(onboarding.redirectTo);
     }
-  }, [onboarding, router]);
+  }, [onboarding.redirectTo, router]);
 
   // The onboarding check is folded into the same spinner as the session
   // so a gated user never sees a flash of the dashboard chrome before
   // being redirected.
-  if (loading || (user && onboarding === "checking")) {
+  if (loading || (user && onboarding.status === "checking")) {
     return (
       <div className="flex h-dvh items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
@@ -77,9 +83,15 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user || onboarding === "required") return null;
+  if (!user || onboarding.status === "required") return null;
 
-  return <>{children}</>;
+  // The gate's own fetch is the banner's source of truth — see
+  // BillingStandingProvider on why this is not a second request.
+  return (
+    <BillingStandingProvider state={onboarding.state}>
+      {children}
+    </BillingStandingProvider>
+  );
 }
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
@@ -193,6 +205,10 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           ) : null}
 
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            {/* Above the header, not inside <main>: it is about the whole
+                workspace rather than the page, and <main> scrolls — a
+                deadline notice that scrolls away is one nobody reads. */}
+            <TrialNoticeBanner />
             <Header
               onOpenSidebar={openDrawer}
               title={nav.title}

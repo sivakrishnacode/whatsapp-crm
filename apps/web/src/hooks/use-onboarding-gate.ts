@@ -2,9 +2,22 @@
 
 import { useEffect, useState } from "react";
 
-import { fetchOnboardingState } from "@/lib/onboarding/api";
+import { fetchOnboardingState, type OnboardingState } from "@/lib/onboarding/api";
 
 export type OnboardingGateStatus = "checking" | "required" | "allowed";
+
+export interface OnboardingGate {
+  status: OnboardingGateStatus;
+  /**
+   * The whole state, kept rather than thrown away, for two reasons: the
+   * redirect target depends on WHICH step is outstanding, and the trial
+   * notice banner needs the same facts this fetch already carries. A
+   * second request for them would be a second answer that could disagree.
+   */
+  state: OnboardingState | null;
+  /** Where to send them, or null when they may stay. */
+  redirectTo: string | null;
+}
 
 /**
  * The hard gate in front of the dashboard.
@@ -30,9 +43,18 @@ export type OnboardingGateStatus = "checking" | "required" | "allowed";
  *   out of their inbox whenever the onboarding endpoint hiccups is worse
  *   than one that occasionally lets an un-onboarded account through —
  *   they hit the plan limits regardless.
+ *
+ * ⚠️ TWO DESTINATIONS, NOT ONE
+ *   Every outstanding step used to redirect to `/welcome`. For a lapsed
+ *   account that was a dead end: the wizard offered a free trial the
+ *   server would refuse to grant, and `/pricing` — the only screen that
+ *   takes payment — is itself inside this gate, so it was unreachable
+ *   precisely when it was needed. `step === 'billing'` now goes to
+ *   `/billing` instead.
  */
-export function useOnboardingGate(enabled: boolean): OnboardingGateStatus {
+export function useOnboardingGate(enabled: boolean): OnboardingGate {
   const [status, setStatus] = useState<OnboardingGateStatus>("checking");
+  const [state, setState] = useState<OnboardingState | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -40,9 +62,10 @@ export function useOnboardingGate(enabled: boolean): OnboardingGateStatus {
     let active = true;
 
     fetchOnboardingState()
-      .then((state) => {
+      .then((next) => {
         if (!active) return;
-        setStatus(state.step === "done" ? "allowed" : "required");
+        setState(next);
+        setStatus(next.step === "done" ? "allowed" : "required");
       })
       .catch((error) => {
         console.error("[useOnboardingGate] check failed:", error);
@@ -54,5 +77,14 @@ export function useOnboardingGate(enabled: boolean): OnboardingGateStatus {
     };
   }, [enabled]);
 
-  return status;
+  return {
+    status,
+    state,
+    redirectTo:
+      status !== "required"
+        ? null
+        : state?.step === "billing"
+          ? "/billing"
+          : "/welcome",
+  };
 }

@@ -7,7 +7,13 @@
  * is the seam — keep it in step with the service's return shape.
  */
 
-export type OnboardingStep = "workspace" | "plan" | "done";
+/**
+ * `billing` is the locked screen at `/billing`, not a wizard step: the
+ * workspace's one trial (migration 074) is spent and nothing has been
+ * paid. It is separate from `plan` because `plan` promises a free trial,
+ * and promising one to this account is a button that cannot deliver.
+ */
+export type OnboardingStep = "workspace" | "plan" | "billing" | "done";
 
 export interface OnboardingPlan {
   name: string;
@@ -44,7 +50,22 @@ export interface OnboardingState {
     planDisplayName: string;
     status: string;
     trialEndsAt: string | null;
+    /** Major units (rupees), matching subscription_plans.price_*. */
+    priceMonthly: number;
+    priceYearly: number;
+    /** Quoted by a human — offer sales, not checkout. */
+    isEnquiryOnly: boolean;
   } | null;
+  /**
+   * False once this workspace has had its one trial (migration 074). The
+   * plan picker reads it so it stops advertising a free fortnight it
+   * cannot grant.
+   */
+  trialAvailable: boolean;
+  /** Checkout is owner-only: `user_subscriptions` is keyed by the owner. */
+  viewer: { isOwner: boolean };
+  /** Who a locked-out teammate has to ask. */
+  owner: { name: string | null; email: string | null };
   plans: OnboardingPlan[];
 }
 

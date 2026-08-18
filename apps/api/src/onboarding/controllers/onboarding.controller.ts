@@ -43,7 +43,7 @@ export class OnboardingController {
   async getState(
     @CurrentAccount() account: SupabaseAccountContext,
   ): Promise<OnboardingState> {
-    return this.onboardingService.getState(account.accountId);
+    return this.onboardingService.getState(account.accountId, account.userId);
   }
 
   /** PUT /api/onboarding/workspace — step 1. */
@@ -53,7 +53,11 @@ export class OnboardingController {
     @Body() dto: SaveWorkspaceDto,
   ): Promise<OnboardingState> {
     this.assertCanConfigure(account);
-    return this.onboardingService.saveWorkspace(account.accountId, dto);
+    return this.onboardingService.saveWorkspace(
+      account.accountId,
+      dto,
+      account.userId,
+    );
   }
 
   /** POST /api/onboarding/plan — step 2, starts the trial. */
@@ -63,7 +67,11 @@ export class OnboardingController {
     @Body() dto: SelectPlanDto,
   ): Promise<OnboardingState> {
     this.assertCanConfigure(account);
-    return this.onboardingService.selectPlan(account.accountId, dto.planName);
+    return this.onboardingService.selectPlan(
+      account.accountId,
+      dto.planName,
+      account.userId,
+    );
   }
 
   /** POST /api/onboarding/enquiry — step 2, Enterprise branch. */

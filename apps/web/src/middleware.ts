@@ -116,6 +116,9 @@ export async function middleware(request: NextRequest) {
     // The guided-signup wizard. Protected, not public: it configures a
     // workspace, so there has to be a session behind it.
     '/welcome',
+    // The locked "your trial has ended" screen. Same reasoning: it names
+    // the workspace, its plan and its owner, and it opens a checkout.
+    '/billing',
     '/onboarding',
     '/inbox',
     '/contacts',

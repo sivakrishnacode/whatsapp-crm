@@ -24,6 +24,16 @@ import {
 /** Where a finished wizard hands over: the channel-connect checklist. */
 const NEXT_AFTER_ONBOARDING = "/onboarding";
 
+/**
+ * Where a LAPSED account belongs instead of this wizard.
+ *
+ * `step === 'billing'` means the workspace has spent its one trial
+ * (migration 074) and paid nothing. This screen cannot help it: every
+ * button here asks the server to start a trial, and the server will
+ * refuse. See app/(onboarding)/billing/page.tsx.
+ */
+const BILLING_LOCKED = "/billing";
+
 const STEP_ORDER = ["workspace", "plan"] as const;
 
 /**
@@ -78,6 +88,7 @@ export default function WelcomePage() {
         setState(next);
         // Already finished — someone navigated back to /welcome by hand.
         if (next.step === "done") router.replace(NEXT_AFTER_ONBOARDING);
+        else if (next.step === "billing") router.replace(BILLING_LOCKED);
       })
       .catch((cause: unknown) => {
         if (!active) return;
@@ -101,6 +112,7 @@ export default function WelcomePage() {
       const next = await action();
       setState(next);
       if (next.step === "done") router.replace(NEXT_AFTER_ONBOARDING);
+      else if (next.step === "billing") router.replace(BILLING_LOCKED);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -141,6 +153,11 @@ export default function WelcomePage() {
 
   const isPlanStep = state.step === "plan";
   const trialDays = state.plans.find((plan) => plan.trialDays)?.trialDays ?? 15;
+  // Same distinction as PlanStep: the plan offers a trial, the WORKSPACE
+  // may already have used its only one.
+  const planDesc = state.trialAvailable
+    ? t("planDesc", { days: trialDays })
+    : t("planDescNoTrial");
 
   return (
     <div className="min-h-svh bg-muted/40 px-4 py-10 md:py-16">
@@ -158,9 +175,7 @@ export default function WelcomePage() {
             {isPlanStep ? t("planTitle") : t("workspaceTitle")}
           </h1>
           <p className="text-muted-foreground text-balance">
-            {isPlanStep
-              ? t("planDesc", { days: trialDays })
-              : t("workspaceDesc")}
+            {isPlanStep ? planDesc : t("workspaceDesc")}
           </p>
         </div>
 
@@ -169,6 +184,7 @@ export default function WelcomePage() {
         {isPlanStep ? (
           <PlanStep
             plans={state.plans}
+            trialAvailable={state.trialAvailable}
             pendingPlan={pendingPlan}
             onSelect={handlePlan}
             onEnquire={() => setEnquiryOpen(true)}
