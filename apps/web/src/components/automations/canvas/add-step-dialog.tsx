@@ -43,6 +43,7 @@ import { APP_PRESETS, type AppPreset } from '@/lib/automations/app-presets';
 import { stepAvailability } from '@/lib/automations/availability';
 import {
   connectionsFor,
+  missingScopes,
   type CatalogAction,
   type CatalogApp,
 } from '@/lib/automations/connectors';
@@ -265,8 +266,14 @@ export function AddStepDialog({
                 </SectionLabel>
                 <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
                   {actions.map(({ app, action }) => {
+                    // Per ACTION, not per provider: one Google connection
+                    // covers all four Google cards, but only with the
+                    // scopes actually granted. A Sheets-only grant must
+                    // not present "Gmail · Send email" as ready to run.
                     const connected = connectionsFor(connections, app).some(
-                      (c) => c.status === 'active',
+                      (c) =>
+                        c.status === 'active' &&
+                        missingScopes(c, action).length === 0,
                     );
                     return (
                       <button

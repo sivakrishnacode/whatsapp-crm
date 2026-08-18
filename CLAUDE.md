@@ -472,6 +472,20 @@ is Zapier: pasted webhook URLs, no stored credential).
 - ⚠️ **`connection_id` in a step config is author-supplied data, not
   authority.** Every read is filtered by the running automation's
   `account_id` — same trap as `segment_id`, bigger prize.
+- ⚠️ **FOUR APPS, ONE CONNECTION ROW — so "connected" is a SCOPE
+  question, never a provider one.** One Google grant is one token, and
+  incremental consent means connecting Sheets grants `spreadsheets` and
+  nothing else. `connectionsGranting()` (web) asks whether the scopes
+  THIS app's actions need are granted; `connectionsFor()` asks only about
+  the provider and is correct solely for a picker offering the account
+  the author obviously meant, paired with `missingScopes`. The
+  Integrations page and the step picker both used the provider one, so
+  connecting Sheets showed Gmail, Calendar and Meet as **Connected**
+  while every action on them would be refused by the executor's scope
+  check — a green badge for something that cannot run. Pinned by
+  `lib/automations/connectors.test.ts`. Google has no per-scope revoke
+  either, so disconnecting from one card kills the siblings; the confirm
+  names them.
 - The OAuth callback (`/connections/oauth/callback`) has **no auth
   guard**: cross-site GET, authorised by the HMAC-signed `state`, which
   signs with its own `CONNECTIONS_STATE_SECRET` so a state cannot be

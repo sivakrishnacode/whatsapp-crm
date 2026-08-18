@@ -111,6 +111,44 @@ export function connectionsFor(
 }
 
 /**
+ * Every scope an app needs — the union of its actions'.
+ *
+ * Mirrors `ConnectorRegistryService.scopesForApp`, which is what the
+ * connect flow actually asks Google for, so "granted" means the same
+ * thing on both sides of the redirect.
+ */
+export function appScopes(app: CatalogApp): string[] {
+  return Array.from(new Set(app.actions.flatMap((a) => a.scopes)));
+}
+
+/**
+ * Connections that can actually RUN this app: right provider AND every
+ * scope the app needs already granted.
+ *
+ * ⚠️ NOT the same question as `connectionsFor`, and the difference is
+ *   why both exist. SEVERAL APPS SHARE ONE PROVIDER — a single Google
+ *   row serves Sheets, Gmail, Calendar and Meet — so provider alone
+ *   answers "has this workspace linked a Google account?", never "will
+ *   this app work?". Incremental consent means connecting Sheets grants
+ *   `spreadsheets` and nothing else, and a Gmail action on that same
+ *   connection is refused by the executor's scope check before the call.
+ *
+ *   Anything that reports a STATE to the user ("Connected") must ask
+ *   this one; a picker offering the account the author obviously meant
+ *   asks `connectionsFor` and warns with `missingScopes`.
+ */
+export function connectionsGranting(
+  connections: AppConnection[],
+  app: CatalogApp | undefined,
+): AppConnection[] {
+  if (!app) return [];
+  const needed = appScopes(app);
+  return connectionsFor(connections, app).filter((c) =>
+    needed.every((scope) => c.scopes.includes(scope)),
+  );
+}
+
+/**
  * Does this connection cover everything the action needs?
  *
  * Mirrors the server-side check in ConnectorExecutionService. It is a

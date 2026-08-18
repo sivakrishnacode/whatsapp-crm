@@ -13,6 +13,20 @@
  *   distinctly from the first on purpose — an expired grant with live
  *   automations pointing at it is an incident, and showing it as a blank
  *   "Connect" invites somebody to conclude nothing was ever set up.
+ *
+ * ⚠️ "CONNECTED" IS A SCOPE QUESTION, NOT A PROVIDER QUESTION
+ *   Four cards here share one `app_connections` row, because one Google
+ *   grant is one token. This section asked `connectionsFor` (provider
+ *   only), so connecting Sheets alone lit up Gmail, Calendar and Meet as
+ *   Connected too — while Google had granted `spreadsheets` and nothing
+ *   else, so every action on the other three would be refused by the
+ *   executor's scope check. It asks `connectionsGranting` instead: an app
+ *   is connected when the scopes ITS OWN actions need are granted.
+ *
+ *   A linked-but-not-authorised app is not the same as a blank one
+ *   either: the account is already chosen, so one consent screen widens
+ *   the existing grant rather than starting over. That is what the
+ *   "Enable" footer and the account row without a remove control say.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -27,6 +41,7 @@ import {
 import {
   connectUrl,
   connectionsFor,
+  connectionsGranting,
   type AppConnection,
   type CatalogApp,
 } from '@/lib/automations/connectors';
@@ -88,10 +103,25 @@ export function ConnectedApps() {
     );
   }, []);
 
-  const disconnect = async (connection: AppConnection, appName: string) => {
+  const disconnect = async (connection: AppConnection, app: CatalogApp) => {
+    // ⚠️ One row serves several apps, and Google has no per-scope revoke:
+    // removing the connection from the Gmail card also stops Sheets.
+    // Naming the others is the difference between an informed click and
+    // an automation that stops for a reason nobody can find.
+    const alsoAffected = apps
+      .filter(
+        (other) =>
+          other.app !== app.app &&
+          connectionsGranting([connection], other).length > 0,
+      )
+      .map((other) => other.name);
+
     if (
       !confirm(
-        `Disconnect ${connection.displayName ?? appName}? Automations using it will stop working until you reconnect.`,
+        `Disconnect ${connection.displayName ?? app.name}? Automations using it will stop working until you reconnect.` +
+          (alsoAffected.length > 0
+            ? ` This is the same account as ${joinNames(alsoAffected)}, so those stop too.`
+            : ''),
       )
     ) {
       return;
@@ -132,9 +162,15 @@ export function ConnectedApps() {
 
       <IntegrationGrid>
         {apps.map((app) => {
-          const forApp = connectionsFor(connections, app);
+          const forApp = connectionsGranting(connections, app);
           const broken = forApp.filter((c) => c.status !== 'active');
           const connected = forApp.length > 0;
+          // Accounts linked for a SIBLING app of the same provider. Shown
+          // without a remove control on purpose: the only thing removing
+          // one here would do is disconnect the app that IS working.
+          const linkedOnly = connected
+            ? []
+            : connectionsFor(connections, app);
 
           return (
             <IntegrationCard
@@ -170,7 +206,9 @@ export function ConnectedApps() {
                     href={connectUrl(app, '/integrations')}
                     className="bg-primary text-primary-foreground hover:bg-primary/90 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg text-xs font-medium transition-colors"
                   >
-                    Connect
+                    {/* The account is already chosen, so this is one
+                        consent screen widening a grant, not a sign-in. */}
+                    {linkedOnly.length > 0 ? 'Enable' : 'Connect'}
                     <ExternalLink className="size-3.5" />
                   </a>
                 )
@@ -191,7 +229,7 @@ export function ConnectedApps() {
                       type="button"
                       aria-label={`Disconnect ${connection.displayName ?? app.name}`}
                       disabled={disconnecting === connection.id}
-                      onClick={() => void disconnect(connection, app.name)}
+                      onClick={() => void disconnect(connection, app)}
                       className="text-muted-foreground/50 hover:text-destructive focus-visible:text-destructive group-hover/row:text-muted-foreground shrink-0 transition-colors disabled:opacity-50"
                     >
                       {disconnecting === connection.id ? (
@@ -203,10 +241,24 @@ export function ConnectedApps() {
                   }
                 />
               ))}
+
+              {linkedOnly.map((connection) => (
+                <IntegrationRow
+                  key={connection.id}
+                  label={connection.displayName ?? connection.id}
+                  sublabel={`Signed in — ${app.name} access not granted yet`}
+                />
+              ))}
             </IntegrationCard>
           );
         })}
       </IntegrationGrid>
     </section>
   );
+}
+
+/** "Sheets and Calendar", "Sheets, Gmail and Calendar". */
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
