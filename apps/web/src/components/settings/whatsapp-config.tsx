@@ -85,6 +85,32 @@ export function WhatsAppConfig() {
   const isRegistered = Boolean(config?.registered_at);
   const lastRegistrationError = config?.last_registration_error ?? null;
 
+  // Manual setup is an escape hatch, not a customer-facing path. Under the
+  // Tech Provider model every business connects through Embedded Signup, and
+  // a form inviting someone to paste a permanent access token is a support
+  // burden at best. It stays reachable in exactly the two cases where hiding
+  // it would strand somebody:
+  //
+  //   1. Embedded Signup is not usable on this deployment — either
+  //      NEXT_PUBLIC_FACEBOOK_APP_ID or _CONFIG_ID is missing, so "Connect
+  //      with Facebook" renders disabled and manual is the only way in. Both
+  //      are inlined at build time, so a deploy that forgets them fails this
+  //      check rather than leaving a dead button as the only option.
+  //   2. This account is already connected the manual way. `connection_method`
+  //      defaults to 'manual', so every pre-Embedded-Signup row qualifies and
+  //      keeps its credentials editable instead of going read-only.
+  const embeddedSignupConfigured = Boolean(
+    process.env.NEXT_PUBLIC_FACEBOOK_APP_ID &&
+      process.env.NEXT_PUBLIC_FACEBOOK_CONFIG_ID,
+  );
+  const showManualSetup =
+    !embeddedSignupConfigured ||
+    (config != null && config.connection_method !== 'embedded_signup');
+  // Derived rather than forced into `setupMode`, so a user who had the manual
+  // tab open keeps it if `showManualSetup` flips back — fetchConfig resolving
+  // a manual row after first paint would otherwise reset their tab.
+  const effectiveSetupMode = showManualSetup ? setupMode : 'connect';
+
   const [verifyingRegistration, setVerifyingRegistration] = useState(false);
   type RegistrationProbe = {
     live: boolean;
@@ -607,15 +633,20 @@ export function WhatsAppConfig() {
         )}
 
         {/* Connect vs. Manual are separate tabs — only one setup path
-            is on screen at a time. */}
+            is on screen at a time. When manual is hidden the list goes with
+            it, so the Embedded Signup panel is the whole surface rather than
+            one lonely tab. The manual panel is unmounted explicitly below
+            instead of relying on the Tabs primitive's mount default. */}
         <Tabs
-          value={setupMode}
+          value={effectiveSetupMode}
           onValueChange={(v) => setSetupMode((v as 'connect' | 'manual') || 'connect')}
         >
-          <TabsList>
-            <TabsTrigger value="connect">Connect with Facebook</TabsTrigger>
-            <TabsTrigger value="manual">Manual setup</TabsTrigger>
-          </TabsList>
+          {showManualSetup && (
+            <TabsList>
+              <TabsTrigger value="connect">Connect with Facebook</TabsTrigger>
+              <TabsTrigger value="manual">Manual setup</TabsTrigger>
+            </TabsList>
+          )}
 
           <TabsContent value="connect" className="mt-4">
             <WhatsAppConnectSteps
@@ -625,6 +656,7 @@ export function WhatsAppConfig() {
             />
           </TabsContent>
 
+          {showManualSetup && (
           <TabsContent value="manual" className="mt-4 space-y-6">
             <Card>
               <CardHeader>
@@ -769,11 +801,12 @@ export function WhatsAppConfig() {
               </CardContent>
             </Card>
           </TabsContent>
+          )}
         </Tabs>
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-3">
-          {setupMode === 'manual' && (
+          {effectiveSetupMode === 'manual' && (
             <Button
               onClick={handleSave}
               disabled={saving}
