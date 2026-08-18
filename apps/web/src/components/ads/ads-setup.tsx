@@ -78,6 +78,22 @@ export function AdsSetup() {
   const [pages, setPages] = useState<AdsPage[] | null>(null);
   const [pixels, setPixels] = useState<AdsPixel[] | null>(null);
 
+  // The portfolio picker is a FILTER first and a saved setting second:
+  // choosing one only narrows the ad-account list, and the business is
+  // persisted later, by the ad-account save that carries it. So the choice
+  // has to be held here in between. Driving that control from `status`
+  // alone — which is what it used to do — meant the pick had nowhere to
+  // live: the control snapped straight back to "All ad accounts", and the
+  // ad-account save then sent `businessId: undefined`, so business_id and
+  // business_name stayed null on the row no matter what the user chose.
+  // Deliberately looser than AdsBusiness, whose `name` is required: what is
+  // actually known here is an id, and a name only if the list it came from
+  // is still in hand.
+  const [pickedBusiness, setPickedBusiness] = useState<{
+    id: string;
+    name?: string;
+  } | null>(null);
+
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/ads/status', { cache: 'no-store' });
@@ -272,6 +288,10 @@ export function AdsSetup() {
                     )
                   )
                     return;
+                  // Or the next connection opens showing the portfolio the
+                  // previous one picked, which may not even be the same
+                  // Facebook user's.
+                  setPickedBusiness(null);
                   void act(
                     'disconnect',
                     '/api/ads/connection',
@@ -354,8 +374,10 @@ export function AdsSetup() {
             <Picker
               label="Business portfolio (optional)"
               placeholder="All ad accounts"
-              value={status.business?.id ?? null}
-              selectedLabel={status.business?.name}
+              // The local pick wins while it is newer than the saved row —
+              // the row only catches up once an ad account is chosen.
+              value={pickedBusiness?.id ?? status.business?.id ?? null}
+              selectedLabel={pickedBusiness?.name ?? status.business?.name}
               options={businesses}
               onOpen={() =>
                 businesses === null
@@ -371,7 +393,16 @@ export function AdsSetup() {
               disabled={disabled}
               onChange={(businessId) => {
                 // Narrowing the list is a client concern until an ad
-                // account is chosen — nothing is persisted yet.
+                // account is chosen — nothing is persisted yet, so the
+                // choice is held here and sent with that save.
+                setPickedBusiness(
+                  // The list is what was just chosen from, so the lookup
+                  // hits; the bare id is a fallback that keeps the control
+                  // showing a selection rather than snapping to empty.
+                  businesses?.find((b) => b.id === businessId) ?? {
+                    id: businessId,
+                  },
+                );
                 setAdAccounts(null);
                 void fetchList<AdsAdAccount>(
                   `/api/ads/ad-accounts?businessId=${encodeURIComponent(businessId)}`,
@@ -408,8 +439,10 @@ export function AdsSetup() {
                   'ad-account',
                   '/api/ads/ad-account',
                   {
+                    // The pick made just above, which is the only place it
+                    // exists until this call writes it to the row.
                     adAccountId,
-                    businessId: status.business?.id,
+                    businessId: pickedBusiness?.id ?? status.business?.id,
                   },
                   'Ad account selected.',
                 )
