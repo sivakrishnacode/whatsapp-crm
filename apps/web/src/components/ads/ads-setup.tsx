@@ -355,6 +355,7 @@ export function AdsSetup() {
               label="Business portfolio (optional)"
               placeholder="All ad accounts"
               value={status.business?.id ?? null}
+              selectedLabel={status.business?.name}
               options={businesses}
               onOpen={() =>
                 businesses === null
@@ -384,6 +385,7 @@ export function AdsSetup() {
               label="Ad account"
               placeholder="Choose an ad account"
               value={status.adAccount?.id ?? null}
+              selectedLabel={status.adAccount?.name}
               options={adAccounts}
               onOpen={() =>
                 adAccounts === null
@@ -466,6 +468,7 @@ export function AdsSetup() {
             label="Page"
             placeholder="Choose a page"
             value={status.page?.id ?? null}
+            selectedLabel={status.page?.name}
             options={pages}
             onOpen={() =>
               pages === null
@@ -549,6 +552,7 @@ export function AdsSetup() {
             label="Pixel"
             placeholder="No pixel"
             value={status.pixel?.id ?? null}
+            selectedLabel={status.pixel?.name}
             options={pixels}
             onOpen={() =>
               pixels === null
@@ -764,6 +768,7 @@ function Picker<T>({
   label,
   placeholder,
   value,
+  selectedLabel,
   options,
   onOpen,
   onChange,
@@ -775,6 +780,16 @@ function Picker<T>({
   label: string;
   placeholder: string;
   value: string | null;
+  /**
+   * Display name the server already stored for `value`.
+   *
+   * Load-bearing because these lists are fetched LAZILY, on open. A saved
+   * selection therefore renders at least once with `options === null`, and
+   * with nothing to match the id against the trigger would show the raw
+   * `1249447974913601` instead of "Converse360" — every id in this file is
+   * a 16-digit Meta id, so that is not a label anyone can read.
+   */
+  selectedLabel?: string | null;
   options: T[] | null;
   onOpen: () => void;
   onChange: (value: string) => void;
@@ -812,7 +827,22 @@ function Picker<T>({
           onClick={onOpen}
           onFocus={onOpen}
         >
-          <SelectValue placeholder={placeholder} />
+          {/* Base UI renders the raw value unless given a formatter, and a
+              Meta id is not a label. Prefer the loaded list so the trigger
+              and the menu always say the same thing; fall back to the name
+              the server stored while the list is still unfetched. */}
+          <SelectValue placeholder={placeholder}>
+            {(selected) => {
+              if (typeof selected !== 'string' || selected === '') {
+                return placeholder;
+              }
+              const match = options?.find(
+                (option) => optionValue(option) === selected,
+              );
+              if (match) return optionLabel(match);
+              return selectedLabel || selected;
+            }}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           {options === null ? (
