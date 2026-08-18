@@ -8,6 +8,12 @@ broadcasts — without going through the dashboard UI.
 > messages / contacts / conversations / broadcasts endpoints, and
 > outbound event [webhooks](#webhooks) all ship now.
 
+> **Google Sheets sync.** A ready-made Apps Script that pushes sheet rows
+> to `POST /api/v1/contacts` — no OAuth, no Google review — lives in
+> [google-apps-script.md](google-apps-script.md). It is the recommended
+> answer for "import my leads from a spreadsheet" while the OAuth
+> connector is in verification.
+
 ## Authentication
 
 Every request authenticates with an **API key**, sent as a bearer

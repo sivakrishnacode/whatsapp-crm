@@ -12,7 +12,7 @@ import {
   type BuilderStepNode,
 } from './services/automation-steps-tree.service';
 import { getTemplate } from './services/automation-templates';
-import { ConnectorRegistryService } from '../connections/services/connector-registry.service';
+import { findGoogleScriptAction } from '../google-script/google-script.catalog';
 import {
   validateStepsForActivation,
   validateTriggerForActivation,
@@ -40,8 +40,6 @@ export class AutomationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stepsTree: AutomationStepsTreeService,
-    /** `app_action` activation checks — see validateAppConnections. */
-    private readonly connectors: ConnectorRegistryService,
   ) {}
 
   async list(accountId: string): Promise<AutomationJson[]> {
@@ -93,7 +91,7 @@ export class AutomationsService {
       const issues = [
         ...validateTriggerForActivation(triggerType, triggerConfig ?? {}),
         ...validateStepsForActivation(steps),
-        ...(await this.validateAppConnections(accountId, steps)),
+        ...(await this.validateGoogleActions(accountId, steps)),
       ];
       if (issues.length > 0) {
         throw new BadRequestException({
@@ -195,7 +193,7 @@ export class AutomationsService {
       const issues = [
         ...validateTriggerForActivation(mergedTriggerType, mergedTriggerConfig),
         ...validateStepsForActivation(mergedSteps),
-        ...(await this.validateAppConnections(existing.accountId, mergedSteps)),
+        ...(await this.validateGoogleActions(existing.accountId, mergedSteps)),
       ];
       if (issues.length > 0) {
         throw new BadRequestException({
@@ -318,113 +316,82 @@ export class AutomationsService {
   }
 
   /**
-   * The half of `app_action` validation that needs the database.
+   * The half of `google_action` validation that needs the database.
    *
    * `validateStepsForActivation` is pure and synchronous — it checks the
-   * step's shape. This checks the world: that the app and action still
-   * exist in the registry, that the connection is real, still authorised
-   * and IN THIS WORKSPACE, and that it has granted the scopes the action
-   * needs.
+   * step's shape. This checks the world: that the action still exists in
+   * the catalogue, that the workspace has a script bridge set up at all,
+   * and that every required field is filled.
    *
    * WHY THIS BLOCKS ACTIVATION RATHER THAN FAILING AT RUN TIME
    *   Everything that goes wrong during an automation run is silent by
    *   design: an unsupported step is skipped, an unknown token is empty.
-   *   A revoked Google connection would therefore turn "email the
-   *   customer" into "quietly do nothing", and the first anyone hears of
-   *   it is a customer who never got a reply. Activation is the last
-   *   moment somebody is actually looking at the automation.
+   *   A missing Google setup would therefore turn "email the customer"
+   *   into "quietly do nothing", and the first anyone hears of it is a
+   *   customer who never got a reply. Activation is the last moment
+   *   somebody is actually looking at the automation.
    *
-   * ⚠️ The `account_id` filter is the tenant boundary. A connection id
-   *   arrives in author-editable config and Prisma bypasses RLS, so a
-   *   pasted id from another workspace must read as "not found" here —
-   *   which it does, because the query never widens beyond this account.
+   * ⚠️ NOTE WHAT IS NO LONGER CHECKED, AND WHY THAT IS SAFE.
+   *   The predecessor verified a `connection_id` against this account,
+   *   because a pasted id from another workspace had to read as "not
+   *   found". A google_action config names no connection: the bridge is
+   *   resolved from the automation's own account at run time, so there is
+   *   no cross-tenant id to defend against. Scope checks are gone for the
+   *   same reason — the customer's script holds its own grant, and we have
+   *   no scope list to compare against.
+   *
+   *   What we CANNOT check here is whether their deployed script is
+   *   current. A script predating a catalogue action answers "unknown
+   *   action" at run time; the Integrations page compares versions, which
+   *   is the right place for it.
    */
-  private async validateAppConnections(
+  private async validateGoogleActions(
     accountId: string,
     steps: { step_type: string; step_config: Record<string, unknown> }[],
   ): Promise<{ path: string; message: string }[]> {
     const issues: { path: string; message: string }[] = [];
 
-    const appSteps = steps
+    const googleSteps = steps
       .map((step, index) => ({ step, index }))
-      .filter(({ step }) => step.step_type === 'app_action');
-    if (appSteps.length === 0) return issues;
+      .filter(({ step }) => step.step_type === 'google_action');
+    if (googleSteps.length === 0) return issues;
 
-    const ids = Array.from(
-      new Set(
-        appSteps
-          .map(({ step }) => String(step.step_config?.connection_id ?? ''))
-          .filter(Boolean),
-      ),
-    );
+    const connection = await this.prisma.google_script_connections.findUnique({
+      where: { account_id: accountId },
+      select: { execUrl: true },
+    });
+    const connected = Boolean(connection?.execUrl);
 
-    const rows = ids.length
-      ? await this.prisma.app_connections.findMany({
-          where: { id: { in: ids }, account_id: accountId },
-          select: {
-            id: true,
-            scopes: true,
-            status: true,
-            displayName: true,
-          },
-        })
-      : [];
-    const byId = new Map(rows.map((row) => [row.id, row]));
-
-    for (const { step, index } of appSteps) {
+    for (const { step, index } of googleSteps) {
       const path = `steps.${index}`;
       const cfg = step.step_config ?? {};
-      const app = String(cfg.app ?? '');
       const actionId = String(cfg.action ?? '');
-      const connectionId = String(cfg.connection_id ?? '');
 
       // Shape problems are already reported by validateStepsForActivation;
       // reporting them twice would show the author the same issue in two
       // places.
-      if (!app || !actionId || !connectionId) continue;
+      if (!actionId) continue;
 
-      const connector = this.connectors.find(app);
-      if (!connector) {
-        issues.push({ path: `${path}.app`, message: `unknown app "${app}"` });
-        continue;
-      }
-      const action = connector.actions.find((a) => a.id === actionId);
+      const action = findGoogleScriptAction(actionId);
       if (!action) {
         issues.push({
           path: `${path}.action`,
-          message: `${connector.name} has no "${actionId}" action`,
+          message: `unknown Google action "${actionId}"`,
         });
         continue;
       }
 
-      const connection = byId.get(connectionId);
-      if (!connection) {
+      if (!connected) {
         issues.push({
-          path: `${path}.connection_id`,
-          message: `the ${connector.name} account for this step is no longer connected`,
-        });
-        continue;
-      }
-      if (connection.status !== 'active') {
-        issues.push({
-          path: `${path}.connection_id`,
-          message: `${connection.displayName ?? connector.name} needs to be reconnected`,
+          path: `${path}.action`,
+          message:
+            'Google is not connected for this workspace — set it up in Settings → Integrations',
         });
         continue;
       }
 
-      const missing = action.scopes.filter(
-        (scope) => !connection.scopes.includes(scope),
-      );
-      if (missing.length > 0) {
-        issues.push({
-          path: `${path}.connection_id`,
-          message: `${connection.displayName ?? 'this account'} has not granted access to ${connector.name} — reconnect it and approve ${connector.name}`,
-        });
-      }
-
-      // Required inputs are checked against the action's own FieldSpec,
-      // so the registry stays the single authority on what a field is
+      // Required inputs are checked against the action's own FieldSpec, so
+      // the served catalogue stays the single authority on what a field is
       // called and whether it is needed.
       for (const spec of action.inputs) {
         if (!spec.required) continue;
@@ -435,10 +402,7 @@ export class AutomationsService {
           value === undefined ||
           value === null ||
           (typeof value === 'string' && value.trim() === '') ||
-          (Array.isArray(value) && value.length === 0) ||
-          (spec.kind === 'key_values' &&
-            typeof value === 'object' &&
-            Object.keys(value).length === 0);
+          (Array.isArray(value) && value.length === 0);
         if (empty) {
           issues.push({
             path: `${path}.input.${spec.key}`,

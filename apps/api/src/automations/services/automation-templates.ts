@@ -87,9 +87,9 @@ export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
  * THREE KINDS, BECAUSE THE FIX IS DIFFERENT FOR EACH
  *   `channel` — the automation only fires on a channel you have
  *               connected. Fixed in Settings → channels.
- *   `app`     — an `app_action` step needs an OAuth connection. Fixed by
- *               connecting the app; the gallery checks this live against
- *               `GET /api/connections` and offers the connect button.
+ *   `app`     — a `google_action` step needs the workspace's Apps Script
+ *               bridge. Fixed in Settings → Integrations → Google; the
+ *               gallery checks this live against `GET /api/google-script`.
  *   `setup`   — a step names something inside this workspace (a tag, a
  *               pipeline stage, a form). Fixed in the builder, and the
  *               only honest thing the gallery can do is say so up front.
@@ -100,37 +100,22 @@ export interface TemplateRequirement {
   id: string;
   label: string;
   kind: TemplateRequirementKind;
-  /** `app_connections.provider`, for `kind: 'app'` — what we check live. */
-  provider?: string;
-  /** Connector id in the catalogue (e.g. `google_sheets`), for `kind: 'app'`. */
-  app?: string;
 }
 
 export const REQUIREMENTS = {
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', kind: 'channel' },
   instagram: { id: 'instagram', label: 'Instagram', kind: 'channel' },
   web: { id: 'web', label: 'Web chat', kind: 'channel' },
-  google_sheets: {
-    id: 'google_sheets',
-    label: 'Google Sheets',
-    kind: 'app',
-    provider: 'google',
-    app: 'google_sheets',
-  },
-  gmail: {
-    id: 'gmail',
-    label: 'Gmail',
-    kind: 'app',
-    provider: 'google',
-    app: 'gmail',
-  },
-  google_calendar: {
-    id: 'google_calendar',
-    label: 'Google Calendar',
-    kind: 'app',
-    provider: 'google',
-    app: 'google_calendar',
-  },
+  /**
+   * ONE requirement for all four Google products, not three.
+   *
+   * Gmail, Calendar, Meet and Sheets arrive through a single Apps Script
+   * deployment, so "is Google connected?" has one answer. The predecessor
+   * needed one per app because incremental OAuth consent meant a workspace
+   * could hold Sheets access and not Gmail — nothing here is granted
+   * incrementally.
+   */
+  google: { id: 'google', label: 'Google', kind: 'app' },
   tag: { id: 'tag', label: 'A tag', kind: 'setup' },
   pipeline: { id: 'pipeline', label: 'A pipeline stage', kind: 'setup' },
   form: { id: 'form', label: 'A published form', kind: 'setup' },
@@ -367,16 +352,18 @@ export const AUTOMATION_TEMPLATES: Record<
     category: 'lead_capture',
     trigger_type: 'first_inbound_message',
     trigger_config: {},
-    requirements: ['google_sheets'],
+    requirements: ['google'],
     highlights: ['One row per lead', 'No manual entry'],
     steps: [
       {
-        step_type: 'app_action',
+        step_type: 'google_action',
         step_config: {
-          connection_id: '',
-          app: 'google_sheets',
-          action: 'append_row',
+          action: 'sheet_append',
           input: {
+            // Blank: the author pastes the id from their sheet's URL. There
+            // is no picker to prefill it from — nothing lists a customer's
+            // files, because that would need a Drive scope.
+            spreadsheet_id: '',
             values: [
               '{{ now.date }}',
               '{{ contact.name }}',
@@ -965,16 +952,15 @@ export const AUTOMATION_TEMPLATES: Record<
     category: 'integrations',
     trigger_type: 'new_message_received',
     trigger_config: {},
-    requirements: ['google_sheets'],
+    requirements: ['google'],
     highlights: ['Row per message', 'Reportable history'],
     steps: [
       {
-        step_type: 'app_action',
+        step_type: 'google_action',
         step_config: {
-          connection_id: '',
-          app: 'google_sheets',
-          action: 'append_row',
+          action: 'sheet_append',
           input: {
+            spreadsheet_id: '',
             values: [
               '{{ now.iso }}',
               '{{ contact.name }}',
@@ -998,14 +984,12 @@ export const AUTOMATION_TEMPLATES: Record<
     category: 'integrations',
     trigger_type: 'first_inbound_message',
     trigger_config: {},
-    requirements: ['gmail'],
+    requirements: ['google'],
     highlights: ['Sends via Gmail', 'Full first message'],
     steps: [
       {
-        step_type: 'app_action',
+        step_type: 'google_action',
         step_config: {
-          connection_id: '',
-          app: 'gmail',
           action: 'send_email',
           input: {
             to: [''],
@@ -1034,18 +1018,25 @@ export const AUTOMATION_TEMPLATES: Record<
       keywords: ['schedule', 'calendar', 'call me'],
       match_type: 'contains',
     },
-    requirements: ['google_calendar'],
+    requirements: ['google'],
     highlights: ['Writes to Calendar', 'Confirms in chat'],
     steps: [
       {
-        step_type: 'app_action',
+        step_type: 'google_action',
         step_config: {
-          connection_id: '',
-          app: 'google_calendar',
           action: 'create_event',
           input: {
-            summary: 'Follow-up call — {{ contact.name }}',
+            // `title`, not `summary`: the bridge's field name. A stale key
+            // would save and then fail activation as a missing required
+            // field, which is the catalogue doing its job.
+            title: 'Follow-up call — {{ contact.name }}',
             description: 'Requested in chat: {{ message.text }}',
+            add_meet: true,
+            // Blank on purpose, and activation will say so: only the author
+            // knows when the call should be. A template that guessed a time
+            // would put real events in real diaries at the wrong hour.
+            starts_at: '',
+            ends_at: '',
           },
         },
       },

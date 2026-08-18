@@ -13,7 +13,7 @@ import { InstagramModule } from './instagram/instagram.module';
 import { WebModule } from './web/web.module';
 import { AccountModule } from './account/account.module';
 import { IntegrationsModule } from './integrations/integrations.module';
-import { ConnectionsModule } from './connections/connections.module';
+import { GoogleScriptModule } from './google-script/google-script.module';
 import { EcommerceModule } from './ecommerce/ecommerce.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { EntitlementModule } from './subscription/entitlement.module';
@@ -41,7 +41,7 @@ import { AdsModule } from './ads/ads.module';
     // Phase 5
     AccountModule,
     IntegrationsModule,
-    ConnectionsModule,
+    GoogleScriptModule,
     EcommerceModule,
     CampaignsModule,
     // Global: @RequiresEntitlement() resolves EntitlementGuard from the

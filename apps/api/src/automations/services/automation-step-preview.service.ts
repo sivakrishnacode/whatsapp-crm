@@ -7,8 +7,8 @@ import {
   resolveValue,
 } from './automation-interpolation.util';
 import { redactUrl } from './automation-http.util';
-import { interpolateAppActionInput } from './automation-app-action.util';
-import { ConnectorRegistryService } from '../../connections/services/connector-registry.service';
+import { interpolateGoogleActionInput } from './automation-google-action.util';
+import { findGoogleScriptAction } from '../../google-script/google-script.catalog';
 import type {
   AutomationContext,
   AutomationStepType,
@@ -40,8 +40,6 @@ export class AutomationStepPreviewService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly executor: AutomationStepExecutorService,
-    /** `app_action` previews resolve inputs against the action's FieldSpec. */
-    private readonly connectors: ConnectorRegistryService,
   ) {}
 
   /**
@@ -206,14 +204,12 @@ export class AutomationStepPreviewService {
        * no dry-run, so anything that talked to it would not be a
        * preview — that is what the Test tab's confirmed run is for.
        */
-      case 'app_action': {
-        const app = String(config.app ?? '');
+      case 'google_action': {
         const actionId = String(config.action ?? '');
-        const connector = this.connectors.find(app);
-        const action = connector?.actions.find((a) => a.id === actionId);
+        const action = findGoogleScriptAction(actionId);
 
         const input = action
-          ? interpolateAppActionInput(
+          ? interpolateGoogleActionInput(
               action.inputs,
               config.input as Record<string, unknown> | undefined,
               context,
@@ -221,11 +217,10 @@ export class AutomationStepPreviewService {
           : interpolateDeep(config.input ?? {}, context);
 
         return {
-          summary: connector
-            ? `${connector.name}: ${action?.label ?? (actionId || '(no action)')}`
-            : `(unknown app "${app}")`,
+          summary: action
+            ? `Google: ${action.label}`
+            : `(unknown Google action "${actionId || 'none picked'}")`,
           payload: {
-            app: connector?.name ?? app,
             action: action?.label ?? actionId,
             // Flagged rather than hidden: an author testing a send needs
             // to know it will really send before they press the button.

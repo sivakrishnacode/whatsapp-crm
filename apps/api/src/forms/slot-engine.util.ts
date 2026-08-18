@@ -36,29 +36,6 @@ export interface AvailabilityWindow {
   end: string;
 }
 
-/**
- * Google Calendar sync for a booking form.
- *
- * ⚠️ `connection_id` IS AUTHOR-SUPPLIED DATA, NOT AUTHORITY.
- *   It arrives inside a JSON blob the form's author edited, so every read
- *   of it goes through `ConnectorExecutionService.run({ accountId, ... })`,
- *   whose `getAccessToken` filters `app_connections` by `account_id`.
- *   Same trap as `segment_id` in an automation step config; here the prize
- *   is another tenant's calendar.
- */
-export interface AvailabilityCalendar {
-  /** `app_connections.id`. Re-scoped to the caller's account on every use. */
-  connection_id: string;
-  /** Google calendar id. `primary` is the account's own calendar. */
-  calendar_id: string;
-  /** Subtract the calendar's busy blocks from the offered slots. */
-  block_busy: boolean;
-  /** Put an event on the calendar when somebody books. */
-  create_event: boolean;
-  /** Add a Google Meet link to that event. Implies `create_event`. */
-  add_meet: boolean;
-}
-
 export interface Availability {
   /** IANA zone the windows are expressed in. */
   timezone: string;
@@ -75,8 +52,17 @@ export interface Availability {
   windows: AvailabilityWindow[];
   /** `YYYY-MM-DD` dates that are closed regardless of the weekly pattern. */
   blackout_dates?: string[];
-  /** Absent = no calendar sync, which is the default and always valid. */
-  calendar?: AvailabilityCalendar;
+  /**
+   * ⚠️ There is no `calendar` here any more. Migration 092 removed the
+   * Google Calendar sync (busy-time reads, event creation, Meet links)
+   * along with the OAuth connector it ran on. Any availability blob saved
+   * before then may still CARRY a `calendar` key; it is ignored rather
+   * than rejected, so an old form keeps working.
+   *
+   * Re-adding it should go through the Apps Script bridge and must not
+   * reintroduce a `connection_id`: the bridge is resolved from the form's
+   * own account, so there is no author-supplied id to re-scope.
+   */
 }
 
 export interface ExistingBooking {
@@ -146,7 +132,6 @@ export function parseAvailability(value: unknown): Availability | null {
     }
   }
 
-  const calendar = parseCalendar(raw.calendar);
 
   // A booking form with no open windows offers nothing. Kept as a valid
   // config rather than null so the settings UI can distinguish "not set up
@@ -164,44 +149,9 @@ export function parseAvailability(value: unknown): Availability | null {
           (d): d is string => typeof d === 'string' && ISO_DATE_RE.test(d),
         )
       : [],
-    ...(calendar ? { calendar } : {}),
   };
 }
 
-/**
- * Parse the calendar block, or undefined.
- *
- * Undefined rather than null-and-reject: a malformed calendar config must
- * not invalidate the whole availability, because that would take a working
- * booking form offline over a sync setting. The worst case is that sync
- * quietly does not happen, which is visible in the editor and costs
- * nobody their slot.
- */
-function parseCalendar(value: unknown): AvailabilityCalendar | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const raw = value as Record<string, unknown>;
-
-  const connectionId =
-    typeof raw.connection_id === 'string' ? raw.connection_id.trim() : '';
-  if (!connectionId) return undefined;
-
-  const calendarId =
-    typeof raw.calendar_id === 'string' && raw.calendar_id.trim()
-      ? raw.calendar_id.trim()
-      : 'primary';
-
-  const addMeet = raw.add_meet === true;
-  return {
-    connection_id: connectionId,
-    calendar_id: calendarId,
-    block_busy: raw.block_busy !== false,
-    // A Meet link can only exist on an event, so asking for one is asking
-    // for the event too. Storing the contradiction instead would make the
-    // UI show a link nobody ever gets.
-    create_event: raw.create_event !== false || addMeet,
-    add_meet: addMeet,
-  };
-}
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 

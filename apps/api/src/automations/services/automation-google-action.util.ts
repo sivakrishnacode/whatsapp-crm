@@ -1,9 +1,9 @@
-import type { FieldSpec } from '../../connections/connections.types';
+import type { FieldSpec } from '../../google-script/google-script.types';
 import type { AutomationContext } from '../automation.types';
 import { interpolate, resolveValue } from './automation-interpolation.util';
 
 /**
- * Interpolate an app action's inputs, guided by the action's field specs.
+ * Interpolate a Google action's inputs, guided by the action's field specs.
  *
  * WHY THE SPEC DRIVES THIS RATHER THAN "INTERPOLATE EVERYTHING"
  *   A blanket walk would also rewrite ids and enum values, where a
@@ -17,10 +17,10 @@ import { interpolate, resolveValue } from './automation-interpolation.util';
  *   Same reason `set_variable` uses it: a field whose value is exactly
  *   one token keeps the underlying TYPE. `{{ steps.lookup.body.total }}`
  *   in a number field arrives as 42, not "42", and a whole row object
- *   dropped into a key_values field stays an object instead of becoming
+ *   dropped into a value_list field stays an array instead of becoming
  *   "[object Object]".
  */
-export function interpolateAppActionInput(
+export function interpolateGoogleActionInput(
   specs: FieldSpec[],
   raw: Record<string, unknown> | undefined,
   context: AutomationContext,
@@ -46,11 +46,10 @@ export function interpolateAppActionInput(
 /**
  * Walk a value, interpolating strings wherever they appear.
  *
- * Depth matters because `key_values` holds a whole object of
- * author-written values — a spreadsheet row is
- * `{Name: '{{ contact.name }}', Phone: '{{ contact.phone }}'}` and
- * interpolating only the top level would post the templates verbatim
- * into somebody's spreadsheet.
+ * Depth matters because a spreadsheet row arrives as a LIST of
+ * author-written values — `['{{ contact.name }}', '{{ contact.phone }}']`
+ * — and interpolating only the top level would post the templates
+ * verbatim into somebody's spreadsheet.
  */
 function interpolateDeep(value: unknown, context: AutomationContext): unknown {
   if (typeof value === 'string') {

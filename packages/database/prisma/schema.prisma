@@ -37,7 +37,7 @@ model Account {
   media_assets                  media_assets[]
   ai_knowledge_chunks           ai_knowledge_chunks[]
   ai_knowledge_documents        ai_knowledge_documents[]
-  app_connections               app_connections[]
+  google_script_connection      google_script_connections?
   apiKeys                       ApiKey[]
   automationLogs                AutomationLog[]
   automationPendingExecutions   AutomationPendingExecution[]
@@ -107,45 +107,44 @@ model Profile {
   @@schema("public")
 }
 
-/// OAuth connections to third-party apps (migration 082).
+/// The workspace's Apps Script bridge to Gmail / Calendar / Meet / Sheets
+/// (migration 092, replacing the OAuth connector of 082).
 ///
-/// ⚠️ RLS is ON with ZERO policies and rights revoked from anon/authenticated,
-/// because RLS is row-level and cannot hide `refresh_token` from a browser
-/// select. Only apps/api (owner connection) reads this, and it returns a
-/// redacted projection. Never add a policy to make a browser feature easier —
-/// add an endpoint. See docs/app-connections.md.
+/// ONE ROW PER WORKSPACE — `account_id` is UNIQUE. There is no provider and
+/// no external account here: one Apps Script deployment answers every action,
+/// so "which script does this automation call?" has exactly one answer and
+/// the executor resolves it by account alone.
 ///
-/// Both token columns are AES-256-GCM via common/security/encryption.util.ts.
-/// `refresh_token` is nullable because Google returns it on first consent only.
-model app_connections {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  account_id        String    @db.Uuid
-  provider          String
-  /// Provider-side stable id ('sub' for Google) — NOT the email, which
-  /// the user can change out from under us.
-  externalAccountId String    @map("external_account_id")
-  displayName       String?   @map("display_name")
-  /// Grows on incremental consent. Checked against an action's required
-  /// scopes before the call, so a gap is a re-consent prompt rather than
-  /// a 403 from Google mid-automation.
-  scopes            String[]  @default([])
-  accessToken       String    @map("access_token")
-  refreshToken      String?   @map("refresh_token")
-  tokenExpiresAt    DateTime? @map("token_expires_at") @db.Timestamptz(6)
-  /// active | needs_reauth | revoked. Distinct from "has a token": a
-  /// revoked grant still has one, it just no longer works.
-  status            String    @default("active")
-  lastError         String?   @map("last_error")
-  /// Nullable and deliberately not a FK — the connection belongs to the
-  /// workspace and must outlive the teammate who set it up.
-  createdBy         String?   @map("created_by") @db.Uuid
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
-  account           Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+/// ⚠️ `exec_url` + `secret_encrypted` IS A CREDENTIAL FOR THE CUSTOMER'S
+/// GOOGLE ACCOUNT. A web app deployed "execute as me / anyone" runs under the
+/// deploying user's authority for whoever holds the URL; the secret is the
+/// only gate. Hence RLS ON with ZERO policies and rights revoked — RLS is
+/// row-level and cannot hide one column from a browser select. API-only, and
+/// the API returns a redacted projection. Never add a policy to make a
+/// browser feature easier — add an endpoint. See docs/google-apps-script.md.
+///
+/// `secret_encrypted` is AES-256-GCM via common/security/encryption.util.ts.
+/// We generate it, show it once pre-filled into the script we hand the
+/// customer, and never return it again.
+model google_script_connections {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String    @unique @db.Uuid
+  /// The /exec deployment URL. Host-validated against script.google.com in
+  /// the API, and never taken from an automation's step config — same
+  /// "author-supplied data is not authority" rule the old connection_id had.
+  execUrl         String    @map("exec_url")
+  secretEncrypted String    @map("secret_encrypted")
+  /// Last successful call, so Integrations can say "working" rather than
+  /// merely "configured". NULL = never exercised.
+  lastOkAt        DateTime? @map("last_ok_at") @db.Timestamptz(6)
+  lastError       String?   @map("last_error")
+  lastErrorAt     DateTime? @map("last_error_at") @db.Timestamptz(6)
+  createdBy       String?   @map("created_by") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  account         Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([account_id, provider, externalAccountId])
-  @@index([account_id], map: "idx_app_connections_account")
-  @@map("app_connections")
+  @@map("google_script_connections")
   @@schema("public")
 }
 

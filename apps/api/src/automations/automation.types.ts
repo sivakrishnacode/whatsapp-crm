@@ -181,7 +181,7 @@ export type AutomationStepType =
    * automation author can read. That is the whole difference between
    * this and pasting an API key into a webhook step.
    */
-  | 'app_action'
+  | 'google_action'
   | 'send_webhook'
   | 'close_conversation'
   /** Set the conversation to open / pending / closed. */
@@ -501,24 +501,23 @@ export interface SendWebhookStepConfig extends CommonStepOptions {
 }
 
 /**
- * A connected-app action.
+ * A Google action, performed by the workspace's own Apps Script bridge
+ * (migration 092).
  *
- * ⚠️ `connection_id` IS AUTHOR-SUPPLIED DATA, NOT AUTHORITY.
- *   It arrives in a config blob that anyone who can edit the automation
- *   controls, and Prisma bypasses RLS. Every read of it must be filtered
- *   by the running automation's `account_id` — the same trap as
- *   `segment_id` in SegmentStepConfig, with a bigger prize: a Google
- *   refresh token rather than a contact list.
+ * ⚠️ NO CONNECTION ID, NO URL, NO SECRET — AND THAT IS THE POINT.
+ *   The predecessor (`app_action`) carried a `connection_id`, which was
+ *   author-supplied data that every read had to re-scope to the running
+ *   automation's account. This config carries only an ACTION and its
+ *   FIELDS; the deployment and its secret are resolved from the
+ *   automation's own `account_id` by GoogleScriptExecutorService. There is
+ *   no id to hand-edit, so the trap is gone rather than guarded.
  *
- * `app` is stored alongside `action` even though the registry could
- * derive it, because an action id is only unique within its app —
- * `create_event` could plausibly exist on two of them.
+ * There is also no `app`: one script serves Gmail, Calendar, Meet and
+ * Sheets, so an action id is unique across all of them. `service` on the
+ * catalogue entry is presentation only.
  */
-export interface AppActionStepConfig extends CommonStepOptions {
-  connection_id: string;
-  /** Connector id, e.g. `google_sheets`. */
-  app: string;
-  /** Action id within that connector, e.g. `append_row`. */
+export interface GoogleActionStepConfig extends CommonStepOptions {
+  /** Action id from the served catalogue, e.g. `send_email`. */
   action: string;
   /**
    * Field values keyed by `FieldSpec.key`. Every string is interpolated
@@ -658,7 +657,7 @@ export type AutomationStepConfig =
   | WaitStepConfig
   | ConditionStepConfig
   | SendWebhookStepConfig
-  | AppActionStepConfig
+  | GoogleActionStepConfig
   | SendFormStepConfig
   | SendBookingLinkStepConfig
   | Record<string, never>

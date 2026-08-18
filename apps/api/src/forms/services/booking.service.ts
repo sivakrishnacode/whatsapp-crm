@@ -11,7 +11,6 @@ import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AutomationDispatchService } from '../../automations/services/automation-dispatch.service';
 import { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
-import { BookingCalendarService } from './booking-calendar.service';
 import {
   computeSlots,
   isSlotAvailable,
@@ -72,7 +71,6 @@ export class BookingService {
     private readonly prisma: PrismaService,
     private readonly automationDispatch: AutomationDispatchService,
     private readonly webhookDeliver: WebhookDeliverService,
-    private readonly calendar: BookingCalendarService,
   ) {}
 
   /**
@@ -103,32 +101,28 @@ export class BookingService {
     }
 
     const now = options.now ?? new Date();
-    const horizon = new Date(
-      now.getTime() + (availability.window_days + 1) * 86_400_000,
-    );
 
-    // Our own bookings and the owner's Google calendar are merged into ONE
-    // busy list. `computeSlots` already subtracts a list of intervals, so a
-    // meeting in Google is treated exactly like a booking made here —
-    // buffers, capacity and minimum notice all keep applying, with no
-    // second code path to keep in step.
-    const [booked, busy] = await Promise.all([
-      this.liveBookings(form.id, now, availability),
-      availability.calendar
-        ? this.calendar.busyIntervals({
-            accountId: form.account_id,
-            calendar: availability.calendar,
-            from: now,
-            to: horizon,
-          })
-        : Promise.resolve([]),
-    ]);
+    // Busy time comes from our own bookings alone.
+    //
+    // Migration 092 removed the Google Calendar read that used to be merged
+    // in here: it ran through the OAuth connector, which is gone. Slots are
+    // therefore offered without knowing whether the owner is busy in Google,
+    // which is the same behaviour as any workspace that never connected a
+    // calendar — buffers, capacity and minimum notice are unaffected.
+    //
+    // Re-adding it means a `check_availability` call to the workspace's Apps
+    // Script bridge, merged into this same list. Keep that shape: computeSlots
+    // subtracts one list of intervals, so a Google block must arrive as an
+    // interval rather than as a second code path. And keep it failing OPEN —
+    // offering a slot the owner is busy for costs an apology, while failing
+    // closed offers NO times and silently stops taking bookings.
+    const booked = await this.liveBookings(form.id, now, availability);
 
     return {
       timezone: availability.timezone,
       days: computeSlots({
         availability,
-        booked: [...booked, ...busy],
+        booked,
         now,
         fromDate: options.from,
         toDate: options.to,
@@ -273,21 +267,8 @@ export class BookingService {
         select: bookingSelect,
       });
 
-      // AFTER the row, never before: the booking is the commitment and the
-      // calendar is a copy of it. Creating the event first would leave an
-      // event for a booking that lost the race below.
-      const synced = await this.syncNewBooking({
-        accountId: input.accountId,
-        availability,
-        formName: form.name,
-        bookingId: row.id,
-        start,
-        end,
-        contactId: input.contactId,
-      });
-
-      void this.fanOut(input.accountId, synced ?? row, 'appointment_booked');
-      return this.toJson(synced ?? row);
+      void this.fanOut(input.accountId, row, 'appointment_booked');
+      return this.toJson(row);
     } catch (err) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -379,20 +360,6 @@ export class BookingService {
         data: { starts_at: start, ends_at: end, updated_at: new Date() },
         select: bookingSelect,
       });
-      // The calendar follows the booking, and only once the move has
-      // actually committed — moving the event before the update would
-      // leave Google showing a time the race below could still reject.
-      if (availability.calendar) {
-        await this.calendar.updateEvent({
-          accountId: existing.account_id,
-          calendar: availability.calendar,
-          eventId: existing.calendar_event_id,
-          startsAt: start,
-          endsAt: end,
-          timezone: availability.timezone,
-        });
-      }
-
       void this.fanOut(existing.account_id, row, 'appointment_rescheduled');
       return this.toJson(row);
     } catch (err) {
@@ -447,18 +414,6 @@ export class BookingService {
       },
       select: bookingSelect,
     });
-
-    // Take the event off the owner's calendar too. Best-effort like the
-    // rest: a cancellation that cannot reach Google is still a
-    // cancellation, and the slot is already free here.
-    const availability = parseAvailability(existing.forms.availability);
-    if (availability?.calendar) {
-      await this.calendar.deleteEvent({
-        accountId: existing.account_id,
-        calendar: availability.calendar,
-        eventId: existing.calendar_event_id,
-      });
-    }
 
     void this.fanOut(existing.account_id, row, 'appointment_cancelled');
     return this.toJson(row);
@@ -524,65 +479,6 @@ export class BookingService {
       void this.fanOut(accountId, row, 'appointment_cancelled');
     }
     return this.toJson(row);
-  }
-
-  /**
-   * Put a new booking on the owner's calendar and record what came back.
-   *
-   * AWAITED, unlike `fanOut`, because the Meet link is part of the
-   * confirmation the customer is about to be shown — handing them a
-   * "you're booked" page and mailing the link separately is how a video
-   * call gets missed. It is still best-effort: `BookingCalendarService`
-   * swallows its own failures, so the worst case is a booking with no
-   * link, never a failed booking.
-   *
-   * Returns the updated row, or null when nothing was synced.
-   */
-  private async syncNewBooking(args: {
-    accountId: string;
-    availability: Availability;
-    formName: string;
-    bookingId: string;
-    start: Date;
-    end: Date;
-    contactId: string | null;
-  }): Promise<BookingRow | null> {
-    const calendar = args.availability.calendar;
-    if (!calendar?.create_event) return null;
-
-    // Invited so Google sends its own invitation and reminders, which is
-    // most of the value of syncing at all. Absent for an anonymous
-    // booking, which is fine — the event still exists for the owner.
-    const contact = args.contactId
-      ? await this.prisma.contacts.findFirst({
-          where: { id: args.contactId, account_id: args.accountId },
-          select: { name: true, email: true },
-        })
-      : null;
-
-    const result = await this.calendar.createEvent({
-      accountId: args.accountId,
-      calendar,
-      summary: contact?.name
-        ? `${args.formName} — ${contact.name}`
-        : args.formName,
-      description: 'Booked via Converse360.',
-      startsAt: args.start,
-      endsAt: args.end,
-      timezone: args.availability.timezone,
-      attendeeEmail: contact?.email ?? null,
-    });
-
-    if (!result?.eventId && !result?.meetingUrl) return null;
-
-    return this.prisma.form_bookings.update({
-      where: { id: args.bookingId },
-      data: {
-        calendar_event_id: result.eventId,
-        meeting_url: result.meetingUrl,
-      },
-      select: bookingSelect,
-    });
   }
 
   /**

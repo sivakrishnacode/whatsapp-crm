@@ -66,8 +66,7 @@ function makeService(segments: ReturnType<typeof makeSegmentsMock>) {
     segments as unknown as SegmentMembershipService,
     // start_flow only; a segment step never reaches it.
     { startForContact: vi.fn() } as never,
-    // app_action only; likewise unreachable from a segment step.
-    { requireAction: vi.fn(), require: vi.fn() } as never,
+    // google_action only; likewise unreachable from a segment step.
     { run: vi.fn() } as never,
     { add: vi.fn() } as never,
   );

@@ -4,7 +4,6 @@ import { FormsService } from './services/forms.service';
 import { FormSubmitService } from './services/form-submit.service';
 import { FormContactResolverService } from './services/form-contact-resolver.service';
 import { BookingService } from './services/booking.service';
-import { BookingCalendarService } from './services/booking-calendar.service';
 
 // forwardRef on both, and it is load-bearing.
 //
@@ -22,10 +21,6 @@ import { BookingCalendarService } from './services/booking-calendar.service';
 // wiring.
 import { AutomationsModule } from '../automations/automations.module';
 import { V1Module } from '../v1/v1.module';
-// No forwardRef: ConnectionsModule imports nothing at all, so it cannot
-// reach back here and cannot be part of a cycle. Booking forms use it for
-// Google Calendar availability and Meet links (migration 085).
-import { ConnectionsModule } from '../connections/connections.module';
 import { FormsController } from './forms.controller';
 import { FormsPublicController } from './forms-public.controller';
 import {
@@ -37,7 +32,6 @@ import {
   imports: [
     forwardRef(() => AutomationsModule),
     forwardRef(() => V1Module),
-    ConnectionsModule,
   ],
   controllers: [
     FormsController,
@@ -50,7 +44,6 @@ import {
     FormSubmitService,
     FormContactResolverService,
     BookingService,
-    BookingCalendarService,
   ],
   exports: [FormsService, FormSubmitService, BookingService],
 })

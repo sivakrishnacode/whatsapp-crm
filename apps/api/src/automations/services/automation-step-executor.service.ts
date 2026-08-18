@@ -12,9 +12,9 @@ import {
 import { SegmentMembershipService } from '../../common/segments/segment-membership.service';
 import { FlowDispatchService } from '../../flows/services/flow-dispatch.service';
 import { AutomationConditionService } from './automation-condition.service';
-import { ConnectorRegistryService } from '../../connections/services/connector-registry.service';
-import { ConnectorExecutionService } from '../../connections/services/connector-execution.service';
-import { interpolateAppActionInput } from './automation-app-action.util';
+import { GoogleScriptExecutorService } from '../../google-script/services/google-script-executor.service';
+import { findGoogleScriptAction } from '../../google-script/google-script.catalog';
+import { interpolateGoogleActionInput } from './automation-google-action.util';
 import { interpolate, resolveValue } from './automation-interpolation.util';
 import {
   HttpStepError,
@@ -24,7 +24,7 @@ import {
 } from './automation-http.util';
 import type {
   AddNoteStepConfig,
-  AppActionStepConfig,
+  GoogleActionStepConfig,
   AssignConversationStepConfig,
   AutomationContext,
   AutomationLogStepResult,
@@ -148,9 +148,8 @@ export class AutomationStepExecutorService {
      *  both sit at the same layer and each can now reach the other. */
     @Inject(forwardRef(() => FlowDispatchService))
     private readonly flows: FlowDispatchService,
-    /** `app_action` — the connected-app catalogue and its executor. */
-    private readonly connectors: ConnectorRegistryService,
-    private readonly connectorExecution: ConnectorExecutionService,
+    /** `google_action` — the workspace's Apps Script bridge. */
+    private readonly googleScript: GoogleScriptExecutorService,
     @InjectQueue(AUTOMATIONS_PENDING_QUEUE) private readonly queue: Queue,
   ) {}
 
@@ -434,40 +433,37 @@ export class AutomationStepExecutorService {
         };
       }
 
-      case 'app_action': {
-        const cfg = step.stepConfig as AppActionStepConfig;
-        if (!cfg.app || !cfg.action) {
-          throw new Error('app_action needs an app and an action');
-        }
-        if (!cfg.connection_id) {
+      case 'google_action': {
+        const cfg = step.stepConfig as GoogleActionStepConfig;
+        if (!cfg.action) throw new Error('google_action needs an action');
+
+        const action = findGoogleScriptAction(cfg.action);
+        if (!action) {
           throw new Error(
-            `${cfg.app} is not connected — pick a connection on this step`,
+            `Unknown Google action "${cfg.action}". It may have been removed ` +
+              'from the catalogue since this step was saved.',
           );
         }
 
-        const action = this.connectors.requireAction(cfg.app, cfg.action);
-        const input = interpolateAppActionInput(
+        const input = interpolateGoogleActionInput(
           action.inputs,
           cfg.input,
           args.context,
         );
 
-        // ⚠️ accountId comes from the AUTOMATION, never from the step
-        // config. It is what scopes the connection lookup, and it is the
-        // only thing standing between a hand-edited `connection_id` and
-        // another workspace's Google account.
-        const result = await this.connectorExecution.run({
-          accountId: args.automation.accountId,
-          connectionId: cfg.connection_id,
-          app: cfg.app,
-          actionId: cfg.action,
+        // ⚠️ accountId comes from the AUTOMATION, and it is the ONLY thing
+        // that selects a deployment. Unlike the connector this replaced,
+        // the config names no connection and carries no URL, so there is
+        // nothing here a hand-edit could repoint at another workspace's
+        // Google account — or at a host the author controls.
+        const result = await this.googleScript.run(
+          args.automation.accountId,
+          cfg.action,
           input,
-        });
+        );
 
         return {
-          detail:
-            result.detail ??
-            `${this.connectors.require(cfg.app).name}: ${action.label}`,
+          detail: result.detail ?? `Google: ${action.label}`,
           output: result.output,
         };
       }

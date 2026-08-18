@@ -287,33 +287,27 @@ function validateOne(
       break;
     }
     /**
-     * Connected-app action.
+     * Google action, run by the workspace's Apps Script bridge.
      *
-     * Only the SHAPE is checked here, not the app/action/scopes. This
-     * function is pure and synchronous by design — it is called from the
-     * activation path and from tests — while "does this connection still
-     * exist, is it still authorised, does it cover this scope" is three
-     * database reads. Those live in AutomationsService.setActive, which
-     * can await, and are the checks that actually block activation.
+     * Only the SHAPE is checked here. This function is pure and
+     * synchronous by design — it is called from the activation path and
+     * from tests — while "is Google set up for this workspace" is a
+     * database read. That lives in AutomationsService.setActive, which can
+     * await, and is the check that actually blocks activation.
      *
      * Validating the input fields against the action's FieldSpec is also
-     * deliberately not here: the registry is the authority, and
-     * duplicating its rules in a second place is precisely the drift
-     * this design exists to avoid.
+     * deliberately not here: the served catalogue is the authority, and
+     * duplicating its rules in a second place is precisely the drift this
+     * design exists to avoid.
      */
-    case 'app_action':
-      if (!nonEmpty(c.app)) {
-        issues.push({ path: `${path}.app`, message: 'pick an app' });
-      }
+    case 'google_action':
       if (!nonEmpty(c.action)) {
         issues.push({ path: `${path}.action`, message: 'pick an action' });
       }
-      if (!nonEmpty(c.connection_id)) {
-        issues.push({
-          path: `${path}.connection_id`,
-          message: 'connect an account for this app',
-        });
-      }
+      // Deliberately NOT checked here: whether Google is connected at all.
+      // That is one database read, it belongs with the other await-able
+      // activation checks in AutomationsService.setActive, and a workspace
+      // mid-setup should be able to save a draft that names an action.
       break;
     case 'set_variable':
       if (!nonEmpty(c.name)) {

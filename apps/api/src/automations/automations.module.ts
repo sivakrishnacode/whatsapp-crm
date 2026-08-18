@@ -4,7 +4,7 @@ import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
 import { SegmentsModule } from '../common/segments/segments.module';
 import { FlowsModule } from '../flows/flows.module';
-import { ConnectionsModule } from '../connections/connections.module';
+import { GoogleScriptModule } from '../google-script/google-script.module';
 import { AutomationsController } from './automations.controller';
 import { AutomationsEngineController } from './automations-engine.controller';
 import { AutomationsService } from './automations.service';
@@ -39,10 +39,10 @@ import { QueueModule } from '../queue/queue.module';
     // reference each other: the flow runner already reports back to the
     // webhook that decides whether automations also fire.
     forwardRef(() => FlowsModule),
-    // The `app_action` step. No forwardRef: ConnectionsModule depends on
-    // Prisma alone and knows nothing about automations, so it sits below
+    // The `google_action` step. No forwardRef: GoogleScriptModule depends
+    // on Prisma alone and knows nothing about automations, so it sits below
     // this one the same way SegmentsModule does.
-    ConnectionsModule,
+    GoogleScriptModule,
   ],
   controllers: [AutomationsController, AutomationsEngineController],
   providers: [

@@ -30,23 +30,20 @@ interface StepRow {
 }
 
 function sheetStep(
-  over: Partial<StepRow> & { values?: Record<string, unknown> } = {},
+  over: Partial<StepRow> & { values?: string[] } = {},
 ): StepRow {
   const { values, ...rest } = over;
   return {
     id: 'step-1',
-    key: 'append_row',
-    stepType: 'app_action',
+    key: 'sheet_append',
+    stepType: 'google_action',
     position: 0,
     stepConfig: {
-      app: 'google_sheets',
-      action: 'append_row',
-      connection_id: 'conn-1',
+      action: 'sheet_append',
       input: {
-        spreadsheet:
-          'https://docs.google.com/spreadsheets/d/abc123def456ghi789/edit',
+        spreadsheet_id: 'abc123def456ghi789',
         tab: 'page1',
-        values: values ?? { name: '{{ contact.name }}' },
+        values: values ?? ['{{ contact.name }}'],
       },
     },
     ...rest,
@@ -73,29 +70,9 @@ function makeExecutor(
   };
 
   const run = vi.fn().mockResolvedValue({
-    output: { row_number: 2 },
+    output: { row: 2 },
     detail: 'Appended row 2 to page1',
   });
-
-  const registry = {
-    requireAction: () => ({
-      id: 'append_row',
-      label: 'Append row',
-      scopes: [],
-      inputs: [
-        {
-          key: 'spreadsheet',
-          label: 'Spreadsheet',
-          kind: 'text',
-          tokens: false,
-        },
-        { key: 'tab', label: 'Tab', kind: 'resource_select', tokens: false },
-        { key: 'values', label: 'Values', kind: 'key_values', tokens: true },
-      ],
-      outputs: [],
-    }),
-    require: () => ({ name: 'Google Sheets' }),
-  };
 
   const executor = new AutomationStepExecutorService(
     prisma as unknown as PrismaService,
@@ -104,7 +81,7 @@ function makeExecutor(
     {} as never,
     {} as never,
     {} as never,
-    registry as never,
+    // GoogleScriptExecutorService — the bridge calls `run`.
     { run } as never,
     { add: vi.fn() } as never,
   );
@@ -124,7 +101,7 @@ const ARGS = {
 };
 
 describe('contact token hydration', () => {
-  it('resolves {{ contact.name }} in an app_action step', async () => {
+  it('resolves {{ contact.name }} in a google_action step', async () => {
     const { executor, run } = makeExecutor({
       name: 'sivakrishna',
       phone: '+917810002624',
@@ -135,12 +112,11 @@ describe('contact token hydration', () => {
     await executor.executeStepsFrom({ ...ARGS, context: {} } as never);
 
     expect(run).toHaveBeenCalledTimes(1);
-    const call = run.mock.calls[0][0] as {
-      input: { values: Record<string, unknown> };
-    };
-    const input = call.input;
+    // googleScript.run(accountId, actionId, input)
+    const [, , input] = run.mock.calls[0] as [string, string, Record<string, unknown>];
+    const values = input.values as string[];
     // The regression: this was '' — a blank row, appended successfully.
-    expect(input.values.name).toBe('sivakrishna');
+    expect(values[0]).toBe('sivakrishna');
   });
 
   it('looks the contact up ONCE even though several steps reference it', async () => {
@@ -149,7 +125,7 @@ describe('contact token hydration', () => {
       // Two steps, both referencing contact tokens.
       [
         sheetStep(),
-        sheetStep({ id: 'step-2', key: 'append_row_2', position: 1 }),
+        sheetStep({ id: 'step-2', key: 'sheet_append_2', position: 1 }),
       ],
     );
 
@@ -164,7 +140,7 @@ describe('contact token hydration', () => {
   it('does not query the contact when no step mentions one', async () => {
     const { executor, findUnique } = makeExecutor(
       { name: 'sivakrishna', phone: null, email: null, company: null },
-      [sheetStep({ values: { note: 'no tokens here' } })],
+      [sheetStep({ values: ['no tokens here'] })],
     );
 
     await executor.executeStepsFrom({ ...ARGS, context: {} } as never);
