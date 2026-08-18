@@ -24,6 +24,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
 import { WhatsAppConnectSteps } from './whatsapp-connect-steps';
 import {
+  WhatsAppConnectedCard,
+  type WhatsAppPhoneInfo,
+} from './whatsapp-connected-card';
+import {
   Accordion,
   AccordionItem,
   AccordionTrigger,
@@ -60,6 +64,10 @@ export function WhatsAppConfig() {
   // "Connect with Facebook" before it silently stops working.
   const [tokenExpiringSoon, setTokenExpiringSoon] = useState(false);
   const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null);
+  // Meta's live view of the number (display number, verified name, quality
+  // rating). Comes from the health check rather than the row, because the
+  // row stores ids and Meta owns everything a human would recognise.
+  const [phoneInfo, setPhoneInfo] = useState<WhatsAppPhoneInfo | null>(null);
   // Which setup path is showing — Embedded Signup ("connect") or the
   // credential-paste form ("manual").
   const [setupMode, setSetupMode] = useState<'connect' | 'manual'>('connect');
@@ -110,6 +118,16 @@ export function WhatsAppConfig() {
   // tab open keeps it if `showManualSetup` flips back — fetchConfig resolving
   // a manual row after first paint would otherwise reset their tab.
   const effectiveSetupMode = showManualSetup ? setupMode : 'connect';
+
+  // "Nothing to do here" — the token authenticates AND Meta is delivering
+  // events. Only then does the setup walkthrough get replaced by the
+  // connected card, and only then do the credentials/registration banners
+  // collapse into it. The moment those two facts disagree they are worth
+  // stating separately again: a valid token with no registration is the
+  // failure that looks like success, because sending works and nothing ever
+  // arrives.
+  const isHealthy =
+    connectionStatus === 'connected' && isRegistered && !lastRegistrationError;
 
   const [verifyingRegistration, setVerifyingRegistration] = useState(false);
   type RegistrationProbe = {
@@ -198,16 +216,19 @@ export function WhatsAppConfig() {
             setStatusMessage('');
             setTokenExpiringSoon(Boolean(payload.token_expiring_soon));
             setTokenExpiresAt(payload.token_expires_at ?? null);
+            setPhoneInfo(payload.phone_info ?? null);
           } else {
             setConnectionStatus('disconnected');
             setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
             setStatusMessage(payload.message || '');
             setTokenExpiringSoon(false);
             setTokenExpiresAt(null);
+            setPhoneInfo(null);
           }
         } catch (err) {
           console.error('Health check failed:', err);
           setConnectionStatus('disconnected');
+          setPhoneInfo(null);
         }
       } else {
         setConnectionStatus('disconnected');
@@ -215,6 +236,7 @@ export function WhatsAppConfig() {
         setTokenExpiringSoon(false);
         setTokenExpiresAt(null);
         setStatusMessage('');
+        setPhoneInfo(null);
       }
     } catch (err) {
       console.error('fetchConfig error:', err);
@@ -455,7 +477,12 @@ export function WhatsAppConfig() {
         title="WhatsApp connection"
         description="Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here."
       />
-      <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
+      {/* The second column is the setup-instructions sidebar. When that is
+          hidden the track goes with it — leaving `1fr 380px` declared would
+          reserve an empty 380px gutter and squeeze the panel for no reason. */}
+      <div
+        className={`grid gap-6${showManualSetup ? ' lg:grid-cols-[1fr_380px]' : ''}`}
+      >
       {/* Main config form */}
       <div className="space-y-6">
         {/* Corrupted-token reset banner */}
@@ -514,7 +541,10 @@ export function WhatsAppConfig() {
           </Alert>
         )}
 
-        {/* Connection Status */}
+        {/* Connection Status — folded into the connected card once both
+            this and registration are healthy, so a working setup shows one
+            statement instead of two green boxes saying the same thing. */}
+        {!isHealthy && (
         <Alert className="bg-card border-border">
           <div className="flex items-center gap-2">
             {connectionStatus === 'connected' ? (
@@ -533,13 +563,16 @@ export function WhatsAppConfig() {
                 'Configure your Meta API credentials below to connect your WhatsApp Business account.'}
           </AlertDescription>
         </Alert>
+        )}
 
         {/* Registration Status — the "is it actually live?" check.
             Credentials being valid is necessary but not sufficient;
             without a successful /register call the number won't
             receive inbound events. Surface this dimension separately
-            so users don't trust a misleading green banner. */}
-        {config && (
+            so users don't trust a misleading green banner. Hidden once
+            everything is healthy — the connected card carries the same
+            "receiving events since" fact and the Verify with Meta action. */}
+        {config && !isHealthy && (
           <Alert variant={isRegistered ? 'success' : 'warning'}>
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
@@ -649,11 +682,25 @@ export function WhatsAppConfig() {
           )}
 
           <TabsContent value="connect" className="mt-4">
-            <WhatsAppConnectSteps
-              onConnected={() => {
-                if (accountId) void fetchConfig(accountId);
-              }}
-            />
+            {isHealthy && config ? (
+              <WhatsAppConnectedCard
+                config={config}
+                phoneInfo={phoneInfo}
+                tokenExpiresAt={tokenExpiresAt}
+                tokenExpiringSoon={tokenExpiringSoon}
+                verifying={verifyingRegistration}
+                onVerify={handleVerifyRegistration}
+                onConnected={() => {
+                  if (accountId) void fetchConfig(accountId);
+                }}
+              />
+            ) : (
+              <WhatsAppConnectSteps
+                onConnected={() => {
+                  if (accountId) void fetchConfig(accountId);
+                }}
+              />
+            )}
           </TabsContent>
 
           {showManualSetup && (
@@ -863,7 +910,12 @@ export function WhatsAppConfig() {
         </div>
       </div>
 
-      {/* Setup Instructions Sidebar */}
+      {/* Setup Instructions Sidebar — the bring-your-own-Meta-app walkthrough:
+          create an app, add the WhatsApp product, copy credentials, wire the
+          webhook. Under Embedded Signup a customer does none of that; we did
+          it once, for everyone. So it follows the same rule as manual setup
+          and only appears when that escape hatch is the path on offer. */}
+      {showManualSetup && (
       <div>
         <Card>
           <CardHeader>
@@ -957,6 +1009,7 @@ export function WhatsAppConfig() {
           </CardContent>
         </Card>
       </div>
+      )}
     </div>
     </section>
   );
