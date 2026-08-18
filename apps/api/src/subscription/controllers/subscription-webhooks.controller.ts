@@ -112,101 +112,62 @@ export class SubscriptionWebhooksController {
             return res.status(HttpStatus.OK).json({ received: true });
           }
 
-          // ONE TRIAL PER WORKSPACE, EVER (migration 074). Check if trial was
-          // already granted before giving out another one on plan change.
-          const [existing, profile] = await Promise.all([
-            this.prisma.user_subscriptions.findUnique({
-              where: { user_id: userId },
-              select: { trial_start_at: true, trial_end_at: true },
-            }),
-            this.prisma.profile.findUnique({
-              where: { userId },
-              select: { accountId: true },
-            }),
-          ]);
-
-          const onboarding = profile
-            ? await this.prisma.account_onboarding.findUnique({
-                where: { account_id: profile.accountId },
-                select: { trial_granted_at: true },
-              })
-            : null;
-
-          const trialAlreadyUsed =
-            onboarding?.trial_granted_at != null ||
-            existing?.trial_start_at != null;
-          const grantTrial = (plan.trial_days ?? 0) > 0 && !trialAlreadyUsed;
-
-          // Calculate period dates: grant new trial only if not already used
-          const trialStart = grantTrial ? new Date() : null;
-          const trialEnd = grantTrial
-            ? new Date(
-                Date.now() + (plan.trial_days ?? 0) * 24 * 60 * 60 * 1000,
-              )
-            : (existing?.trial_end_at ?? null);
-
+          /**
+           * ⚠️ MONEY ARRIVED, SO THE STATUS IS `active`. FULL STOP.
+           *
+           * This block used to run the same status maths as a plan CHANGE:
+           * grant a trial if the workspace had not used one, otherwise carry
+           * the old window forward and land `expired` if it had lapsed. On a
+           * plan change with no money involved that is right. Here it was
+           * catastrophic, twice over:
+           *
+           *   - A lapsed customer paying to get back in was set straight
+           *     back to `expired` by their own successful payment — and this
+           *     webhook lands seconds AFTER the browser's confirm-payment,
+           *     so it overwrote the `active` that had just let them in. Pay,
+           *     get in, get thrown out.
+           *   - A first-time payer with no trial yet was marked `trial` with
+           *     a fresh 15-day window, so the subscription sweep expired
+           *     them a fortnight after they paid, and MRR never counted
+           *     them.
+           *
+           * Neither trial column is written here at all: they are the record
+           * of whatever trial this workspace already had, and paying does
+           * not change that history. `trial_granted_at` is likewise left
+           * alone — this path no longer grants a trial, so it has no latch
+           * to set.
+           */
           const now = new Date();
-          const periodStart = trialEnd || now;
-          const periodEnd = new Date(periodStart);
+          const periodEnd = new Date(now);
           periodEnd.setMonth(
             periodEnd.getMonth() + (billingCycle === 'yearly' ? 12 : 1),
           );
 
-          // Status depends on trial window: if trial was already used, check if
-          // the carried-forward window is still running.
-          const status =
-            grantTrial || (trialEnd && trialEnd.getTime() > now.getTime())
-              ? 'trial'
-              : trialAlreadyUsed
-                ? 'expired'
-                : 'active';
+          const paid = {
+            plan_id: plan.id,
+            status: 'active' as const,
+            billing_cycle: billingCycle,
+            current_period_start: now,
+            current_period_end: periodEnd,
+            cancel_at_period_end: false,
+            razorpay_subscription_id: payment.order_id || payment.id,
+            payment_method: 'razorpay' as const,
+          };
 
-          // Update or create user subscription
           await this.prisma.user_subscriptions.upsert({
             where: { user_id: userId },
+            // Only the create branch mentions the trial columns, and only to
+            // say there was no trial: there is no history to preserve.
             create: {
               user_id: userId,
-              plan_id: plan.id,
-              status,
-              billing_cycle: billingCycle,
-              trial_start_at: trialStart,
-              trial_end_at: trialEnd,
-              current_period_start: periodStart,
-              current_period_end: periodEnd,
-              cancel_at_period_end: false,
-              razorpay_subscription_id: payment.order_id || payment.id,
-              payment_method: 'razorpay',
+              trial_start_at: null,
+              trial_end_at: null,
+              ...paid,
             },
-            update: {
-              plan_id: plan.id,
-              status,
-              billing_cycle: billingCycle,
-              ...(grantTrial
-                ? {
-                    trial_start_at: trialStart,
-                    trial_end_at: trialEnd,
-                  }
-                : {}),
-              current_period_start: periodStart,
-              current_period_end: periodEnd,
-              cancel_at_period_end: false,
-              razorpay_subscription_id: payment.order_id || payment.id,
-              payment_method: 'razorpay',
-            },
+            update: paid,
           });
 
-          if (grantTrial && profile && !onboarding?.trial_granted_at) {
-            await this.prisma.account_onboarding.upsert({
-              where: { account_id: profile.accountId },
-              create: {
-                account_id: profile.accountId,
-                trial_granted_at: new Date(),
-              },
-              update: { trial_granted_at: new Date() },
-            });
-          }
-
-          this.logger.log(`Razorpay subscription updated for user: ${userId}`);
+          this.logger.log(`Razorpay payment recorded for user: ${userId}`);
           break;
         }
 
@@ -267,13 +228,16 @@ export class SubscriptionWebhooksController {
               )
             : (existing?.trial_end_at ?? null);
 
-          const now = new Date();
-          const status =
-            grantTrial || (trialEnd && trialEnd.getTime() > now.getTime())
-              ? 'trial'
-              : trialAlreadyUsed
-                ? 'expired'
-                : 'active';
+          /**
+           * ⚠️ NEVER `expired` HERE. Razorpay has activated a subscription
+           * and is charging the customer; the old maths landed `expired`
+           * whenever the workspace had already used its trial, which turned
+           * a live paying mandate into a locked-out account. The trial branch
+           * stays — a gateway subscription may legitimately open with one,
+           * and the subscription sweep leaves gateway-backed rows alone — but
+           * the fallback for "no trial to grant" is that they are paying.
+           */
+          const status = grantTrial ? 'trial' : 'active';
 
           // Update or create user subscription
           await this.prisma.user_subscriptions.upsert({
@@ -516,13 +480,13 @@ export class SubscriptionWebhooksController {
               )
             : (existing?.trial_end_at ?? null);
 
-          const now = new Date();
-          const status =
-            grantTrial || (trialEnd && trialEnd.getTime() > now.getTime())
-              ? 'trial'
-              : trialAlreadyUsed
-                ? 'expired'
-                : 'active';
+          /**
+           * ⚠️ NEVER `expired` HERE — same fix as the Razorpay subscription
+           * branch above. Stripe has completed a checkout, so the customer is
+           * paying; landing `expired` because the workspace had already used
+           * its free trial locked out the very people who had just paid.
+           */
+          const status = grantTrial ? 'trial' : 'active';
 
           // Update or create user subscription
           await this.prisma.user_subscriptions.upsert({
