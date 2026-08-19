@@ -83,6 +83,12 @@ export interface GoogleScriptConnection {
   connectedAt: string | null;
   lastTestedAt: string | null;
   lastError: string | null;
+  /**
+   * When that failure happened. Shown next to the message, because a
+   * stale error at the top of a setup wizard otherwise reads as something
+   * that just went wrong and sends people hunting for a fixed problem.
+   */
+  lastErrorAt: string | null;
 }
 
 /**
@@ -107,6 +113,7 @@ export function googleConnectionFromSummary(
     connectedAt: summary.createdAt,
     lastTestedAt: summary.lastOkAt,
     lastError: summary.lastError,
+    lastErrorAt: summary.lastErrorAt,
   };
 }
 
