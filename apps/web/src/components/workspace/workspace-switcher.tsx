@@ -171,13 +171,19 @@ export function WorkspaceSwitcher({
               return (
                 <DropdownMenuItem
                   key={w.id}
-                  onSelect={(event) => {
-                    // Keep the menu open while the request is in flight —
-                    // closing it first makes a failed switch look like a
-                    // successful one that did nothing.
-                    event.preventDefault();
-                    void handleSwitch(w.id);
-                  }}
+                  // ⚠️ `onClick`, NOT `onSelect`. This is base-ui, not Radix:
+                  // Menu.Item has no `onSelect`, so the handler was spread
+                  // onto the DOM as an unknown prop and silently never ran —
+                  // the menu closed, nothing happened, and there was no error
+                  // anywhere to notice. Every other menu in this app uses
+                  // `onClick`; follow them.
+                  //
+                  // `closeOnClick={false}` is base-ui's way of keeping it
+                  // open while the request is in flight — closing first makes
+                  // a failed switch look like a successful one that did
+                  // nothing.
+                  closeOnClick={false}
+                  onClick={() => void handleSwitch(w.id)}
                   className="flex items-start gap-2.5 py-2"
                 >
                   <WorkspaceLogo name={w.name} logoUrl={w.logo_url} />
