@@ -43,8 +43,14 @@ export interface IgWebhookEntry {
 }
 
 export interface IgMessagingEvent {
-  sender: { id: string };
-  recipient: { id: string };
+  /**
+   * ⚠ OPTIONAL DESPITE THE DOCS. Every messaging payload in Meta's own
+   * reference carries both sides, and Instagram has been observed
+   * sending events with neither — so this is `?` to force the guard at
+   * every read. See `resolveCustomerIgsid`.
+   */
+  sender?: { id: string };
+  recipient?: { id: string };
   timestamp?: number | string;
   message?: IgInboundMessage;
   message_edit?: IgMessageEdit;

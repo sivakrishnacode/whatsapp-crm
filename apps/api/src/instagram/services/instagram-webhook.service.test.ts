@@ -231,6 +231,95 @@ describe('InstagramWebhookService — routing', () => {
   });
 });
 
+/**
+ * The envelope Meta documents is not the only envelope Meta sends.
+ *
+ * On 2026-08-19 production took four Instagram messaging events with no
+ * `sender` at all. `event.sender.id` threw a TypeError on each; the
+ * controller had already answered 200, so all four were logged and lost
+ * and the Instagram inbox stayed empty while the connection reported
+ * itself healthy. One unparseable event must cost one event.
+ */
+describe('InstagramWebhookService — undocumented event shapes', () => {
+  let prisma: ReturnType<typeof makePrismaMock>;
+
+  beforeEach(() => {
+    prisma = makePrismaMock();
+  });
+
+  it('⚠ does not throw on a messaging event with no sender', async () => {
+    const { service } = makeService(prisma);
+
+    await expect(
+      runWebhook(
+        service,
+        envelope({
+          recipient: { id: IG_USER_ID },
+          timestamp: 1785240000000,
+          message: { mid: 'mid.no-sender', text: 'hello there' },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('keeps processing the rest of the batch after an unparseable event', async () => {
+    const { service } = makeService(prisma);
+
+    await runWebhook(service, {
+      object: 'instagram',
+      entry: [
+        {
+          id: IG_USER_ID,
+          messaging: [
+            {
+              recipient: { id: IG_USER_ID },
+              message: { mid: 'm1', text: 'x' },
+            },
+          ],
+        },
+        { id: IG_USER_ID, messaging: [inboundText] },
+      ],
+    });
+
+    expect(prisma.messages.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the other side when the expected one is missing', async () => {
+    const { service, identity } = makeService(prisma);
+
+    // An echo names the customer as the recipient. With no recipient,
+    // the sender is the only side left — and it is not us.
+    await runWebhook(
+      service,
+      envelope({
+        sender: { id: CUSTOMER_IGSID },
+        message: { mid: 'mid.echo-no-recipient', text: 'hi', is_echo: true },
+      }),
+    );
+
+    expect(identity.findOrCreateContact).toHaveBeenCalledWith(
+      expect.objectContaining({ igsid: CUSTOMER_IGSID }),
+    );
+  });
+
+  it('⚠ treats the business app-scoped id as the business, not a customer', async () => {
+    const { service } = makeService(prisma);
+
+    // Either stored id is us. Comparing against ig_user_id alone gave
+    // the business a contact and a conversation of its own.
+    await runWebhook(
+      service,
+      envelope({
+        sender: { id: IG_APP_SCOPED_ID },
+        recipient: { id: CUSTOMER_IGSID },
+        message: { mid: 'mid.self-scoped', text: 'hello' },
+      }),
+    );
+
+    expect(prisma.messages.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('InstagramWebhookService — inbound messages', () => {
   let prisma: ReturnType<typeof makePrismaMock>;
 

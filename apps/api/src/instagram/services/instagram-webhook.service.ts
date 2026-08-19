@@ -32,6 +32,14 @@ interface IgContext {
   accountId: string;
   ownerUserId: string;
   igUserId: string;
+  /**
+   * The same account's app-scoped id, when it reports a second one.
+   * Carried alongside `igUserId` because either form can appear as a
+   * side of a messaging event — so "is this side us?" has to test both,
+   * or the business's own app-scoped id reads as a customer and gets a
+   * contact of its own.
+   */
+  igAppScopedId: string | null;
   accessToken: string;
 }
 
@@ -229,6 +237,7 @@ export class InstagramWebhookService {
         accountId: config.account_id,
         ownerUserId: config.user_id,
         igUserId: config.ig_user_id,
+        igAppScopedId: config.ig_app_scoped_id,
         accessToken: decrypt(config.access_token),
       };
     } catch (err) {
@@ -244,18 +253,62 @@ export class InstagramWebhookService {
   // Messaging event router
   // ============================================================
 
+  /** Either stored id means "this side is the business, not a customer". */
+  private isBusiness(ctx: IgContext, id: string | undefined): boolean {
+    if (!id) return false;
+    return id === ctx.igUserId || id === ctx.igAppScopedId;
+  }
+
+  /**
+   * Which side of a messaging event is the customer.
+   *
+   * ⚠ NEITHER `sender` NOR `recipient` IS GUARANTEED TO BE THERE, even
+   * though every payload in Meta's own reference carries both. Instagram
+   * delivered four events with no `sender` on 2026-08-19 and
+   * `event.sender.id` threw a TypeError on each — the webhook had
+   * already answered 200, so every one was logged and dropped and the
+   * inbox stayed empty with the connection showing as healthy. A shape
+   * we cannot parse must cost us one event, not the whole channel.
+   *
+   * The normal path is unchanged: trust `is_echo` for the direction
+   * (business → customer means the CUSTOMER is the recipient). Only when
+   * that side is missing do we fall back to "whichever side is not us",
+   * which is the rule webhook.types.ts states — entry.id is the anchor.
+   */
+  private resolveCustomerIgsid(
+    ctx: IgContext,
+    event: IgMessagingEvent,
+  ): string | null {
+    const isEcho = event.message?.is_echo === true;
+    const senderId = event.sender?.id;
+    const recipientId = event.recipient?.id;
+
+    const expected = isEcho ? recipientId : senderId;
+    if (expected) return expected;
+
+    const other = isEcho ? senderId : recipientId;
+    if (other && !this.isBusiness(ctx, other)) return other;
+
+    // Keys only, never content: this line exists to identify an
+    // undocumented envelope, and it will be read from a shared log.
+    this.logger.warn(
+      `Instagram messaging event has no usable sender/recipient — dropped. ` +
+        `event keys: [${Object.keys(event).join(',')}]; ` +
+        `message keys: [${Object.keys(event.message ?? {}).join(',')}]; ` +
+        `is_echo=${isEcho}`,
+    );
+    return null;
+  }
+
   private async processMessagingEvent(
     ctx: IgContext,
     event: IgMessagingEvent,
   ): Promise<void> {
-    // The business is whichever side equals entry.id. Everything below
-    // depends on getting this right — see webhook.types.ts.
-    const isEcho = event.message?.is_echo === true;
-    const customerIgsid = isEcho ? event.recipient.id : event.sender.id;
+    const customerIgsid = this.resolveCustomerIgsid(ctx, event);
 
     // The business messaging its own account. No customer, no thread.
     if (event.message?.is_self === true) return;
-    if (!customerIgsid || customerIgsid === ctx.igUserId) return;
+    if (!customerIgsid || this.isBusiness(ctx, customerIgsid)) return;
 
     if (event.read?.mid) {
       await this.handleSeen(ctx, customerIgsid, event.read.mid);
