@@ -71,8 +71,6 @@ import { StepNodeCard, TriggerNodeCard } from './step-node-card';
 import { StepInspector } from './step-inspector';
 import { TriggerInspector, TRIGGER_OPTIONS } from './trigger-inspector';
 import { AddStepDialog } from './add-step-dialog';
-import { useAutomationResources } from './resources';
-import { connectionsFor } from '@/lib/automations/connectors';
 import type { AppPreset } from '@/lib/automations/app-presets';
 import { Plus } from 'lucide-react';
 
@@ -121,8 +119,10 @@ function CanvasInner({
   const reactFlow = useReactFlow();
   const isNarrow = useIsNarrow();
   const [pickerOpen, setPickerOpen] = useState(false);
-  /** Connected apps, so picking an action can pre-select its account. */
-  const { connections } = useAutomationResources();
+  // Nothing to pre-select any more: a google_action step names an action
+  // and nothing else, and the deployment is resolved from the running
+  // automation's account. The old connection picker read `connections`
+  // from useAutomationResources here.
 
   const positions = useMemo(() => derivePositions(steps), [steps]);
   const edges = useMemo(() => deriveEdges(steps), [steps]);

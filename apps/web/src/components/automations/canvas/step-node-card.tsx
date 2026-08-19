@@ -29,6 +29,7 @@ import {
   Zap,
 } from 'lucide-react';
 
+import { googleActionIcon } from '@/lib/automations/connectors';
 import { cn } from '@/lib/utils';
 import {
   STEP_META,
@@ -222,6 +223,11 @@ export function StepNodeCard({ data, selected }: NodeProps) {
             size={24}
             iconSize={14}
             className="rounded-md"
+            iconSrc={
+              step.step_type === 'google_action'
+                ? googleActionIcon(cfg as { action?: string }, googleActions)
+                : undefined
+            }
           />
           <span
             className="truncate text-[10.5px] font-semibold tracking-wider uppercase"

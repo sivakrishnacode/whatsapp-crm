@@ -527,15 +527,48 @@ export function StepIconChip({
   size = 26,
   iconSize = 14,
   className,
+  iconSrc,
 }: {
   type: AutomationStepType;
   size?: number;
   iconSize?: number;
   className?: string;
+  /**
+   * A product logo to show instead of the category glyph — for
+   * `google_action`, whose real subject is Gmail or Sheets rather than
+   * the generic "Data" category the step type belongs to.
+   *
+   * The CHIP stays: same size, same soft category background, so a row of
+   * steps still aligns and still reads as one family. Only the glyph
+   * inside it changes.
+   */
+  iconSrc?: string;
 }) {
   const meta = STEP_META[type];
   const c = stepColors(type);
   const Icon = meta?.icon ?? MessageSquare;
+  if (iconSrc) {
+    return (
+      <span
+        className={cn(
+          'flex shrink-0 items-center justify-center rounded-lg',
+          className
+        )}
+        style={{ width: size, height: size, background: c.soft }}
+      >
+        {/* A local PNG in /public; next/image would add a loader round
+            trip for no benefit at 14–18px. Same call AppIcon makes. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={iconSrc}
+          alt=""
+          aria-hidden
+          className="object-contain"
+          style={{ width: iconSize + 2, height: iconSize + 2 }}
+        />
+      </span>
+    );
+  }
   return (
     <span
       className={cn(

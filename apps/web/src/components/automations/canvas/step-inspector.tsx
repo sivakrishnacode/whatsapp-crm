@@ -24,6 +24,7 @@ import { STEP_CATEGORIES } from '@/lib/automations/step-meta';
 import type { AutomationStepType } from '@/types';
 import { toast } from 'sonner';
 
+import { googleActionIcon } from '@/lib/automations/connectors';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -115,7 +116,19 @@ export function StepInspector({
       {/* ---- Header ---- */}
       <div className="border-border flex-none border-b px-4 pt-3.5 pb-3">
         <div className="flex items-start gap-2.5">
-          <StepIconChip type={step.step_type} size={32} iconSize={16} />
+          <StepIconChip
+            type={step.step_type}
+            size={32}
+            iconSize={16}
+            iconSrc={
+              step.step_type === 'google_action'
+                ? googleActionIcon(
+                    step.step_config as { action?: string },
+                    googleActions
+                  )
+                : undefined
+            }
+          />
           <div className="min-w-0 flex-1">
             <div
               className="text-[10.5px] font-semibold tracking-wider uppercase"

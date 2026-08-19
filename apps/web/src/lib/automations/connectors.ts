@@ -180,6 +180,39 @@ export function findGoogleAction(
   return actionId ? actions.find((a) => a.id === actionId) : undefined;
 }
 
+/**
+ * A Google service's product icon.
+ *
+ * The Integrations CARD shows one Google mark, because one deployment is
+ * one thing to connect. A step picker is the opposite case: the reader is
+ * choosing an ACTION, and "Sheets · Add a row" next to "Gmail · Send
+ * email" is scanned by logo long before it is read. So the per-product
+ * artwork earns its place here and nowhere else.
+ *
+ * Calendar and Meet share the calendar icon deliberately — a Meet link is
+ * a property of an event (`add_meet`), not a separate action, so a Meet
+ * logo would imply a service you can pick on its own.
+ */
+const GOOGLE_SERVICE_ICONS: Record<string, string> = {
+  gmail: '/icons/gmail.png',
+  calendar: '/icons/google-calendar.png',
+  sheets: '/icons/google-sheets.png',
+};
+
+/** Falls back to the generic Google mark for a service added server-side. */
+export function googleServiceIcon(service: string | undefined): string {
+  return (service && GOOGLE_SERVICE_ICONS[service]) || '/icons/google.png';
+}
+
+/** The icon for a saved step, resolved through the served catalogue. */
+export function googleActionIcon(
+  config: { action?: string } | undefined,
+  actions: { id: string; service: string }[]
+): string {
+  const action = actions.find((a) => a.id === config?.action);
+  return googleServiceIcon(action?.service);
+}
+
 /** Group actions by their service field. */
 export function groupByService(
   actions: GoogleScriptAction[],

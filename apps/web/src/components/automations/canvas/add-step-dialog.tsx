@@ -29,8 +29,9 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Ban, Search, X, Zap } from 'lucide-react';
+import { Ban, Search, X } from 'lucide-react';
 
+import { googleServiceIcon } from '@/lib/automations/connectors';
 import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -273,11 +274,17 @@ export function AddStepDialog({
                         }}
                         className="hover:bg-muted flex items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors"
                       >
-                        <div
-                          className="mt-0.5 flex size-[30px] shrink-0 items-center justify-center rounded-lg"
-                          style={{ background: 'oklch(0.45 0.12 145)' }}
-                        >
-                          <Zap size={15} className="text-white" />
+                        {/* The product logo, not a generic bolt: this
+                            list is scanned by icon, and "Sheets" next to
+                            "Gmail" is recognised long before it is read. */}
+                        <div className="bg-muted/60 mt-0.5 flex size-[30px] shrink-0 items-center justify-center rounded-lg">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={googleServiceIcon(action.service)}
+                            alt=""
+                            aria-hidden
+                            className="size-[17px] object-contain"
+                          />
                         </div>
                         <span className="min-w-0 flex-1">
                           <span className="text-foreground flex items-center gap-1.5 text-[13px] font-medium">
