@@ -37,6 +37,7 @@ vi.mock("@supabase/ssr", () => ({
 
 // Imported after the mock is registered.
 const { middleware } = await import("./middleware");
+const { DEFAULT_POST_AUTH_PATH } = await import("@/lib/auth/next-path");
 
 beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
@@ -62,9 +63,14 @@ describe("middleware — refreshed auth cookies survive redirects", () => {
       new NextRequest("https://app.test/login"),
     );
 
-    // Redirect to /dashboard…
+    // Redirect away from /login…
+    //
+    // Asserted against the constant, not a literal path: this test is about the
+    // ROTATED COOKIE surviving the redirect, and hard-coding the destination
+    // made it fail when the post-sign-in landing legitimately moved to the
+    // workspace picker (multi-workspace, migration 095).
     expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toContain("/dashboard");
+    expect(res.headers.get("location")).toContain(DEFAULT_POST_AUTH_PATH);
     // …and the rotated cookie MUST ride along, otherwise the browser keeps
     // replaying the now-consumed refresh token and the session wedges until
     // the user manually clears cookies.

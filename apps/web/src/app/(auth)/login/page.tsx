@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 
 import { createClient } from "@/lib/supabase/client";
+import { DEFAULT_POST_AUTH_PATH } from "@/lib/auth/next-path";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -54,7 +55,7 @@ function LoginForm() {
   // `?next=` on the callback URL instead.
   const destination = inviteToken
     ? `/join/${encodeURIComponent(inviteToken)}`
-    : "/dashboard";
+    : DEFAULT_POST_AUTH_PATH;
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

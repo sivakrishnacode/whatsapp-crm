@@ -1,5 +1,18 @@
-/** Where a sign-in lands when no destination was requested. */
-export const DEFAULT_POST_AUTH_PATH = '/dashboard'
+/**
+ * Where a sign-in lands when no destination was requested.
+ *
+ * ⚠️ NOT `/dashboard`. Since multi-workspace (migration 095) a user may belong
+ * to several, and `/select-workspace` asks which one before the dashboard
+ * mounts anything account-keyed. It forwards straight through for anyone with
+ * one workspace or none, so the single-workspace path is unchanged apart from
+ * one extra request.
+ *
+ * This constant is the ONE seam every sign-in path shares — password login, the
+ * Google OAuth callback and email confirmation all resolve through
+ * `sanitizeNextPath` — which is why the decision lives here rather than in
+ * three copies that would drift.
+ */
+export const DEFAULT_POST_AUTH_PATH = '/select-workspace'
 
 /**
  * Narrow an untrusted `?next=` value to a same-origin path.

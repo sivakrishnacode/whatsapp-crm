@@ -23,8 +23,9 @@ export async function exportAnalyticsData(
     case 'messages':
       const { data: msgs } = await db
         .from('messages')
-        .select('created_at, sender_type, content_text, status, conversations!inner(contact_id, contacts!inner(name, phone))')
-        .eq('account_id', accountId)
+        // Through the conversation: `messages` has no account_id of its own.
+        .select('created_at, sender_type, content_text, status, conversations!inner(account_id, contact_id, contacts!inner(name, phone))')
+        .eq('conversations.account_id', accountId)
         .gte('created_at', startDate)
         .lte('created_at', endDate)
         .order('created_at', { ascending: true });

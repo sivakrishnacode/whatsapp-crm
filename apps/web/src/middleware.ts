@@ -1,6 +1,8 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+import { DEFAULT_POST_AUTH_PATH } from '@/lib/auth/next-path'
+
 /**
  * Routes that are public by nature and must never trigger an auth check.
  *
@@ -101,7 +103,9 @@ export async function middleware(request: NextRequest) {
       url.pathname = `/join/${encodeURIComponent(inviteToken)}`
       url.search = ''
     } else {
-      url.pathname = '/dashboard'
+      // Same seam as a fresh sign-in: with several workspaces this asks which
+      // one, and forwards straight through for everybody else.
+      url.pathname = DEFAULT_POST_AUTH_PATH
       url.search = ''
     }
     return withRefreshedCookies(NextResponse.redirect(url))
@@ -113,6 +117,9 @@ export async function middleware(request: NextRequest) {
   // channel-scoped destinations under /channels do, hence the entry below.
   const protectedPaths = [
     '/dashboard',
+    // The post-sign-in workspace picker. Protected, not public: it lists the
+    // workspaces this person belongs to.
+    '/select-workspace',
     // The guided-signup wizard. Protected, not public: it configures a
     // workspace, so there has to be a session behind it.
     '/welcome',

@@ -142,13 +142,16 @@ export async function loadConversationsSeries(
   }
   const start = startDate || daysAgoStart(rangeDays - 1).toISOString()
   const end = endDate || new Date().toISOString()
-  // ⚠️ `messages` carries its own account_id, and this query needs it: there
-  // is no conversation filter here to inherit scope from, so before migration
-  // 097 this counted every message in every workspace the caller belonged to.
+  // ⚠️ Scoped through the CONVERSATION. `messages` has no account_id of its
+  // own — its tenancy comes from `conversations`, which is also how its RLS
+  // policy is written — so the scope has to be an inner-joined embed with a
+  // dotted filter, not a column on this table. Without it this counted every
+  // message in every workspace the caller belonged to, and the dashboard's
+  // volume chart summed an agency's clients together.
   const { data, error } = await db
     .from('messages')
-    .select('created_at, sender_type')
-    .eq('account_id', accountId)
+    .select('created_at, sender_type, conversations!inner(account_id)')
+    .eq('conversations.account_id', accountId)
     .gte('created_at', start)
     .lte('created_at', end)
     .order('created_at', { ascending: true })
