@@ -107,21 +107,46 @@ export function DealForm({
 
   // Load supporting data once the sheet is open
   useEffect(() => {
-    if (!open) return;
+    if (!open || !accountId) return;
     let cancelled = false;
     (async () => {
-      const [c, p] = await Promise.all([
-        supabase.from("contacts").select("*").order("name"),
-        supabase.from("profiles").select("*").order("full_name"),
+      // ⚠️ Both scoped to the ACTIVE workspace. `contacts` carries an
+      // account_id; `profiles` does not (migration 096 removed it), so the
+      // assignee list goes through `account_members` — an unscoped profiles
+      // select is readable for anyone you share ANY workspace with, and
+      // assigning a deal to somebody outside this one puts it on a desk they
+      // cannot open.
+      const [c, members] = await Promise.all([
+        supabase
+          .from("contacts")
+          .select("*")
+          .eq("account_id", accountId)
+          .order("name"),
+        supabase
+          .from("account_members")
+          .select("user_id")
+          .eq("account_id", accountId),
       ]);
       if (cancelled) return;
       setContacts((c.data ?? []) as Contact[]);
+
+      const userIds = (members.data ?? []).map((m) => m.user_id as string);
+      if (userIds.length === 0) {
+        setProfiles([]);
+        return;
+      }
+      const p = await supabase
+        .from("profiles")
+        .select("*")
+        .in("user_id", userIds)
+        .order("full_name");
+      if (cancelled) return;
       setProfiles((p.data ?? []) as Profile[]);
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, supabase]);
+  }, [open, supabase, accountId]);
 
   // Fetch linked conversation for the selected contact (newest open one).
   // Clearing on no-selection is sync with prop state; the populated

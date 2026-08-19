@@ -109,7 +109,7 @@ export function WorkspaceStep({
     setLogoBusy(true);
     const previous = logoUrl;
     try {
-      const { publicUrl } = await uploadWorkspaceLogo(file);
+      const { publicUrl } = await uploadWorkspaceLogo(initial.accountId, file);
       setLogoUrl(publicUrl);
       // Someone who picks three logos before continuing should not leave
       // two orphans behind in a public bucket.

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import type { Notification } from "@/types";
 
 /**
@@ -14,27 +15,42 @@ import type { Notification } from "@/types";
  */
 export function useUnreadNotifications(): number {
   const [count, setCount] = useState(0);
+  const { accountId } = useAuth();
 
   useEffect(() => {
+    if (!accountId) {
+      setCount(0);
+      return;
+    }
     const supabase = createClient();
     let cancelled = false;
 
     (async () => {
       // head:true skips fetching rows — we only need the `count`
       // supabase-js returns alongside the (empty) response body.
+      //
+      // ⚠️ Scoped to the ACTIVE workspace. RLS would otherwise count
+      // notifications from every workspace the user belongs to, so the bell
+      // would show a number the notifications page (scoped) does not list.
       const { count: unreadCount, error } = await supabase
         .from("notifications")
         .select("*", { count: "exact", head: true })
+        .eq("account_id", accountId)
         .is("read_at", null);
       if (cancelled || error) return;
       setCount(unreadCount ?? 0);
     })();
 
     const channel = supabase
-      .channel("notifications-unread-count")
+      .channel(`notifications-unread-count:${accountId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "notifications" },
+        {
+          event: "*",
+          schema: "public",
+          table: "notifications",
+          filter: `account_id=eq.${accountId}`,
+        },
         (payload) => {
           if (payload.eventType === "INSERT") {
             const row = payload.new as Notification;
@@ -57,7 +73,7 @@ export function useUnreadNotifications(): number {
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [accountId]);
 
   return count;
 }

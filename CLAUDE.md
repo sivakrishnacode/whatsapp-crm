@@ -100,14 +100,110 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
 - ⚠️ **Supabase Storage buckets are written from the BROWSER, not the API** (`avatars`, `flow-media` 016/020, `chat-media` 023, `workspace-logos` 071). The bucket's RLS policy is therefore the _only_ gate on those writes — it must carry the authorization itself, including any role check. Account-scoped buckets all use the path convention `account-<account_id>/…` matched on the first folder segment, built in one place by `buildMediaPath()` (`apps/web/src/lib/storage/upload-media.ts`); a hand-rolled path is silently rejected. When such a URL is later persisted to a column, pin it to our own bucket _and_ the caller's own folder server-side (`common/storage/workspace-logo.util.ts`) — a free-text URL that renders in every teammate's browser is a beacon.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `forms`/`form_submissions`/`form_bookings` (migrations 054/055 — the form builder), `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs` (workspace AI settings)/`ai_agents`/`ai_agent_knowledge`/`ai_agent_action_links` (migration 084 — several agents per workspace)/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `google_script_connections` (migration 092 — the Apps Script bridge, replacing 082's OAuth connectors), `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
+- **Domain models (public):** `Account`/`account_members`/`Profile`/`ApiKey` (tenancy + access — see the multi-workspace section: `account_members` is membership, `Profile` is the person), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `forms`/`form_submissions`/`form_bookings` (migrations 054/055 — the form builder), `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs` (workspace AI settings)/`ai_agents`/`ai_agent_knowledge`/`ai_agent_action_links` (migration 084 — several agents per workspace)/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `google_script_connections` (migration 092 — the Apps Script bridge, replacing 082's OAuth connectors), `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
+
+## Multi-workspace — one login, many workspaces (migrations 095/096/097)
+
+A user may hold a membership in any number of workspaces with a different
+role in each, and switch between them without signing out. The agency case:
+one login administering a dozen clients.
+
+- **`account_members(account_id, user_id, role)` is the source of truth**;
+  `(account_id, user_id)` is the PK because that pair IS the identity of a
+  membership. ⚠️ **`Profile` is the PERSON now** — one name, one avatar, one
+  email — and `profiles.account_id` / `account_role` are GONE (096). Migration
+  017 called single membership "the locked design decision"; this is the
+  relaxation it anticipated.
+- ⚠️ **`is_account_member()` backs 227 RLS policies, so rewriting its body was
+  the whole migration.** It reads `account_members` now. What did NOT route
+  through it — 22 predicates that inlined `profiles p WHERE p.user_id =
+  auth.uid()`, five of them **storage-bucket policies** which are the only gate
+  on browser uploads — was rewritten to CALL the helper
+  (`storage_account_folder_ok`) rather than re-inline the join.
+- **The active workspace is a SELECTION, not a credential.** `apps/api`'s
+  `auth/active-workspace.ts` is the one resolver: cookie (`c360_ws`) →
+  `profiles.last_account_id` → a workspace they OWN → oldest membership. The
+  cookie is attacker-controlled and only ever *matched* against
+  `account_members`; RLS reads memberships, not cookies, so there is no JWT
+  claim to mint and nothing to keep in sync. Pinned by
+  `active-workspace.test.ts`.
+- ⚠️⚠️ **RLS NOW SCOPES TO *MEMBERSHIPS*, NOT TO ONE WORKSPACE — SO EVERY
+  BROWSER QUERY MUST NAME THE WORKSPACE ITSELF.** ~49 client queries had no
+  account filter and were nonetheless perfectly scoped, for free, while a user
+  had exactly one workspace. Unchanged, they return the UNION of all of them:
+  an agency opens Contacts and sees every client's contacts in one list, with
+  correct-looking pagination and nothing saying why. It is **not** a tenant leak
+  — they are a member of each — which is exactly what makes it invisible. The
+  rule, written up in `apps/web/src/lib/workspace/scope.ts`: **RLS decides what
+  you MAY see; the query decides what you ARE seeing.** Same rule in SQL: 097
+  gave `filter_contacts` a required `p_account_id` and revoked
+  `filter_contacts_by_tags`. A child table already filtered by a workspace-scoped
+  parent id (`messages` by `conversation_id`) inherits the scope and needs
+  nothing.
+- ⚠️ **The compiler does not catch this class of bug.** `tsc` flagged a dropped
+  `accountId` in a Prisma `data` payload but *not* a dropped `accountRole` in the
+  same file; and untyped `supabase.from(...)` chains compile whatever you write.
+  The greps — `\.from\(` without an account filter, `profiles.account_id` in
+  raw SQL — are the safety net, not the typecheck.
+- **`useAuth()` keeps `accountId` / `accountRole` / `account`**, so most
+  consumers were untouched — but their SOURCE is now the active membership, and
+  `accountRole` is the role held HERE. Gate account-scoped work on
+  `workspacesLoading`, not `profileLoading`. Switching calls
+  `POST /account/workspaces/active` then does a **full page load**: every
+  realtime channel and cache is account-keyed, and a soft switch leaves the old
+  workspace's subscriptions live, delivering one client's messages into
+  another's inbox.
+- **The switcher is the header chip** (`components/workspace/workspace-switcher.tsx`)
+  — it already showed the workspace logo and name. It renders with one workspace
+  too (no chevron), carries a per-row standing dot, and ⚠️ **must stay reachable
+  on `/billing` and `/welcome`**: an agency whose one client lapsed is bounced
+  there and needs a way back to a workspace that works. `grace` is dunning and
+  still entitled — never paint it like `lapsed`.
+- ⚠️ **"Member of no workspace" is a REAL state**, not an error:
+  `remove_account_member` deliberately stopped minting a replacement personal
+  workspace, because conjuring an empty unpaid one for somebody just removed
+  from theirs is worse than saying so. `GET /account/workspaces` returns `[]`,
+  the guard returns `403 { error: 'no_workspace' }`, and the shell renders
+  `NoWorkspace`. Both workspace routes use `SupabaseUserGuard` (identity without
+  a workspace) for exactly this reason — as does invite redemption.
+- **`redeem_invitation` INSERTS a membership.** It used to MOVE your profile and
+  delete your workspace, which is why it refused anyone with data ("sign up with
+  a different email") — the pain point this feature removes. Both refusals are
+  gone; the only remaining 409 is "already a member", which sends you to the
+  dashboard rather than opening a recovery modal.
+- ⚠️ **An invited signup gets NO personal workspace.** `/signup?invite=` sets
+  `skip_personal_workspace` in the signup metadata and `handle_new_user` honours
+  it. Without it every invited teammate would permanently own an empty unpaid
+  workspace wearing a "needs attention" dot (no plan resolves to `lapsed`).
+- ⚠️⚠️ **THE 018/019 RPCs NEVER WORKED FROM apps/api, AND THAT IS FIXED HERE.**
+  They open `IF auth.uid() IS NULL THEN RAISE 'Unauthorized'`, and apps/api
+  connects over Prisma as `postgres` where `auth.uid()` is NULL — verified
+  against the live database. So changing a role, removing a teammate,
+  transferring ownership and **accepting an invitation** returned 403
+  unconditionally; nothing surfaced it because a 403 from a permissions RPC
+  reads like a permissions problem. `resolve_rpc_actor(p_actor_user_id)` applies
+  migration 067's rule to writes: a JWT caller acts only as themselves, a server
+  connection must name the verified actor. ⚠️ Inside those RPCs membership is
+  checked against the ACTOR, never `is_account_member()` — that reads
+  `auth.uid()` and answers "no" for everybody on a server connection, which is
+  the same NULL one layer down. `POST /invitations/:token/redeem` also gained
+  real authentication; its previous check was that the header *started with*
+  "Bearer ".
+- **Phase 1 keeps `idx_accounts_one_per_owner`, deliberately.** Billing is still
+  keyed by user (`user_subscriptions.user_id` UNIQUE, resolved through
+  `accounts.owner_user_id`), so the moment one user owns two workspaces that
+  join matches the same subscription twice and the second workspace is silently
+  free. Hence **no self-serve workspace creation in phase 1** — extra
+  memberships come from an invite or from the admin panel's "Add an existing
+  login". Phase 2 drops the index together with account-scoped subscriptions;
+  they ship as one change or not at all.
 
 ## Auth & signup
 
 - **Providers:** email+password and **Sign in with Google**, both through Supabase. `src/app/auth/callback/route.ts` is the single landing point for every Supabase redirect — it handles both `?code=` (PKCE, used by Google) and `?token_hash=&type=` (email confirmation / recovery). `?next=` is narrowed by `sanitizeNextPath` before use; it is attacker-controlled. Google needs no env var, only dashboard config (see `apps/web/.env.local.example`).
 - **Server-side Supabase:** `src/lib/supabase/server.ts` (per-request, async `cookies()`). The browser client in `client.ts` stays a singleton.
 - **`/welcome` is a hard gate.** Two mandatory steps — workspace name + qualification answers, then a plan. `DashboardShell`'s `AuthGate` calls `GET /api/onboarding` and bounces anywhere in the dashboard to `/welcome` until `step === 'done'`. The check is deliberately **not** in middleware (it would add a DB read to every request) and **fails open** (a broken endpoint must not lock out paying customers).
-- ⚠️ **A plan belongs to the workspace, but `user_subscriptions` is keyed by user.** `OnboardingService` therefore always writes the subscription for `accounts.owner_user_id`, and records completion once per account in `account_onboarding` — otherwise every invited teammate would be asked to buy their own plan. Making subscriptions genuinely account-scoped is unfinished work that would touch the admin panel, both gateways and every webhook.
+- ⚠️ **A plan belongs to the workspace, but `user_subscriptions` is keyed by user.** `OnboardingService` therefore always writes the subscription for `accounts.owner_user_id`, and records completion once per account in `account_onboarding` — otherwise every invited teammate would be asked to buy their own plan. Making subscriptions genuinely account-scoped is **phase 2 of multi-workspace** (`account_id` UNIQUE, `user_id` demoted to payer) and is what unblocks self-serve workspace creation; it touches the admin panel, both gateways and three webhook handlers. `subscription/owned-account.util.ts` marks every place that currently resolves "which workspace did this payment buy" through ownership, and is deleted by that change.
 - **`/onboarding` (the page) is the channel-connect checklist, not the wizard.** Don't confuse it with the `/api/onboarding` endpoints, which serve `/welcome`.
 
 ## Plans & billing
@@ -134,7 +230,21 @@ Two cross-tenant leaks shipped here before being removed; both share one shape, 
 - **Prisma bypasses RLS.** `apps/api` connects as the database owner, so a `findMany()` without `where: { account_id }` returns _every tenant's_ rows even though the equivalent browser query is correctly scoped by policy. The deleted `subscription/admin/users` endpoint was exactly this — `profile.findMany()`, no filter. Its sibling write endpoints took a `targetUserId` from the body and only checked that the caller was an admin _somewhere_, which let an admin of one workspace rewrite another's subscription.
 - **`SECURITY DEFINER` RPCs bypass RLS too**, and `GRANT EXECUTE ... TO authenticated` means any signed-in user can call them with any argument. Authorization has to be inside the body.
 
-The rule of thumb: _if a query runs through Prisma or a SECURITY DEFINER function, RLS is not protecting you — scope it yourself._
+A third shape joined them with migration 095, and it is the one most likely to
+be missed because nothing errors:
+
+- **RLS scopes a browser query to the caller's MEMBERSHIPS, not to one
+  workspace.** While a user had exactly one, those were the same set, so ~49
+  client queries carried no account filter and were correct anyway. With several
+  memberships each returns the union — the agency sees every client's data
+  merged. No policy is violated and no error is raised.
+
+The rules of thumb, then:
+
+- _If a query runs through Prisma or a SECURITY DEFINER function, RLS is not
+  protecting you — scope it yourself._
+- _If a query runs from the browser, RLS scopes you to your memberships — scope
+  the WORKSPACE yourself._ (`apps/web/src/lib/workspace/scope.ts`)
 
 ## Meta WhatsApp Cloud API integration (core dependency)
 

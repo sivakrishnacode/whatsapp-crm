@@ -16,6 +16,7 @@ import { GoogleScriptExecutorService } from '../../google-script/services/google
 import { findGoogleScriptAction } from '../../google-script/google-script.catalog';
 import { interpolateGoogleActionInput } from './automation-google-action.util';
 import { interpolate, resolveValue } from './automation-interpolation.util';
+import { isMember, memberUserIds } from '../../account/member-lookup.util';
 import {
   HttpStepError,
   performHttpStep,
@@ -1115,11 +1116,11 @@ export class AutomationStepExecutorService {
           // Pick any member of the account. The existing implementation
           // only ever returned the automation's author; preserving that
           // shape until a real round-robin algorithm replaces it.
-          const profile = await this.prisma.profile.findFirst({
-            where: { accountId: args.automation.accountId },
-            select: { userId: true },
-          });
-          agentId = profile?.userId;
+          const ids = await memberUserIds(
+            this.prisma,
+            args.automation.accountId,
+          );
+          agentId = ids[0];
         }
         if (!agentId) return 'no agent resolved';
         await this.prisma.conversations.updateMany({
@@ -1437,14 +1438,12 @@ export class AutomationStepExecutorService {
       // notifications are keyed by (account, user) — writing one for a
       // user outside the workspace would surface this account's contact
       // and conversation ids in their notification list.
-      const member = await this.prisma.profile.findFirst({
-        where: {
-          userId: cfg.user_id,
-          accountId: args.automation.accountId,
-        },
-        select: { userId: true },
-      });
-      return member ? [member.userId] : [];
+      const member = await isMember(
+        this.prisma,
+        args.automation.accountId,
+        cfg.user_id,
+      );
+      return member ? [cfg.user_id] : [];
     }
 
     if (cfg.recipient === 'assigned_agent') {
@@ -1457,11 +1456,7 @@ export class AutomationStepExecutorService {
       return convo?.assigned_agent_id ? [convo.assigned_agent_id] : [];
     }
 
-    const members = await this.prisma.profile.findMany({
-      where: { accountId: args.automation.accountId },
-      select: { userId: true },
-    });
-    return members.map((m) => m.userId);
+    return memberUserIds(this.prisma, args.automation.accountId);
   }
 
   /**

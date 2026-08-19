@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,11 +47,13 @@ export function Step4ScheduleSend({
   isProcessing,
   progress,
 }: Step4Props) {
+  const { accountId } = useAuth();
   const [showConfirm, setShowConfirm] = useState(false);
   const [estimatedReach, setEstimatedReach] = useState<number>(0);
   const [loadingReach, setLoadingReach] = useState(true);
 
   useEffect(() => {
+    if (!accountId) return;
     async function calculateReach() {
       setLoadingReach(true);
       try {
@@ -60,6 +63,9 @@ export function Step4ScheduleSend({
           const { count } = await supabase
             .from('contacts')
             .select('*', { count: 'exact', head: true })
+            // This workspace only — the confirmation screen's number must be
+            // the number the send will actually reach.
+            .eq('account_id', accountId)
             // Matches the server-side audience filter — see step 2.
             .not('phone', 'is', null);
           setEstimatedReach(count ?? 0);

@@ -102,7 +102,7 @@ const COMMON_LANGUAGE_CODES = [
 
 export function TemplateManager() {
   const supabase = createClient();
-  const { user, loading: authLoading } = useAuth();
+  const { user, accountId, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -246,12 +246,17 @@ export function TemplateManager() {
     // behind — the whole point of deferring the upload to here.
     let uploadedPaths: string[] = [];
 
+    if (!accountId) {
+      toast.error('No workspace selected.');
+      return;
+    }
+
     try {
       setSubmitting(true);
       const isEdit = editingId !== null;
 
       const { form: resolvedForm, paths } =
-        await uploadPendingTemplateMedia(form);
+        await uploadPendingTemplateMedia(accountId, form);
       uploadedPaths = paths;
       // Keep the resolved URLs in state so a retry after a failed submit
       // doesn't upload the same file twice.

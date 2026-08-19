@@ -72,16 +72,18 @@ export default function PipelinesPage() {
   const seedAttempted = useRef(false);
 
   const loadPipelines = useCallback(async () => {
+    if (!accountId) return [];
     const { data, error } = await supabase
       .from("pipelines")
       .select("*")
+      .eq("account_id", accountId)
       .order("created_at");
     if (error) {
       console.error("Failed to load pipelines:", error.message);
       return [];
     }
     return data ?? [];
-  }, [supabase]);
+  }, [supabase, accountId]);
 
   const loadStages = useCallback(
     async (pipelineId: string) => {

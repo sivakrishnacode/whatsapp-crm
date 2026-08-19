@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { memberProfileById } from '../../account/member-lookup.util';
 
 export interface CreateDealInput {
   title: string;
@@ -95,10 +96,15 @@ export class AgentDealsService {
       return { ok: false, detail: 'Deal not found in this account.' };
     }
 
-    // Verify user is in this account
-    const user = await this.prisma.profile.findFirst({
-      where: { id: input.assigned_to_user_id, accountId },
-    });
+    // Verify the assignee is a member of THIS workspace. `assigned_to_user_id`
+    // is a `profiles.id` (that is what `deals.assigned_to` references), so
+    // membership has to be looked up through the person — see the note on
+    // profileIsMember.
+    const user = await memberProfileById(
+      this.prisma,
+      accountId,
+      input.assigned_to_user_id,
+    );
 
     if (!user) {
       return { ok: false, detail: 'Team member not found in this account.' };

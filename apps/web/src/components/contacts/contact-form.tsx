@@ -112,10 +112,12 @@ export function ContactForm({
   }
 
   async function fetchTags() {
+    if (!accountId) return;
     setLoadingTags(true);
     const { data } = await supabase
       .from('tags')
       .select('*')
+      .eq('account_id', accountId)
       .order('name');
     if (data) setTags(data);
     setLoadingTags(false);

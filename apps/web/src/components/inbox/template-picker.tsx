@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import type { MessageTemplate } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,13 +52,14 @@ export function TemplatePicker({
   onOpenChange,
   onSelect,
 }: TemplatePickerProps) {
+  const { accountId } = useAuth();
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<MessageTemplate | null>(null);
   const [values, setValues] = useState<TemplateSlotValues | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !accountId) return;
 
     let cancelled = false;
     (async () => {
@@ -75,13 +77,16 @@ export function TemplatePicker({
         return;
       }
 
-      // Scope by RLS (message_templates_select → is_account_member), NOT by
-      // user_id. Templates are account-owned, so filtering on the caller's
-      // user_id hid templates that a teammate created — leaving them unable
-      // to send approved templates in a shared account.
+      // Account-scoped, NOT user-scoped: templates are workspace-owned, and
+      // filtering on the caller's user_id used to hide templates a teammate
+      // created. But RLS alone is no longer the right scope either — since
+      // migration 095 it spans every workspace the caller belongs to, which
+      // here would offer a template that cannot be sent on this workspace's
+      // WhatsApp number.
       const { data, error } = await supabase
         .from("message_templates")
         .select("*")
+        .eq("account_id", accountId)
         .eq("status", "APPROVED")
         .order("created_at", { ascending: false });
 
@@ -98,7 +103,7 @@ export function TemplatePicker({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, accountId]);
 
   function resetSelection() {
     setSelected(null);

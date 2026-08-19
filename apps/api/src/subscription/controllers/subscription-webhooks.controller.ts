@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import * as express from 'express';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ownedAccountId } from '../owned-account.util';
 import { AiCreditsService } from '../../ai/credits/ai-credits.service';
 
 @Controller('webhooks')
@@ -198,20 +199,21 @@ export class SubscriptionWebhooksController {
 
           // ONE TRIAL PER WORKSPACE, EVER (migration 074). Check if trial was
           // already granted before giving out another one on plan change.
-          const [existing, profile] = await Promise.all([
+          const [existing, accountId] = await Promise.all([
             this.prisma.user_subscriptions.findUnique({
               where: { user_id: userId },
               select: { trial_start_at: true, trial_end_at: true },
             }),
-            this.prisma.profile.findUnique({
-              where: { userId },
-              select: { accountId: true },
-            }),
+            // Migration 095: a profile no longer names a workspace. The
+            // subscription is the OWNER's, so the workspace is the one they
+            // own — see owned-account.util.ts for why that is right for
+            // phase 1 and what replaces it.
+            ownedAccountId(this.prisma, userId),
           ]);
 
-          const onboarding = profile
+          const onboarding = accountId
             ? await this.prisma.account_onboarding.findUnique({
-                where: { account_id: profile.accountId },
+                where: { account_id: accountId },
                 select: { trial_granted_at: true },
               })
             : null;
@@ -273,11 +275,11 @@ export class SubscriptionWebhooksController {
             },
           });
 
-          if (grantTrial && profile && !onboarding?.trial_granted_at) {
+          if (grantTrial && accountId && !onboarding?.trial_granted_at) {
             await this.prisma.account_onboarding.upsert({
-              where: { account_id: profile.accountId },
+              where: { account_id: accountId },
               create: {
-                account_id: profile.accountId,
+                account_id: accountId,
                 trial_granted_at: new Date(),
               },
               update: { trial_granted_at: new Date() },
@@ -450,20 +452,21 @@ export class SubscriptionWebhooksController {
 
           // ONE TRIAL PER WORKSPACE, EVER (migration 074). Check if trial was
           // already granted before giving out another one on plan change.
-          const [existing, profile] = await Promise.all([
+          const [existing, accountId] = await Promise.all([
             this.prisma.user_subscriptions.findUnique({
               where: { user_id: userId },
               select: { trial_start_at: true, trial_end_at: true },
             }),
-            this.prisma.profile.findUnique({
-              where: { userId },
-              select: { accountId: true },
-            }),
+            // Migration 095: a profile no longer names a workspace. The
+            // subscription is the OWNER's, so the workspace is the one they
+            // own — see owned-account.util.ts for why that is right for
+            // phase 1 and what replaces it.
+            ownedAccountId(this.prisma, userId),
           ]);
 
-          const onboarding = profile
+          const onboarding = accountId
             ? await this.prisma.account_onboarding.findUnique({
-                where: { account_id: profile.accountId },
+                where: { account_id: accountId },
                 select: { trial_granted_at: true },
               })
             : null;
@@ -530,11 +533,11 @@ export class SubscriptionWebhooksController {
             },
           });
 
-          if (grantTrial && profile && !onboarding?.trial_granted_at) {
+          if (grantTrial && accountId && !onboarding?.trial_granted_at) {
             await this.prisma.account_onboarding.upsert({
-              where: { account_id: profile.accountId },
+              where: { account_id: accountId },
               create: {
-                account_id: profile.accountId,
+                account_id: accountId,
                 trial_granted_at: new Date(),
               },
               update: { trial_granted_at: new Date() },

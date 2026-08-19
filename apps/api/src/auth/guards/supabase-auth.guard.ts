@@ -3,35 +3,35 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { createServerClient } from '@supabase/ssr';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import type { Response } from 'express';
 import type { AccountRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { REQUIRE_ROLE_KEY } from '../decorators/require-role.decorator';
 import type { RequestWithAccountContext } from '../decorators/current-account.decorator';
 import { hasMinRole } from '../role-rank.util';
-
-let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
-function getJwks(): ReturnType<typeof createRemoteJWKSet> {
-  if (!jwks) {
-    jwks = createRemoteJWKSet(
-      new URL(`${process.env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
-    );
-  }
-  return jwks;
-}
+import {
+  WORKSPACE_COOKIE,
+  WORKSPACE_HEADER,
+  resolveActiveWorkspace,
+} from '../active-workspace';
+import { verifySupabaseSession } from '../verify-supabase-session';
 
 /**
- * Cookie-session auth for the dashboard — a 1:1 port of
- * apps/web/src/lib/auth/account.ts's `getCurrentAccount()`/`requireRole()`.
+ * Cookie-session auth for the dashboard: who you are, AND which workspace
+ * this request is for.
  *
  * The Next.js rewrite (apps/web/next.config.ts) forwards the original
  * `Cookie` header same-origin, so this guard only ever sees an
  * already-fresh access token — token refresh/rotation stays owned
- * entirely by apps/web/src/middleware.ts.
+ * entirely by apps/web's proxy.
+ *
+ * Since migration 095 a user may be a member of several workspaces, so the
+ * second half is no longer a lookup with one answer. It is resolved in
+ * ../active-workspace.ts and, importantly, is NOT a credential — see that
+ * file. Endpoints that must work for a user with no workspace at all use
+ * SupabaseUserGuard instead.
  */
 @Injectable()
 export class SupabaseAuthGuard implements CanActivate {
@@ -45,89 +45,57 @@ export class SupabaseAuthGuard implements CanActivate {
       .switchToHttp()
       .getRequest<RequestWithAccountContext>();
 
-    const supabase = createServerClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll: () =>
-            Object.entries(request.cookies ?? {}).map(([name, value]) => ({
-              name,
-              value: String(value),
-            })),
-          setAll: () => {
-            // No-op: Nest never writes cookies back. Refresh/rotation is
-            // Next.js middleware's job (see file header comment).
-          },
-        },
-      },
+    const userId = await verifySupabaseSession(request);
+
+    // Migration 095: a user may be a member of several workspaces, so which
+    // one this request is for comes from the switcher's cookie — matched
+    // against `account_members`, never trusted. See active-workspace.ts.
+    const requested = request.cookies?.[WORKSPACE_COOKIE];
+    const workspace = await resolveActiveWorkspace(
+      this.prisma,
+      userId,
+      typeof requested === 'string' && requested ? requested : undefined,
     );
 
-    // Local read from the cookie envelope — no network call. Signature
-    // verification is our own job, below (see supabase-auth.guard's
-    // module comment / Phase 0 plan for why we don't call
-    // supabase.auth.getUser(jwt) here instead).
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      throw new UnauthorizedException();
-    }
-
-    const userId = await this.verifyAccessToken(session.access_token);
-
-    const profile = await this.prisma.profile.findUnique({ where: { userId } });
-    if (!profile || !profile.accountId || !profile.accountRole) {
-      throw new ForbiddenException('Profile is not linked to an account');
-    }
-
-    const account = await this.prisma.account.findUnique({
-      where: { id: profile.accountId },
-      select: { id: true, name: true },
-    });
-    if (!account) {
-      throw new ForbiddenException('Profile is not linked to an account');
+    if (!workspace) {
+      // A real state, not a broken one: somebody removed from the only
+      // workspace they were in. Its own code so the web app can render "ask
+      // for an invite" instead of a generic permission error.
+      throw new ForbiddenException({
+        error: 'no_workspace',
+        message: 'You are not a member of any workspace',
+      });
     }
 
     const minRole = this.reflector.get<AccountRole | undefined>(
       REQUIRE_ROLE_KEY,
       context.getHandler(),
     );
-    if (minRole && !hasMinRole(profile.accountRole, minRole)) {
+    if (minRole && !hasMinRole(workspace.role, minRole)) {
       throw new ForbiddenException(
         `This action requires the '${minRole}' role or higher`,
       );
     }
 
+    // Tell the client which workspace it actually got. Only matters when the
+    // cookie was missing or stale — otherwise the browser keeps sending a
+    // value we keep discarding, and the switcher shows a workspace the data
+    // did not come from.
+    if (workspace.corrected) {
+      context
+        .switchToHttp()
+        .getResponse<Response>()
+        .setHeader(WORKSPACE_HEADER, workspace.accountId);
+    }
+
     request.accountContext = {
       authType: 'supabase',
       userId,
-      accountId: profile.accountId,
-      role: profile.accountRole,
-      account,
+      accountId: workspace.accountId,
+      role: workspace.role,
+      account: workspace.account,
     };
 
     return true;
-  }
-
-  /** Returns the verified `sub` claim, or throws UnauthorizedException. */
-  private async verifyAccessToken(token: string): Promise<string> {
-    try {
-      const alg = process.env.SUPABASE_JWT_ALG ?? 'HS256';
-      const { payload } =
-        alg === 'ES256'
-          ? await jwtVerify(token, getJwks())
-          : await jwtVerify(
-              token,
-              new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET),
-            );
-
-      if (typeof payload.sub !== 'string') {
-        throw new Error('token has no sub claim');
-      }
-      return payload.sub;
-    } catch {
-      throw new UnauthorizedException();
-    }
   }
 }

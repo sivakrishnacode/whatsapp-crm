@@ -36,6 +36,7 @@ import {
   deleteAccountMedia,
   MEDIA_MAX_BYTES_BY_KIND,
 } from '@/lib/storage/upload-media';
+import { useAuth } from '@/hooks/use-auth';
 import { ReplyQuote } from './reply-quote';
 import type { ConversationChannel } from '@/types';
 
@@ -165,6 +166,7 @@ export function MessageComposer({
   onSendProductList,
   onTypingChange,
 }: MessageComposerProps) {
+  const { accountId } = useAuth();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [drafting, setDrafting] = useState(false);
@@ -380,10 +382,15 @@ export function MessageComposer({
         );
         return;
       }
+      if (!accountId) {
+        toast.error('No workspace selected.');
+        return;
+      }
       setBusy(true);
       try {
         const { publicUrl, path } = await uploadAccountMedia(
           CHAT_MEDIA_BUCKET,
+          accountId,
           file
         );
         // Replacing an existing draft? GC the previous object first.
@@ -431,10 +438,15 @@ export function MessageComposer({
         toast.error('Recording is too long (over 16 MB).');
         return;
       }
+      if (!accountId) {
+        toast.error('No workspace selected.');
+        return;
+      }
       setBusy(true);
       try {
         const { publicUrl, path } = await uploadAccountMedia(
           CHAT_MEDIA_BUCKET,
+          accountId,
           file
         );
         removeStaged(draftRef.current?.path);

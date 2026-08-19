@@ -211,7 +211,7 @@ export function MessageThread({
   viewers,
   onComposingChange,
 }: MessageThreadProps) {
-  const { user } = useAuth();
+  const { user, accountId } = useAuth();
   const { getPresence, getRow, now } = usePresence();
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -258,28 +258,49 @@ export function MessageThread({
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
 
-  // Profiles are bounded by RLS to rows the current user is allowed to
-  // see — today that's just the current user, but the dropdown keeps the
-  // shape ready for shared-team workspaces without a refactor.
+  // The assignee dropdown: members of THIS workspace.
+  //
+  // ⚠️ Two steps, and RLS is not one of them. `profiles` is readable for
+  // anyone you share ANY workspace with (migration 096's profiles_select), so
+  // a single unscoped select would offer teammates from other clients as
+  // assignees — and assigning to one would write a conversation to somebody
+  // who cannot open it. Membership comes first, and the profile lookup follows
+  // the ids it returns.
   useEffect(() => {
+    if (!accountId) return;
     let cancelled = false;
     const supabase = createClient();
-    supabase
-      .from("profiles")
-      .select("*")
-      .order("full_name")
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        if (error) {
-          console.error("Failed to fetch profiles:", error);
-          return;
-        }
-        setProfiles((data as Profile[]) ?? []);
-      });
+    void (async () => {
+      const { data: members, error: memberErr } = await supabase
+        .from("account_members")
+        .select("user_id")
+        .eq("account_id", accountId);
+      if (cancelled) return;
+      if (memberErr) {
+        console.error("Failed to fetch workspace members:", memberErr);
+        return;
+      }
+      const userIds = (members ?? []).map((m) => m.user_id as string);
+      if (userIds.length === 0) {
+        setProfiles([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .in("user_id", userIds)
+        .order("full_name");
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed to fetch profiles:", error);
+        return;
+      }
+      setProfiles((data as Profile[]) ?? []);
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
 
   // Agents come from the API, not from PostgREST: `ai_agents` carries the
   // workspace's AI configuration and the list endpoint is already the one

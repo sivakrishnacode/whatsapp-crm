@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import { Radio, Plus, Loader2 } from 'lucide-react';
 import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
 
@@ -58,6 +59,7 @@ function RateCell({
 
 export default function BroadcastsPage() {
   const router = useRouter();
+  const { accountId } = useAuth();
   const canCreate = useCan('send-messages');
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,12 +68,16 @@ export default function BroadcastsPage() {
   // Used to kick off polling only while something is actively sending.
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  async function fetchBroadcasts() {
+  async function fetchBroadcasts(id: string) {
     try {
       const supabase = createClient();
       const { data, error: fetchError } = await supabase
         .from('broadcasts')
         .select('*')
+        // ⚠️ This workspace's broadcasts only. Unscoped, an agency would see
+        // every client's campaigns in one list — including their recipient
+        // counts and delivery stats.
+        .eq('account_id', id)
         .order('created_at', { ascending: false });
 
       if (fetchError) throw fetchError;
@@ -84,8 +90,9 @@ export default function BroadcastsPage() {
   }
 
   useEffect(() => {
-    fetchBroadcasts();
-  }, []);
+    if (!accountId) return;
+    fetchBroadcasts(accountId);
+  }, [accountId]);
 
   // 'queued' counts as in-flight: the fan-out queue may not have
   // picked the broadcast up yet, and a list that stops polling in that
@@ -99,7 +106,9 @@ export default function BroadcastsPage() {
   useEffect(() => {
     function startPolling() {
       if (pollTimer.current) return;
-      pollTimer.current = setInterval(fetchBroadcasts, POLL_INTERVAL_MS);
+      pollTimer.current = setInterval(() => {
+        if (accountId) fetchBroadcasts(accountId);
+      }, POLL_INTERVAL_MS);
     }
     function stopPolling() {
       if (!pollTimer.current) return;
@@ -115,7 +124,7 @@ export default function BroadcastsPage() {
       if (document.visibilityState === 'hidden') {
         stopPolling();
       } else {
-        fetchBroadcasts();
+        if (accountId) fetchBroadcasts(accountId);
         startPolling();
       }
     }
@@ -130,7 +139,7 @@ export default function BroadcastsPage() {
       stopPolling();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [anySending]);
+  }, [anySending, accountId]);
 
   if (loading) {
     return (

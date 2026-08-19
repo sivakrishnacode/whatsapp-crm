@@ -124,11 +124,15 @@ export function WorkspaceCard() {
       toast.error(problem);
       return;
     }
+    if (!account) {
+      toast.error('No workspace selected.');
+      return;
+    }
 
     setLogoBusy(true);
     let uploaded: string | null = null;
     try {
-      const { publicUrl } = await uploadWorkspaceLogo(file);
+      const { publicUrl } = await uploadWorkspaceLogo(account.id, file);
       uploaded = publicUrl;
       await saveLogo(publicUrl);
       toast.success('Logo updated');

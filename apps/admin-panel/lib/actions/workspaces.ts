@@ -40,7 +40,12 @@ import { prisma } from '@/lib/prisma';
 /** Owner is absent on purpose — see `transferOwnership`. */
 const ASSIGNABLE_ROLES = ['admin', 'agent', 'viewer'] as const;
 
-const MEMBER_INTENTS = ['set_role', 'remove', 'transfer_ownership'] as const;
+const MEMBER_INTENTS = [
+  'add',
+  'set_role',
+  'remove',
+  'transfer_ownership',
+] as const;
 
 const COUNTRY_RE = /^[A-Za-z]{2}$/;
 const CURRENCY_RE = /^[A-Za-z]{3}$/;
@@ -119,6 +124,100 @@ export async function updateWorkspace(
 }
 
 /**
+ * Add an existing login to a workspace.
+ *
+ * ⚠️ ONLY POSSIBLE SINCE MIGRATION 095, and it is the reason the panel can
+ * demo the switcher before self-serve workspace creation ships: phase 1
+ * deliberately keeps `idx_accounts_one_per_owner`, so nobody can CREATE a
+ * second workspace, and an operator attaching somebody to an existing one is
+ * the only way to put a user in two.
+ *
+ * By email, not user id: an operator has the person's email in front of them,
+ * and asking for a UUID is how the wrong person gets added.
+ *
+ * ⚠️ Never grants `owner`. There is exactly one owner per workspace
+ * (`idx_account_members_one_owner`), billing resolves through it, and adding a
+ * second is a transfer — which has its own action, its own confirmation and its
+ * own audit line.
+ */
+async function addMember(
+  session: AdminSession,
+  formData: FormData,
+  accountId: string
+): Promise<ActionState> {
+  // Lower-cased because Supabase stores auth.users.email lower-cased, and an
+  // operator pasting "Name@Example.com" out of a support thread would otherwise
+  // be told the login does not exist.
+  const email = text(formData, 'email', 'Email').toLowerCase();
+  const role = oneOf(formData, 'role', ASSIGNABLE_ROLES, { label: 'Role' })!;
+
+  const [account, user] = await Promise.all([
+    prisma.account.findUnique({
+      where: { id: accountId },
+      select: { name: true },
+    }),
+    // auth.users.email is not unique in Supabase's schema (soft-deleted rows
+    // keep theirs), so this asks for the live one rather than assuming.
+    prisma.users.findFirst({
+      where: { email, deleted_at: null },
+      select: { id: true, email: true },
+    }),
+  ]);
+
+  if (!account) throw new FieldError('That workspace no longer exists.');
+  if (!user) {
+    throw new FieldError(
+      `No login found for ${email}. They have to sign up first — this adds an ` +
+        'existing account to a workspace, it does not create one.'
+    );
+  }
+
+  const existing = await prisma.account_members.findUnique({
+    where: { account_id_user_id: { account_id: accountId, user_id: user.id } },
+    select: { role: true },
+  });
+  if (existing) {
+    throw new FieldError(
+      `${email} is already a ${existing.role} in ${account.name}.`
+    );
+  }
+
+  const profile = await prisma.profile.findUnique({
+    where: { userId: user.id },
+    select: { fullName: true },
+  });
+
+  await prisma.account_members.create({
+    data: { account_id: accountId, user_id: user.id, role },
+  });
+
+  const label = profile?.fullName?.trim() || email;
+  const others = await prisma.account_members.count({
+    where: { user_id: user.id, account_id: { not: accountId } },
+  });
+
+  await recordAudit({
+    actor: session.username,
+    action: 'member.add',
+    targetType: 'member',
+    targetId: user.id,
+    accountId,
+    userId: user.id,
+    summary: `Added ${label} to ${account.name} as ${role}`,
+    detail: { role, email, otherWorkspaces: others },
+  });
+
+  refresh();
+  return {
+    ok:
+      `Added ${label} to ${account.name} as ${role}.` +
+      (others > 0
+        ? ` They are now in ${others + 1} workspaces and can switch between them.`
+        : ''),
+  };
+}
+
+/**
  * One action for every per-member button, dispatched on `intent`.
  *
  * Same shape as the subscription quick actions: a submit button's name/value
@@ -133,11 +232,18 @@ export async function memberAction(
 
   try {
     const accountId = uuid(formData, 'accountId', 'Workspace');
-    const userId = uuid(formData, 'userId', 'Member');
     const intent = oneOf(formData, 'intent', MEMBER_INTENTS, {
       label: 'Action',
     })!;
 
+    // `add` names somebody who is NOT yet a member, so it cannot go through
+    // loadMember — which exists precisely to refuse a userId that does not
+    // belong to this workspace.
+    if (intent === 'add') {
+      return await addMember(session, formData, accountId);
+    }
+
+    const userId = uuid(formData, 'userId', 'Member');
     const member = await loadMember(accountId, userId);
 
     switch (intent) {
@@ -180,9 +286,10 @@ async function setMemberRole(
     throw new FieldError(`They are already ${role}.`);
   }
 
-  await prisma.profile.update({
-    where: { userId },
-    data: { accountRole: role, updatedAt: new Date() },
+  // Migration 095: the role is a property of the MEMBERSHIP, not the person.
+  await prisma.account_members.update({
+    where: { account_id_user_id: { account_id: accountId, user_id: userId } },
+    data: { role, updated_at: new Date() },
   });
 
   await recordAudit({
@@ -205,18 +312,22 @@ async function setMemberRole(
 /**
  * Remove someone from a workspace without taking their login away.
  *
- * The mirror of `remove_account_member`: the profile moves to a workspace of
- * their own, as its owner, rather than being deleted. Deleting it would leave an
- * authenticated user with no profile — a state the CRM reads as "signed up but
- * never onboarded", which bounces them into `/welcome` to buy a plan for a
- * workspace they never asked for.
+ * The mirror of `remove_account_member`, and migration 095 made it a great deal
+ * simpler: it deletes ONE membership row. Every other workspace they belong to
+ * is untouched, and their profile — the person — is never moved or deleted.
  *
- * One difference from the RPC, forced by the schema: `accounts.owner_user_id` is
- * UNIQUE (`idx_accounts_one_per_owner`), so if this user still owns the personal
- * account they were given at signup, inserting a second one fails outright.
- * `redeem_invitation` normally deletes that empty account when they join a team,
- * but a profile moved by hand may never have gone through it — so an existing
- * owned workspace is reused instead of blindly creating one.
+ * ⚠️ It no longer mints them a replacement personal workspace, and that is
+ * deliberate rather than an omission. Before 095 it had to: a profile carried
+ * the single `account_id`, so removing somebody without giving them somewhere
+ * to land left an authenticated user pointing at nothing. Now "member of no
+ * workspace" is a state the product handles honestly (apps/web's NoWorkspace
+ * screen), and conjuring an empty unpaid workspace for somebody who was just
+ * removed from theirs is worse than saying so — it would resolve to `lapsed`,
+ * wear a warning dot, and nag them to buy a plan for a workspace nobody asked
+ * for.
+ *
+ * That also retires the `idx_accounts_one_per_owner` workaround this function
+ * used to need.
  */
 async function removeMember(
   session: AdminSession,
@@ -230,34 +341,20 @@ async function removeMember(
     );
   }
 
-  const landedIn = await prisma.$transaction(async (tx) => {
-    const owned = await tx.account.findUnique({
-      where: { ownerUserId: userId },
-      select: { id: true, name: true },
+  const remaining = await prisma.$transaction(async (tx) => {
+    await tx.account_members.delete({
+      where: { account_id_user_id: { account_id: accountId, user_id: userId } },
     });
 
-    const destination =
-      owned ??
-      (await tx.account.create({
-        // Same naming as the RPC: their own name, else their email, else a
-        // placeholder. Never the workspace they are leaving.
-        data: {
-          name: member.fullName?.trim() || member.email || 'My workspace',
-          ownerUserId: userId,
-        },
-        select: { id: true, name: true },
-      }));
-
-    await tx.profile.update({
-      where: { userId },
-      data: {
-        accountId: destination.id,
-        accountRole: 'owner',
-        updatedAt: new Date(),
-      },
+    // Don't leave them pointed at a workspace they can no longer open: the
+    // switcher would offer it and every request would be refused. Matches what
+    // `remove_account_member` does in SQL.
+    await tx.profile.updateMany({
+      where: { userId, lastAccountId: accountId },
+      data: { lastAccountId: null },
     });
 
-    return destination;
+    return tx.account_members.count({ where: { user_id: userId } });
   });
 
   await recordAudit({
@@ -268,11 +365,13 @@ async function removeMember(
     accountId,
     userId,
     summary:
-      `Removed ${member.label} from ${member.accountName}; moved to their own ` +
-      `workspace "${landedIn.name}"`,
+      `Removed ${member.label} from ${member.accountName}` +
+      (remaining === 0
+        ? ' — they are now in no workspace'
+        : `; still in ${remaining} other workspace${remaining === 1 ? '' : 's'}`),
     detail: {
       previousRole: member.accountRole,
-      newAccountId: landedIn.id,
+      remainingWorkspaces: remaining,
       assignedDeals: member.assignedDeals,
     },
   });
@@ -371,13 +470,21 @@ async function transferOwnership(
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.profile.update({
-      where: { userId: account.ownerUserId },
-      data: { accountRole: 'admin', updatedAt: new Date() },
+    // ⚠️ Demote first. `idx_account_members_one_owner` (migration 095) allows
+    // exactly one owner row per workspace, so promoting before demoting
+    // rejects the intermediate state.
+    await tx.account_members.update({
+      where: {
+        account_id_user_id: {
+          account_id: accountId,
+          user_id: account.ownerUserId,
+        },
+      },
+      data: { role: 'admin', updated_at: new Date() },
     });
-    await tx.profile.update({
-      where: { userId },
-      data: { accountRole: 'owner', updatedAt: new Date() },
+    await tx.account_members.update({
+      where: { account_id_user_id: { account_id: accountId, user_id: userId } },
+      data: { role: 'owner', updated_at: new Date() },
     });
     await tx.account.update({
       where: { id: accountId },
@@ -496,31 +603,45 @@ export async function revokeInvitation(
  * a way to edit any profile in the database.
  */
 async function loadMember(accountId: string, userId: string) {
-  const profile = await prisma.profile.findUnique({
-    where: { userId },
-    select: {
-      id: true,
-      accountId: true,
-      accountRole: true,
-      fullName: true,
-      email: true,
-      account: { select: { name: true, ownerUserId: true } },
-      _count: { select: { deals: true } },
-    },
-  });
+  // ⚠️ TWO ROWS, and the membership is the one that decides access. Migration
+  // 095 split "who is this person" (profiles) from "what are they in this
+  // workspace" (account_members), so the pair check that used to be
+  // `profile.accountId !== accountId` is now the existence of the membership.
+  //
+  // Fetched together rather than sequentially so the failure is one refusal
+  // rather than two different ones depending on which row is missing.
+  const [membership, profile, account] = await Promise.all([
+    prisma.account_members.findUnique({
+      where: { account_id_user_id: { account_id: accountId, user_id: userId } },
+      select: { role: true },
+    }),
+    prisma.profile.findUnique({
+      where: { userId },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        _count: { select: { deals: true } },
+      },
+    }),
+    prisma.account.findUnique({
+      where: { id: accountId },
+      select: { name: true, ownerUserId: true },
+    }),
+  ]);
 
-  if (!profile || profile.accountId !== accountId) {
+  if (!membership || !profile || !account) {
     throw new FieldError('That person is not a member of this workspace.');
   }
 
   return {
     profileId: profile.id,
-    accountRole: profile.accountRole,
-    accountName: profile.account.name,
+    accountRole: membership.role,
+    accountName: account.name,
     fullName: profile.fullName,
     email: profile.email,
     label: profile.fullName?.trim() || profile.email || 'That member',
-    isOwner: profile.account.ownerUserId === userId,
+    isOwner: account.ownerUserId === userId,
     assignedDeals: profile._count.deals,
   };
 }

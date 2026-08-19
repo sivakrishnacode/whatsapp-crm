@@ -81,31 +81,22 @@ export function formatBytes(bytes: number): string {
   return `${value < 10 && i > 0 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
 }
 
-async function resolveAccountId(): Promise<string> {
-  const supabase = createClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user) throw new Error('Not signed in.');
+/**
+ * ⚠️ REMOVED, deliberately. This resolved the caller's workspace from
+ * `profiles.account_id`, a column migration 096 dropped — and, more to the
+ * point, a question that no longer has one answer. The active workspace is
+ * resolved server-side (apps/api's active-workspace.ts) and reaches components
+ * as `useAuth().accountId`; this module takes it as a parameter rather than
+ * inventing a second resolver that could disagree. See lib/workspace/scope.ts.
+ */
 
-  const { data: profile, error } = await supabase
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  if (error || !profile?.account_id) {
-    throw new Error('Could not resolve your account.');
-  }
-  return profile.account_id as string;
-}
-
-/** Every asset for the caller's account, newest first. */
-export async function listLibrary(): Promise<MediaAsset[]> {
+/** Every asset for one workspace, newest first. */
+export async function listLibrary(accountId: string): Promise<MediaAsset[]> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('media_assets')
     .select('*')
+    .eq('account_id', accountId)
     .order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({
@@ -124,7 +115,10 @@ export async function listLibrary(): Promise<MediaAsset[]> {
  * retry writes a new object rather than silently overwriting one another
  * row already points at.
  */
-export async function uploadToLibrary(file: File): Promise<MediaAsset> {
+export async function uploadToLibrary(
+  accountId: string,
+  file: File
+): Promise<MediaAsset> {
   if (file.size > LIBRARY_MAX_BYTES) {
     throw new Error(
       `${file.name} is larger than the ${formatBytes(LIBRARY_MAX_BYTES)} limit.`
@@ -132,7 +126,6 @@ export async function uploadToLibrary(file: File): Promise<MediaAsset> {
   }
 
   const supabase = createClient();
-  const accountId = await resolveAccountId();
   const path = buildMediaPath(accountId, file.name);
 
   const { error: upErr } = await supabase.storage

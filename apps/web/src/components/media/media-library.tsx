@@ -33,6 +33,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/use-auth';
 import {
   LIBRARY_SOFT_QUOTA_BYTES,
   deleteAsset,
@@ -68,6 +69,7 @@ export interface MediaLibraryProps {
 }
 
 export function MediaLibrary({ onPick, accept, className }: MediaLibraryProps) {
+  const { accountId } = useAuth();
   const tabs = useMemo(
     () => (accept?.length ? TABS.filter((t) => accept.includes(t.id)) : TABS),
     [accept]
@@ -81,8 +83,9 @@ export function MediaLibrary({ onPick, accept, className }: MediaLibraryProps) {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
+    if (!accountId) return;
     try {
-      setAssets(await listLibrary());
+      setAssets(await listLibrary(accountId));
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Couldn't load your media."
@@ -90,7 +93,7 @@ export function MediaLibrary({ onPick, accept, className }: MediaLibraryProps) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [accountId]);
 
   useEffect(() => {
     void load();
@@ -128,11 +131,15 @@ export function MediaLibrary({ onPick, accept, className }: MediaLibraryProps) {
 
   async function handleFiles(files: FileList | null) {
     if (!files?.length) return;
+    if (!accountId) {
+      toast.error('No workspace selected.');
+      return;
+    }
     setUploading(true);
     let failed = 0;
     for (const file of Array.from(files)) {
       try {
-        const asset = await uploadToLibrary(file);
+        const asset = await uploadToLibrary(accountId, file);
         setAssets((prev) => [asset, ...prev]);
         // Land the user on the tab their file went to, so an upload is
         // never invisible because they were looking at "Audio".

@@ -49,7 +49,16 @@ export type UserList = {
 const USER_FROM = Prisma.sql`
   from auth.users u
   left join profiles p on p.user_id = u.id
-  left join accounts a on a.id = p.account_id
+  -- ⚠️ ONE workspace column for a user who may be in many. It is the one they
+  -- OWN, which is also the one their subscription pays for while billing is
+  -- keyed by user. It used to be joined through profiles.account_id (dropped by
+  -- migration 096). A user who is only ever a member of other people's
+  -- workspaces owns none and reads as "no workspace" here — the workspaces
+  -- page is where their memberships are listed, and this one is about logins.
+  --
+  -- The owned alias was already this same join, kept by the row that
+  -- computes isAccountOwner; both now mean the same thing.
+  left join accounts a on a.owner_user_id = u.id
   left join accounts owned on owned.owner_user_id = u.id
   left join user_subscriptions s on s.user_id = u.id
   left join subscription_plans pl on pl.id = s.plan_id`;
@@ -70,7 +79,10 @@ function buildWhere(params: UserListParams): Prisma.Sql {
 
   if (params.role && params.role !== 'all') {
     conditions.push(
-      Prisma.sql`p.account_role = ${params.role}::account_role_enum`
+      Prisma.sql`exists (
+        select 1 from account_members m
+         where m.user_id = u.id and m.role = ${params.role}::account_role_enum
+      )`
     );
   }
 
@@ -94,7 +106,10 @@ export async function listUsers(
         u.email_confirmed_at as "emailConfirmedAt",
         u.banned_until as "bannedUntil",
         p.full_name as "fullName",
-        p.account_role as "accountRole",
+        (
+          select m.role from account_members m
+           where m.user_id = u.id and m.account_id = a.id
+        ) as "accountRole",
         a.id as "accountId",
         a.name as "accountName",
         (owned.id is not null) as "isAccountOwner",
@@ -124,13 +139,26 @@ export async function listUsers(
 
 export type RoleCount = { role: string; count: number };
 
+/**
+ * How many users hold each role — counted across MEMBERSHIPS, not people.
+ *
+ * ⚠️ Since migration 095 a user can be an owner of their own workspace and a
+ * viewer in a client's, so "this user's role" no longer exists as a question.
+ * Each membership is counted once, which means the total here exceeds the user
+ * count for anyone in several workspaces. That is the honest shape: the
+ * alternative — picking one role per person — would have to invent a rule for
+ * which one, and every rule is wrong for somebody.
+ *
+ * `no workspace` covers logins that belong to nothing: a fresh signup mid-flow,
+ * or someone removed from the only workspace they were in.
+ */
 export async function roleCounts(): Promise<RoleCount[]> {
   return prisma.$queryRaw<RoleCount[]>(Prisma.sql`
     select
-      coalesce(p.account_role::text, 'no profile') as "role",
+      coalesce(m.role::text, 'no workspace') as "role",
       (count(*))::int as "count"
     from auth.users u
-    left join profiles p on p.user_id = u.id
+    left join account_members m on m.user_id = u.id
     where u.deleted_at is null
     group by 1
     order by "count" desc

@@ -83,8 +83,9 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     // the Promise.all above: both go through RPCs, and a failure in
     // either must not take the deals/notes/tags panel down with it.
     try {
+      if (!accountId) return;
       const [all, byContact] = await Promise.all([
-        listSegmentsLight(supabase),
+        listSegmentsLight(supabase, accountId),
         segmentsForContacts(supabase, [contact.id]),
       ]);
       setSegments(all);
@@ -92,7 +93,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     } catch {
       // Non-fatal.
     }
-  }, [contact]);
+  }, [contact, accountId]);
 
   // Load on contact change. setContactData/setTags run inside async
   // Supabase callbacks, not synchronously in the effect body.

@@ -8,6 +8,7 @@ import {
   useRef,
 } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import {
   CONVERSATION_SELECT,
   matchesContactFilters,
@@ -127,6 +128,7 @@ export function ConversationList({
   resyncToken = 0,
   occupiedConversationIds,
 }: ConversationListProps) {
+  const { accountId } = useAuth();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
@@ -162,6 +164,7 @@ export function ConversationList({
   // we re-fetch page 1 and reset the cursor, discarding stale local
   // state — simpler and more correct than trying to merge two lists.
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     let cancelled = false;
 
@@ -173,6 +176,10 @@ export function ConversationList({
       const { data, error } = await supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
+        // ⚠️ The ACTIVE workspace, not every workspace RLS permits — see
+        // lib/workspace/scope.ts. Unscoped, an agency's inbox would interleave
+        // every client's threads into one list.
+        .eq("account_id", accountId)
         .order("last_message_at", { ascending: false })
         .limit(PAGE_SIZE);
 
@@ -205,11 +212,11 @@ export function ConversationList({
     return () => {
       cancelled = true;
     };
-  }, [resyncToken]);
+  }, [resyncToken, accountId]);
 
   // ── Load-more handler ─────────────────────────────────────────────
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore || !cursor) return;
+    if (loadingMore || !hasMore || !cursor || !accountId) return;
 
     const supabase = createClient();
     setLoadingMore(true);
@@ -217,6 +224,7 @@ export function ConversationList({
     const { data, error } = await supabase
       .from("conversations")
       .select(CONVERSATION_SELECT)
+      .eq("account_id", accountId)
       .order("last_message_at", { ascending: false })
       // Exclusive cursor: only rows strictly older than the current cursor.
       .lt("last_message_at", cursor)
@@ -239,7 +247,7 @@ export function ConversationList({
     if (lastAt) setCursor(lastAt);
 
     setLoadingMore(false);
-  }, [loadingMore, hasMore, cursor, conversations]);
+  }, [loadingMore, hasMore, cursor, conversations, accountId]);
 
   // ── IntersectionObserver — auto load-more on scroll ───────────────
   useEffect(() => {
@@ -263,13 +271,18 @@ export function ConversationList({
     const supabase = createClient();
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from("tags").select("*").order("name");
+      if (!accountId) return;
+      const { data } = await supabase
+        .from("tags")
+        .select("*")
+        .eq("account_id", accountId)
+        .order("name");
       if (!cancelled && data) setTags(data as Tag[]);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
 
   // ── Derived state ─────────────────────────────────────────────────
 

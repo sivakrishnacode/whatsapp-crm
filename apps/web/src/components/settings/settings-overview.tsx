@@ -42,11 +42,19 @@ export function SettingsOverview({
     (async () => {
       setCountsLoading(true);
       const [tagsRes, fieldsRes] = await Promise.allSettled([
+        // ⚠️ Both by ACCOUNT. `tags` was counted by `user_id`, which under
+        // shared workspaces already under-counted (a teammate's tags were
+        // invisible); `custom_fields` had no filter at all, which since
+        // migration 095 over-counts across every workspace. Same column, one
+        // rule.
         supabase
           .from('tags')
           .select('id', { count: 'exact', head: true })
-          .eq('user_id', userId),
-        supabase.from('custom_fields').select('id', { count: 'exact', head: true }),
+          .eq('account_id', accountId),
+        supabase
+          .from('custom_fields')
+          .select('id', { count: 'exact', head: true })
+          .eq('account_id', accountId),
       ]);
 
       if (cancelled) return;

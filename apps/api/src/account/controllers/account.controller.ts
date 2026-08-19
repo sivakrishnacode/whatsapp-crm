@@ -39,22 +39,16 @@ export class AccountController {
     @CurrentAccount() account: SupabaseAccountContext,
     @Res() res: Response,
   ) {
-    const [acc, profile] = await Promise.all([
-      this.prisma.account.findUnique({
-        where: { id: account.accountId },
-        select: {
-          id: true,
-          name: true,
-          logoUrl: true,
-          ownerUserId: true,
-          createdAt: true,
-        },
-      }),
-      this.prisma.profile.findUnique({
-        where: { userId: account.userId },
-        select: { accountRole: true },
-      }),
-    ]);
+    const acc = await this.prisma.account.findUnique({
+      where: { id: account.accountId },
+      select: {
+        id: true,
+        name: true,
+        logoUrl: true,
+        ownerUserId: true,
+        createdAt: true,
+      },
+    });
 
     if (!acc) {
       return res
@@ -70,7 +64,11 @@ export class AccountController {
         owner_user_id: acc.ownerUserId,
         created_at: acc.createdAt,
       },
-      role: profile?.accountRole ?? 'viewer',
+      // The guard already resolved the caller's role IN THIS WORKSPACE. It
+      // used to be re-read from `profiles.accountRole`, which after migration
+      // 095 would be asking "what is this person's role" — a question with no
+      // answer once they hold one role here and another somewhere else.
+      role: account.role,
     });
   }
 
@@ -91,12 +89,7 @@ export class AccountController {
     @Body() body: { name?: unknown; logo_url?: unknown },
     @Res() res: Response,
   ) {
-    const profile = await this.prisma.profile.findUnique({
-      where: { userId: account.userId },
-      select: { accountRole: true },
-    });
-
-    if (!canManageMembers(profile?.accountRole ?? '')) {
+    if (!canManageMembers(account.role)) {
       return res
         .status(HttpStatus.FORBIDDEN)
         .json({ error: 'Admin+ required' });
@@ -176,39 +169,43 @@ export class AccountController {
     @CurrentAccount() account: SupabaseAccountContext,
     @Res() res: Response,
   ) {
-    const [callerProfile, rows] = await Promise.all([
-      this.prisma.profile.findUnique({
-        where: { userId: account.userId },
-        select: { accountRole: true },
-      }),
-      this.prisma.profile.findMany({
-        where: { accountId: account.accountId },
-        select: {
-          userId: true,
-          fullName: true,
-          email: true,
-          avatarUrl: true,
-          accountRole: true,
-          createdAt: true,
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-    ]);
+    // Membership drives the list now, and the profile only supplies the
+    // person. `joined_at` is the MEMBERSHIP's created_at, not the profile's —
+    // it used to be the latter, which after 095 would report when somebody
+    // signed up rather than when they joined this workspace, and for an
+    // agency's client workspaces those are months apart.
+    const rows = await this.prisma.account_members.findMany({
+      where: { account_id: account.accountId },
+      select: { user_id: true, role: true, created_at: true },
+      orderBy: { created_at: 'asc' },
+    });
 
-    const canSeeEmails = canManageMembers(callerProfile?.accountRole ?? '');
+    const profiles = await this.prisma.profile.findMany({
+      where: { userId: { in: rows.map((r) => r.user_id) } },
+      select: {
+        userId: true,
+        fullName: true,
+        email: true,
+        avatarUrl: true,
+      },
+    });
+    const byUser = new Map(profiles.map((p) => [p.userId, p]));
+
+    const canSeeEmails = canManageMembers(account.role);
 
     const members = rows
-      .filter((r) =>
-        (ROLES_ORDER as readonly string[]).includes(r.accountRole ?? ''),
-      )
-      .map((r) => ({
-        user_id: r.userId,
-        full_name: r.fullName ?? '',
-        email: canSeeEmails ? r.email : null,
-        avatar_url: r.avatarUrl,
-        role: r.accountRole,
-        joined_at: r.createdAt,
-      }));
+      .filter((r) => (ROLES_ORDER as readonly string[]).includes(r.role))
+      .map((r) => {
+        const p = byUser.get(r.user_id);
+        return {
+          user_id: r.user_id,
+          full_name: p?.fullName ?? '',
+          email: canSeeEmails ? (p?.email ?? null) : null,
+          avatar_url: p?.avatarUrl ?? null,
+          role: r.role,
+          joined_at: r.created_at,
+        };
+      });
 
     return res.status(HttpStatus.OK).json({ members });
   }

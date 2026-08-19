@@ -158,11 +158,11 @@ export function ImportModal({
   // Loaded when the dialog opens rather than on mount: this component
   // stays mounted on the contacts page for the whole session.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !accountId) return;
     let cancelled = false;
     void (async () => {
       try {
-        const rows = await listSegmentsLight(supabase);
+        const rows = await listSegmentsLight(supabase, accountId);
         if (!cancelled) setSegments(rows.filter((s) => s.kind === 'static'));
       } catch {
         // Optional — import works without a segment.

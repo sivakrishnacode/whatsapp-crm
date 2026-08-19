@@ -231,7 +231,7 @@ async function accountActivity(accountId: string): Promise<AccountActivity> {
         as "automations",
       (select count(*) from flows where account_id = ${accountId}::uuid)::int
         as "flows",
-      (select count(*) from profiles where account_id = ${accountId}::uuid)::int
+      (select count(*) from account_members where account_id = ${accountId}::uuid)::int
         as "teamMembers"
   `);
 

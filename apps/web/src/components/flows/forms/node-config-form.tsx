@@ -49,6 +49,7 @@ import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
 import type { ContactSegment } from '@/types';
 import { listSegmentsLight } from '@/lib/segments/api';
+import { useAuth } from '@/hooks/use-auth';
 import { MEDIA_MAX_BYTES } from '@/lib/storage/upload-media';
 import { slugify, type BuilderNode } from '../shared';
 import { NextNodeRow, NodeKeySelect, TextRow } from './fields';
@@ -1037,14 +1038,18 @@ function SetSegmentForm({
 }
 
 /** Segments for the picker above. Read straight from the DB — RLS
- *  scopes them to the caller's account, same as the tag list. */
+ *  scoped to the ACTIVE workspace — RLS alone would span every workspace the
+ *  author belongs to (migration 095), and a segment id from another one saves
+ *  fine and then matches nobody at run time. */
 function useAccountSegments(): ContactSegment[] {
+  const { accountId } = useAuth();
   const [segments, setSegments] = useState<ContactSegment[]>([]);
   useEffect(() => {
+    if (!accountId) return;
     let cancelled = false;
     void (async () => {
       try {
-        const rows = await listSegmentsLight(createClient());
+        const rows = await listSegmentsLight(createClient(), accountId);
         if (!cancelled) setSegments(rows);
       } catch {
         // Absent or unreadable — the form falls back to raw UUID input.
@@ -1053,7 +1058,7 @@ function useAccountSegments(): ContactSegment[] {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
   return segments;
 }
 
@@ -1127,8 +1132,13 @@ function SendMediaForm({
     cfg.filename ||
     (cfg.media_url ? (cfg.media_url.split('/').pop() ?? '') : '');
 
+  const { accountId } = useAuth();
   const handleFile = useCallback(
     async (file: File) => {
+      if (!accountId) {
+        toast.error('No workspace selected.');
+        return;
+      }
       if (file.size > MEDIA_MAX_BYTES) {
         toast.error(
           `File is ${(file.size / 1024 / 1024).toFixed(1)} MB — limit is 16 MB.`
@@ -1141,7 +1151,7 @@ function SendMediaForm({
         // a file picked here is worth finding again, and a bucket
         // nothing indexes is how the same logo got uploaded per node.
         // Still an account-scoped path — see migration 087's policies.
-        const { url: publicUrl } = await uploadToLibrary(file);
+        const { url: publicUrl } = await uploadToLibrary(accountId, file);
         // Patch all fields in one call so the form doesn't re-render
         // with a half-uploaded state.
         onUpdateConfig({

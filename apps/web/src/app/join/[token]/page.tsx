@@ -27,7 +27,6 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
 import {
-  AlertTriangle,
   CheckCircle,
   Loader2,
   MailX,
@@ -43,14 +42,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { createClient } from '@/lib/supabase/client';
 
 interface PeekOk {
@@ -102,12 +93,6 @@ export default function JoinPage() {
     undefined, // undefined = unknown / still loading; null = signed out
   );
   const [accepting, setAccepting] = useState(false);
-  // `redeem_invitation` returns 409 when the caller's current account
-  // has domain data, or they're already a member of a shared account.
-  // A transient toast wasn't enough — the user has no actionable next
-  // step. Surface a blocking modal that walks them through it.
-  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
 
   // Extracted so the "Try again" button on the server_error card
   // can re-run the same logic without remounting the component.
@@ -175,47 +160,40 @@ export default function JoinPage() {
         const payload = (await res.json().catch(() => ({}))) as {
           error?: string;
         };
-        // 409 = caller already has data / is in another shared
-        // account. The redeem RPC's error message is descriptive
-        // enough to show directly; we open a modal so the user has
-        // a clear next-action (sign out → use different email)
-        // rather than a 3-second toast.
+        // ⚠️ 409 now means ONE thing: you are already a member of this
+        // workspace. It used to also mean "your own account has data" or "you
+        // are already in a shared account" — refusals that existed because
+        // joining MOVED your single profile row and deleted your workspace, so
+        // the only safe answer really was "sign up with a different email".
+        // Migration 095 made joining an INSERT: nothing moves, nothing is
+        // deleted, and both of those refusals are gone. So the remaining case
+        // is not an error to recover from — they are already in, and the right
+        // response is to take them there.
         if (res.status === 409) {
-          setConflictMessage(
-            payload.error ||
-              'You are already in another account. Sign in with a different email to join this one.',
+          toast.success(
+            peek?.ok
+              ? `You're already a member of ${peek.account_name}`
+              : "You're already a member of this workspace",
           );
-        } else {
-          toast.error(payload.error || 'Failed to accept invitation');
+          window.location.href = '/dashboard';
+          return;
         }
+        toast.error(payload.error || 'Failed to accept invitation');
         setAccepting(false);
         return;
       }
       toast.success('Welcome to the team');
-      // Full reload (not router.push) so AuthProvider re-fetches
-      // the profile with the new account_id and account_role.
+      // Full reload (not router.push): AuthProvider has to re-fetch the
+      // workspace list, and the new membership must become the active
+      // workspace before any account-scoped query runs.
       window.location.href = '/dashboard';
     } catch (err) {
       console.error('[join] redeem error:', err);
       toast.error('Could not reach the server');
       setAccepting(false);
     }
-  }, [token]);
+  }, [token, peek]);
 
-  const handleSignOutAndRetry = useCallback(async () => {
-    setSigningOut(true);
-    try {
-      await createClient().auth.signOut();
-      // Hard reload so the new auth state propagates everywhere
-      // (middleware, AuthProvider). Preserves the invite token in
-      // the URL so the rebuilt page renders the signed-out CTA path.
-      window.location.reload();
-    } catch (err) {
-      console.error('[join] sign-out error:', err);
-      toast.error('Could not sign out. Try refreshing the page.');
-      setSigningOut(false);
-    }
-  }, []);
 
   // ----- Loading state (peek pending OR auth not yet resolved) -----
   if (peek === null || authedUserId === undefined) {
@@ -342,67 +320,13 @@ export default function JoinPage() {
               )}
             </Button>
             <p className="text-center text-xs text-muted-foreground">
-              Accepting moves your login into{' '}
-              <span className="text-muted-foreground">{peek.account_name}</span>. Your
-              empty personal account from signup will be cleaned up.
+              You&apos;ll be added to{' '}
+              <span className="text-muted-foreground">{peek.account_name}</span> and can
+              switch between it and your other workspaces at any time.
             </p>
           </CardContent>
         </Card>
 
-        {/* Conflict modal — opens when the redeem endpoint returns 409
-            (caller already in a shared account or has domain data).
-            Blocks the flow until the user picks a recovery action so
-            they aren't stuck retrying an inevitable failure. */}
-        <Dialog
-          open={conflictMessage !== null}
-          onOpenChange={(open) => {
-            if (!open) setConflictMessage(null);
-          }}
-        >
-          <DialogContent className="bg-popover border-border sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-popover-foreground">
-                <AlertTriangle className="size-4 text-accent-amber" />
-                Can&apos;t join {peek.account_name} with this account
-              </DialogTitle>
-              <DialogDescription className="text-muted-foreground">
-                {conflictMessage}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-2 py-2 text-xs text-muted-foreground">
-              <p>
-                To join{' '}
-                <span className="text-popover-foreground">{peek.account_name}</span>,
-                sign out and sign up again with a different email address.
-                The invite link stays valid as long as it hasn&apos;t
-                expired.
-              </p>
-            </div>
-            <DialogFooter className="bg-popover border-border">
-              <Button
-                variant="outline"
-                onClick={() => setConflictMessage(null)}
-                className="border-border text-popover-foreground hover:bg-muted"
-              >
-                Stay signed in
-              </Button>
-              <Button
-                onClick={handleSignOutAndRetry}
-                disabled={signingOut}
-                className="bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                {signingOut ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Signing out…
-                  </>
-                ) : (
-                  'Sign out & use a different email'
-                )}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </>
     );
   }

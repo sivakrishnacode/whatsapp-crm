@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { tint } from '@/lib/tint';
 import { ContactSegment, CustomField, Tag } from '@/types';
 import {
@@ -99,6 +100,7 @@ export function Step2SelectAudience({
   onNext,
   onBack,
 }: Step2Props) {
+  const { accountId } = useAuth();
   const [tags, setTags] = useState<Tag[]>([]);
   const [segments, setSegments] = useState<ContactSegment[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
@@ -110,35 +112,45 @@ export function Step2SelectAudience({
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
   useEffect(() => {
+    if (!accountId) return;
     async function fetchTags() {
       setLoadingTags(true);
       try {
         const supabase = createClient();
-        const { data } = await supabase.from('tags').select('*').order('name');
+        // ⚠️ Scoped to the ACTIVE workspace. This is the highest-stakes list in
+        // the product: it picks who a broadcast goes to, and an unscoped one
+        // (RLS spans every workspace since migration 095) would offer another
+        // client's tag and send their customers this client's campaign.
+        const { data } = await supabase
+          .from('tags')
+          .select('*')
+          .eq('account_id', accountId)
+          .order('name');
         setTags(data ?? []);
       } finally {
         setLoadingTags(false);
       }
     }
     fetchTags();
-  }, []);
+  }, [accountId]);
 
   // Segments, like tags, serve both the primary picker and the exclude
   // list, so they load once on mount rather than per audience type.
   useEffect(() => {
     async function fetchSegments() {
+      if (!accountId) return;
       try {
-        setSegments(await listSegmentsLight(createClient()));
+        setSegments(await listSegmentsLight(createClient(), accountId));
       } catch {
         // Non-fatal — the other audience types still work.
       }
     }
     fetchSegments();
-  }, []);
+  }, [accountId]);
 
   // Lazy-load custom fields only when that audience type is active.
   useEffect(() => {
-    if (audience.type !== 'custom_field') return;
+    if (audience.type !== 'custom_field' || !accountId) return;
     async function fetchFields() {
       setLoadingFields(true);
       try {
@@ -146,6 +158,7 @@ export function Step2SelectAudience({
         const { data } = await supabase
           .from('custom_fields')
           .select('*')
+          .eq('account_id', accountId)
           .order('field_name');
         setCustomFields(data ?? []);
       } finally {
@@ -153,9 +166,10 @@ export function Step2SelectAudience({
       }
     }
     fetchFields();
-  }, [audience.type]);
+  }, [audience.type, accountId]);
 
   const fetchEstimatedCount = useCallback(async () => {
+    if (!accountId) return;
     setLoadingCount(true);
     try {
       const supabase = createClient();
@@ -246,6 +260,10 @@ export function Step2SelectAudience({
         const { count } = await supabase
           .from('contacts')
           .select('*', { count: 'exact', head: true })
+          // ⚠️ "All contacts" means all of THIS workspace's. Unscoped, the
+          // estimate would total every workspace the user belongs to and
+          // promise a reach several clients wide.
+          .eq('account_id', accountId)
           // Instagram-only contacts have no phone and are dropped from
           // the real audience server-side (dashboard-broadcast.service).
           // Counting them here would promise a reach the send can't meet.
@@ -257,6 +275,7 @@ export function Step2SelectAudience({
       setLoadingCount(false);
     }
   }, [
+    accountId,
     audience.type,
     audience.tagIds,
     audience.segmentIds,

@@ -32,6 +32,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
 import {
   FIELD_FORMAT_OPTIONS,
@@ -62,18 +63,25 @@ export default function FormFieldInspector({
   onChange: (patch: Partial<FormBuilderField>) => void;
 }) {
   const def = fieldTypeDef(field.type);
+  const { accountId } = useAuth();
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
 
   // Contact mapping offers custom fields by name, so the list has to be
-  // real. Read straight from Supabase like the rest of the contacts UI —
-  // RLS scopes it to the workspace.
+  // real. Read straight from Supabase like the rest of the contacts UI.
+  //
+  // ⚠️ Scoped explicitly. The comment here used to say "RLS scopes it to the
+  // workspace", which was true until migration 095 and is now off by however
+  // many workspaces the author belongs to — a mapping dropdown listing another
+  // client's custom fields, which the form would then fail to write to.
   useEffect(() => {
+    if (!accountId) return;
     let cancelled = false;
     const load = async () => {
       const supabase = createClient();
       const { data } = await supabase
         .from('custom_fields')
         .select('id, field_name')
+        .eq('account_id', accountId)
         .order('field_name');
       if (!cancelled && data) setCustomFields(data as CustomField[]);
     };
@@ -81,7 +89,7 @@ export default function FormFieldInspector({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
 
   if (!def) return null;
 

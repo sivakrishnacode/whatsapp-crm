@@ -1,4 +1,5 @@
 import { PrismaService } from '../../../prisma/prisma.service';
+import { memberProfile } from '../../../account/member-lookup.util';
 import type { AgentSkills, ToolDefinition } from '../types';
 import { skillText } from '../skills';
 import { GOOGLE_TOOLS } from './google';
@@ -643,10 +644,11 @@ const createDeal: BuiltinTool = {
        * Left NULL when the owner somehow has no profile row: an
        * unassigned deal is worth far more than no deal.
        */
-      const ownerProfile = await ctx.prisma.profile.findFirst({
-        where: { userId: owner.ownerUserId, accountId: ctx.accountId },
-        select: { id: true },
-      });
+      const ownerProfile = await memberProfile(
+        ctx.prisma,
+        ctx.accountId,
+        owner.ownerUserId,
+      );
 
       const currency = ctx.currency?.toUpperCase() || 'USD';
       const dealValue = Number.isFinite(value) ? value : 0;
@@ -764,11 +766,21 @@ const assignDeal: BuiltinTool = {
         };
       }
 
-      // Exact email first, then a case-insensitive name match. Both
-      // pinned to this account.
+      // Exact email first, then a case-insensitive name match. Both pinned to
+      // this account — via `account_members` since migration 095, because a
+      // profile no longer names a workspace. Two steps rather than a relation
+      // filter, so the account scope is a visible `in` list rather than an
+      // implicit join anyone could later drop.
+      const memberIds = (
+        await ctx.prisma.account_members.findMany({
+          where: { account_id: ctx.accountId },
+          select: { user_id: true },
+        })
+      ).map((m) => m.user_id);
+
       const candidates = await ctx.prisma.profile.findMany({
         where: {
-          accountId: ctx.accountId,
+          userId: { in: memberIds },
           OR: [
             { email: { equals: assignee, mode: 'insensitive' } },
             { fullName: { contains: assignee, mode: 'insensitive' } },

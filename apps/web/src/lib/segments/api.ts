@@ -48,10 +48,12 @@ export async function listSegments(
  */
 export async function listSegmentsLight(
   supabase: SupabaseClient,
+  accountId: string,
 ): Promise<ContactSegment[]> {
   const { data, error } = await supabase
     .from('contact_segments')
     .select('*')
+    .eq('account_id', accountId)
     .order('name');
   if (error) throw error;
   return (data ?? []) as ContactSegment[];

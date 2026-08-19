@@ -86,7 +86,13 @@ export const SUBSCRIBER_FROM = Prisma.sql`
   join auth.users u on u.id = s.user_id
   join subscription_plans pl on pl.id = s.plan_id
   left join profiles p on p.user_id = s.user_id
-  left join accounts a on a.id = p.account_id`;
+  -- ⚠️ The workspace a subscription pays for is the one this user OWNS.
+  -- It used to be joined through profiles.account_id, which migration 096
+  -- dropped — and which had already stopped meaning "the workspace being
+  -- billed" at 095, since a user can now be a member of several while
+  -- user_subscriptions is still written for accounts.owner_user_id.
+  -- Phase 2 replaces this with user_subscriptions.account_id.
+  left join accounts a on a.owner_user_id = s.user_id`;
 
 export const SUBSCRIBER_COLUMNS = Prisma.sql`
   s.user_id as "userId",
@@ -94,7 +100,12 @@ export const SUBSCRIBER_COLUMNS = Prisma.sql`
   u.created_at as "userCreatedAt",
   u.last_sign_in_at as "lastSignInAt",
   p.full_name as "fullName",
-  p.account_role as "accountRole",
+  -- The role held in the workspace this subscription pays for. NULL when the
+  -- payer is not a member of it (possible after an ownership transfer).
+  (
+    select m.role from account_members m
+     where m.account_id = a.id and m.user_id = s.user_id
+  ) as "accountRole",
   a.id as "accountId",
   a.name as "accountName",
   pl.id as "planId",

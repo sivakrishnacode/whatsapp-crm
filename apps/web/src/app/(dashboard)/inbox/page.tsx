@@ -26,6 +26,10 @@ const CONTACT_PANEL_STORAGE_KEY = "converse360:inbox:contact-panel-open";
 
 export default function InboxPage() {
   const router = useRouter();
+  // Destructured here rather than beside the presence hook below: the
+  // WhatsApp-status effect's dependency array is evaluated during render, and
+  // a `const` declared further down would be in the temporal dead zone.
+  const { user, profile, accountId } = useAuth();
   const searchParams = useSearchParams();
   /**
    * `?c=<id>` deep-link support. Used when landing here from the
@@ -163,34 +167,18 @@ export default function InboxPage() {
     }
   }, []);
 
-  // Check WhatsApp connection status on mount
+  // Check WhatsApp connection status for the active workspace.
+  //
+  // whatsapp_config is one-row-per-account, so this was never a per-user
+  // question — the original `.eq('user_id', user.id)` hid the row from any
+  // teammate who had not personally saved it. It then resolved the account
+  // from `profiles.account_id`, which migration 096 removed; the workspace now
+  // comes from the one resolver, and re-runs when it changes so switching to a
+  // client without WhatsApp shows the banner immediately.
   useEffect(() => {
+    if (!accountId) return;
     const checkConnection = async () => {
       const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
-
-      if (!user) return;
-
-      // whatsapp_config is one-row-per-account post-multi-user, so
-      // the previous `.eq('user_id', user.id)` would miss the row
-      // for any teammate who didn't personally save the config —
-      // the "WhatsApp not connected" banner would show in the
-      // shared inbox even though the admin had it configured.
-      // Resolve account_id via the profile and query by that.
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("account_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const accountId = profile?.account_id as string | undefined;
-      if (!accountId) {
-        setWhatsappConnected(false);
-        return;
-      }
-
       const { data } = await supabase
         .from("whatsapp_config")
         .select("status")
@@ -201,7 +189,7 @@ export default function InboxPage() {
     };
 
     checkConnection();
-  }, []);
+  }, [accountId]);
 
   // Handle realtime message events
   const handleMessageEvent = useCallback(
@@ -692,7 +680,6 @@ export default function InboxPage() {
    * invisibly. Presence is ephemeral (Realtime, not a table) and the
    * channel is private per account — see migration 079.
    */
-  const { user, profile, accountId } = useAuth();
   const [composing, setComposing] = useState(false);
   const { others } = useInboxPresence({
     accountId,

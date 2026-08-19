@@ -37,6 +37,9 @@ export interface OnboardingPlan {
 export interface OnboardingState {
   step: OnboardingStep;
   workspace: {
+    /** The workspace being onboarded. Sent because /welcome renders outside
+     *  `AuthProvider`, so `useAuth().accountId` is not available there. */
+    accountId: string;
     name: string;
     /** Public URL in the `workspace-logos` bucket, or null for none. */
     logoUrl: string | null;

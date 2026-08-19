@@ -92,27 +92,31 @@ export default function DashboardPage() {
 
   const loadAll = useCallback(() => {
     const db = createClient()
+    // Every loader is scoped to the ACTIVE workspace, passed in rather than
+    // resolved inside — see lib/workspace/scope.ts. A null id means the
+    // workspace is not known yet and each loader returns its empty shape, so
+    // the skeletons stay up rather than flashing zeroes.
 
     // Kick everything off in parallel. Each block has its own
     // setState + finally so a slow query doesn't hold up faster
     // sections — each widget shows its own skeleton independently.
-    void loadMetrics(db, customStartDate || undefined, customEndDate || undefined)
+    void loadMetrics(db, accountId, customStartDate || undefined, customEndDate || undefined)
       .then((m) => setMetrics(m))
       .catch((err) => console.error('[dashboard] metrics failed:', err))
       .finally(() => setMetricsLoading(false))
 
     const rangeDays = range === 'custom' ? 30 : range
-    void loadConversationsSeries(db, rangeDays, customStartDate || undefined, customEndDate || undefined)
+    void loadConversationsSeries(db, accountId, rangeDays, customStartDate || undefined, customEndDate || undefined)
       .then((s) => setSeries((prev) => ({ ...prev, [range]: s })))
       .catch((err) => console.error('[dashboard] series failed:', err))
       .finally(() => setSeriesLoading(false))
 
-    void loadPipelineDonut(db)
+    void loadPipelineDonut(db, accountId)
       .then((p) => setPipeline(p))
       .catch((err) => console.error('[dashboard] pipeline failed:', err))
       .finally(() => setPipelineLoading(false))
 
-    void loadResponseTime(db)
+    void loadResponseTime(db, accountId)
       .then((r) => setResponseTime(r))
       .catch((err) => console.error('[dashboard] response time failed:', err))
       .finally(() => setResponseTimeLoading(false))
@@ -120,11 +124,11 @@ export default function DashboardPage() {
     // Fetch up to 50 so the biggest page-size option in the feed
     // (50 rows) is already in memory — switching sizes then becomes
     // a pure client-side slice with no extra round trip.
-    void loadActivity(db, 50)
+    void loadActivity(db, accountId, 50)
       .then((a) => setActivity(a))
       .catch((err) => console.error('[dashboard] activity failed:', err))
       .finally(() => setActivityLoading(false))
-  }, [range, customStartDate, customEndDate])
+  }, [accountId, range, customStartDate, customEndDate])
 
   useEffect(() => {
     loadAll()
@@ -144,12 +148,12 @@ export default function DashboardPage() {
       if (series[r] !== null) return
       setSeriesLoading(true)
       const db = createClient()
-      loadConversationsSeries(db, r as number)
+      loadConversationsSeries(db, accountId, r as number)
         .then((s) => setSeries((prev) => ({ ...prev, [r]: s })))
         .catch((err) => console.error('[dashboard] series failed:', err))
         .finally(() => setSeriesLoading(false))
     },
-    [series],
+    [series, accountId],
   )
 
   const handleCustomRangeApply = useCallback(() => {
@@ -167,10 +171,17 @@ export default function DashboardPage() {
       toast.error('Please select a date range first')
       return
     }
+    // Refuse rather than export unscoped. `exportAnalyticsData` takes a
+    // non-nullable accountId on purpose — a CSV built without one would contain
+    // every workspace this user belongs to.
+    if (!accountId) {
+      toast.error('No workspace selected')
+      return
+    }
     setExporting(true)
     try {
       const db = createClient()
-      const blob = await exportAnalyticsData(db, customStartDate, customEndDate, exportType)
+      const blob = await exportAnalyticsData(db, accountId, customStartDate, customEndDate, exportType)
       const filename = `${exportType}-export-${customStartDate}-${customEndDate}.csv`
       downloadCSV(blob, filename)
       toast.success('Export completed successfully')
@@ -180,7 +191,7 @@ export default function DashboardPage() {
     } finally {
       setExporting(false)
     }
-  }, [customStartDate, customEndDate, exportType])
+  }, [accountId, customStartDate, customEndDate, exportType])
 
   /**
    * The page's range in the shape the analytics RPCs take.
@@ -195,7 +206,7 @@ export default function DashboardPage() {
     const parsed =
       customStartDate && customEndDate ? customRange(customStartDate, customEndDate) : null
     return parsed ?? presetRange(30)
-  }, [range, customStartDate, customEndDate])
+  }, [accountId, range, customStartDate, customEndDate])
 
   return (
     <div className="space-y-5">

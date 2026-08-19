@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 
 import { AdjustCredits } from '@/components/credits/adjust-credits';
 import { InviteActions } from '@/components/workspace/invite-actions';
+import { AddMember } from '@/components/workspace/add-member';
 import { MemberActions } from '@/components/workspace/member-actions';
 import { WorkspaceForm } from '@/components/workspace/workspace-form';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -222,6 +223,17 @@ export default async function WorkspaceDetailPage({
                         {member.bannedUntil && member.bannedUntil > new Date()
                           ? ` · banned until ${formatDate(member.bannedUntil)}`
                           : ''}
+                        {/* Removing somebody whose only workspace this is
+                            leaves them in none — a real state the CRM shows
+                            them honestly, but the operator should know before
+                            pressing Remove, not after. */}
+                        {member.otherWorkspaces > 0
+                          ? ` · also in ${member.otherWorkspaces} other workspace${
+                              member.otherWorkspaces === 1 ? '' : 's'
+                            }`
+                          : member.isAccountOwner
+                            ? ''
+                            : ' · only workspace'}
                       </p>
                     </div>
                   </div>
@@ -236,6 +248,13 @@ export default async function WorkspaceDetailPage({
                 </li>
               ))}
             </ul>
+
+            <div className="border-line border-t px-5 py-4">
+              <p className="text-ink-2 mb-2 text-xs font-semibold">
+                Add an existing login
+              </p>
+              <AddMember accountId={accountId} />
+            </div>
 
             {invites.length > 0 ? (
               <div className="border-line border-t">

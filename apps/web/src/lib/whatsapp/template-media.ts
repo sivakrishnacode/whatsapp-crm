@@ -146,6 +146,7 @@ export interface UploadedTemplateMedia {
  * caller never has to reason about half-written state.
  */
 export async function uploadPendingTemplateMedia(
+  accountId: string,
   form: TemplateFormData,
 ): Promise<UploadedTemplateMedia> {
   const pending = collectPendingUploads(form);
@@ -159,6 +160,7 @@ export async function uploadPendingTemplateMedia(
     for (const item of pending) {
       const { publicUrl, path } = await uploadAccountMedia(
         TEMPLATE_MEDIA_BUCKET,
+        accountId,
         item.file,
       );
       paths.push(path);

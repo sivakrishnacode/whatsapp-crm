@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Settings as SettingsIcon } from "lucide-react";
 
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { NoWorkspace } from "@/components/workspace/no-workspace";
 import { useOnboardingGate } from "@/hooks/use-onboarding-gate";
 import { useNavPrefs } from "@/hooks/use-nav-prefs";
 import { ChannelStatusProvider } from "@/hooks/use-channel-status";
@@ -43,7 +44,7 @@ import { resolveNavContext } from "@/lib/nav/nav-config";
  * shell afterwards is an ordinary client state update, not hydration.
  */
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, workspaces, workspacesLoading } = useAuth();
   const router = useRouter();
 
   // Only ask once there is a session to ask about; the endpoint is
@@ -71,8 +72,14 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   // The onboarding check is folded into the same spinner as the session
   // so a gated user never sees a flash of the dashboard chrome before
-  // being redirected.
-  if (loading || (user && onboarding.status === "checking")) {
+  // being redirected. The workspace list joins it for the same reason:
+  // rendering the shell before it settles means every account-scoped query
+  // inside fires with a null id.
+  if (
+    loading ||
+    (user && workspacesLoading) ||
+    (user && onboarding.status === "checking")
+  ) {
     return (
       <div className="flex h-dvh items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
@@ -84,6 +91,13 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   }
 
   if (!user || onboarding.status === "required") return null;
+
+  // ⚠️ Before the onboarding gate, not after. A user in no workspace has
+  // nothing for `/api/onboarding` to describe, so the gate would be reasoning
+  // about an account that does not exist — and its fail-open default would let
+  // them through to a dashboard where every query returns nothing. This is a
+  // real state (see NoWorkspace), not a loading one, so it gets a real screen.
+  if (workspaces.length === 0) return <NoWorkspace />;
 
   // The gate's own fetch is the banner's source of truth — see
   // BillingStandingProvider on why this is not a second request.

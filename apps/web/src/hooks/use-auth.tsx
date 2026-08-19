@@ -23,6 +23,12 @@ import {
 } from "@/lib/auth/roles";
 import type { UserSubscription } from "@/lib/subscription/plans";
 
+/**
+ * The PERSON. One name, one avatar, one email, however many workspaces —
+ * migration 095 moved `account_id` / `account_role` off this row into
+ * `account_members`, because a role is a property of a membership and the same
+ * user is an owner in their own workspace and a viewer in a client's.
+ */
 interface Profile {
   id: string;
   full_name: string | null;
@@ -35,11 +41,13 @@ interface Profile {
    * #134 — but the column survives for future beta gates.
    */
   beta_features: string[];
-  account_id: string | null;
-  account_role: AccountRole | null;
 }
 
-interface AccountSummary {
+/**
+ * One workspace this user belongs to, as `GET /api/account/workspaces` returns
+ * it. Shape matches `list_my_workspaces()` (migration 095).
+ */
+export interface Workspace {
   id: string;
   name: string;
   /** Workspace logo (migration 071). null = none; render the initial
@@ -47,10 +55,42 @@ interface AccountSummary {
   logo_url: string | null;
   /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'USD' in the
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
-  default_currency: string;
+  default_currency: string | null;
   /** Country assumed for phone numbers entered without a country code
    *  (ISO 3166-1 alpha-2). NOT NULL DEFAULT 'IN' in the DB (migration
    *  059); narrowed to DEFAULT_COUNTRY when absent. */
+  default_country: string | null;
+  /**
+   * The role held IN THIS WORKSPACE — not "this user's role".
+   *
+   * Narrowed from the wire in `fetchWorkspaces`, and nullable because of it: a
+   * future migration that broadens `account_role_enum` without updating this
+   * union must leave the caller least-privileged rather than crash the app or,
+   * worse, fall through a `=== 'viewer'` check into something permissive.
+   */
+  role: AccountRole | null;
+  is_owner: boolean;
+  member_count: number;
+  plan_name: string | null;
+  subscription_status: string | null;
+  /**
+   * `good` | `grace` | `lapsed` from `get_account_entitlement`.
+   *
+   * ⚠️ `grace` is dunning and still ENTITLED — writes work, and the product is
+   * not taken away. Painting it like `lapsed` would tell a paying customer
+   * whose card bounced once that their workspace is dead.
+   */
+  standing: "good" | "grace" | "lapsed" | null;
+  trial_end_at: string | null;
+  current_period_end: string | null;
+  onboarding_done: boolean;
+}
+
+interface AccountSummary {
+  id: string;
+  name: string;
+  logo_url: string | null;
+  default_currency: string;
   default_country: string;
 }
 
@@ -79,17 +119,38 @@ interface AuthContextValue {
   refreshProfile: () => Promise<void>;
 
   // ----------------------------------------------------------
-  // Account-scoped context (added by the account-sharing series)
+  // Workspace context
   //
-  // All of these are nullable until `profileLoading` is false.
-  // After the profile resolves they're guaranteed to be set,
-  // because migration 017 made `account_id` / `account_role`
-  // NOT NULL on `profiles`.
+  // ⚠️ All of these are nullable until `workspacesLoading` is false —
+  // NOT `profileLoading`. They used to come off the profile row, so
+  // gating on the profile was the same thing; since migration 095 they
+  // come from `GET /api/account/workspaces` and settle separately.
+  // Gating account-scoped work on `profileLoading` now reads
+  // `accountId === null` as "no workspace" instead of "not yet known".
+  //
+  // And nullable is a REAL state, not just a loading one: a user removed
+  // from the only workspace they were in belongs to none. `workspaces`
+  // is empty and `accountId` stays null — which is what the dashboard
+  // shell renders "you're not in any workspace" from.
   // ----------------------------------------------------------
 
-  /** Account id the current user belongs to. Null while loading. */
+  /** Every workspace the user is a member of, owned ones first. */
+  workspaces: Workspace[];
+  /** The workspace this session is acting in, or null. */
+  activeWorkspace: Workspace | null;
+  /** Loading state for the workspace list. Gate account-scoped reads on this. */
+  workspacesLoading: boolean;
+  /**
+   * Switch workspace, then hard-reload.
+   *
+   * ⚠️ Reloads on purpose — realtime channels and caches are account-keyed,
+   * and a soft switch would leave the previous workspace's subscriptions live.
+   */
+  switchWorkspace: (accountId: string) => Promise<void>;
+
+  /** Active workspace's id. Null while loading, or if the user is in none. */
   accountId: string | null;
-  /** Role within that account. Null while loading. */
+  /** Role held IN THE ACTIVE WORKSPACE — not "this user's role". */
   accountRole: AccountRole | null;
   /** Lightweight account meta — id + name + default_currency. Null while loading. */
   account: AccountSummary | null;
@@ -138,7 +199,9 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [account, setAccount] = useState<AccountSummary | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+  const [workspacesLoading, setWorkspacesLoading] = useState(true);
   const [subscription, setSubscription] = useState<UserSubscription | null>(null);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `loading`. The session settles fast (one
@@ -156,6 +219,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Shared across init, auth-state-change listener, and the exposed
   // refreshProfile() callback. Reads the current session's user id and
   // pulls the matching profile row along with its account summary.
+  /**
+   * Which workspaces am I in, and which one am I looking at?
+   *
+   * ⚠️ THE API IS THE ONLY RESOLVER, and that is deliberate. Before migration
+   * 095 "my account" was a column on my one profile row, so five different
+   * modules each resolved it with their own `profiles.account_id` query and all
+   * five necessarily agreed. Now the answer is a fallback chain (cookie →
+   * last_account_id → owned → oldest, in apps/api's active-workspace.ts), and a
+   * second implementation of that chain in the browser would disagree with the
+   * server on exactly the cases the chain exists for — a fresh device, a stale
+   * cookie — leaving the page querying workspace A while every API call served
+   * workspace B. So we ask, and `activeAccountId` from that answer is what the
+   * whole app scopes itself by.
+   */
+  const fetchWorkspaces = useCallback(async () => {
+    setWorkspacesLoading(true);
+    try {
+      const res = await fetch("/api/account/workspaces", {
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        // 401 is the ordinary signed-out case. Anything else and we leave the
+        // previous list standing rather than blanking workspace context —
+        // losing it mid-session logs the user out of every scoped query at
+        // once, which is far worse than showing a slightly stale name.
+        if (res.status === 401) {
+          setWorkspaces([]);
+          setActiveAccountId(null);
+        }
+        return;
+      }
+
+      const body = (await res.json()) as {
+        activeAccountId: string | null;
+        workspaces: Array<Omit<Workspace, "role"> & { role: unknown }>;
+      };
+      setWorkspaces(
+        (body.workspaces ?? []).map((w) => ({
+          ...w,
+          role: isAccountRole(w.role) ? w.role : null,
+        })),
+      );
+      setActiveAccountId(body.activeAccountId ?? null);
+    } catch (err) {
+      console.error("[AuthProvider] fetchWorkspaces threw:", err);
+    } finally {
+      setWorkspacesLoading(false);
+    }
+  }, []);
+
+  // Shared across init, auth-state-change listener, and the exposed
+  // refreshProfile() callback. `profiles` is now just the PERSON — name,
+  // avatar, beta flags — so there is no account lookup here any more.
   const fetchProfile = useCallback(async (userId: string) => {
     const supabase = createClient();
     setProfileLoading(true);
@@ -163,9 +280,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select(
-          "id, full_name, email, avatar_url, role, beta_features, account_id, account_role",
-        )
+        .select("id, full_name, email, avatar_url, role, beta_features")
         .eq("user_id", userId)
         .maybeSingle();
 
@@ -181,53 +296,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (data) {
-        // Load the account with a plain lookup by id instead of an
-        // embedded FK join. The embed (`account:accounts!inner(...)`)
-        // forces PostgREST to resolve the profiles.account_id →
-        // accounts.id relationship from its schema cache; a stale cache
-        // (common right after a migration adds the FK) makes it fail
-        // hard with PGRST200 and blanks the whole profile — the user
-        // then loses account context everywhere (issue #294). A point
-        // lookup by id needs no relationship inference, so the profile
-        // (with account_id / account_role) still resolves even if the
-        // account name lookup itself can't.
-        let accountRow: AccountSummary | null = null;
-        if (data.account_id) {
-          const { data: account, error: accountErr } = await supabase
-            .from("accounts")
-            // default_currency added in migration 021, default_country
-            // in 059, logo_url in 071; all narrowed to their fallbacks
-            // below for older schemas where they read null.
-            .select("id, name, logo_url, default_currency, default_country")
-            .eq("id", data.account_id)
-            .maybeSingle();
-          if (accountErr) {
-            console.error("[AuthProvider] fetchAccount error:", {
-              message: accountErr.message,
-              details: accountErr.details,
-              hint: accountErr.hint,
-              code: accountErr.code,
-            });
-          } else if (account) {
-            accountRow = {
-              id: account.id,
-              name: account.name,
-              logo_url: account.logo_url ?? null,
-              default_currency: account.default_currency ?? DEFAULT_CURRENCY,
-              default_country: account.default_country ?? DEFAULT_COUNTRY,
-            };
-          }
-        }
-
-        // Narrow the DB enum into our AccountRole union. The DB
-        // constraint should make this unconditional, but a future
-        // migration that broadens the enum without updating TS would
-        // otherwise crash here — fall back to null and let UI gates
-        // treat the caller as least-privileged.
-        const accountRole = isAccountRole(data.account_role)
-          ? data.account_role
-          : null;
-
         setProfile({
           id: data.id,
           full_name: data.full_name,
@@ -239,10 +307,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // (older deployments running 011 lazily) — `null` reads as no
           // opt-ins, which is the safe default for any future beta gate.
           beta_features: data.beta_features ?? [],
-          account_id: data.account_id ?? null,
-          account_role: accountRole,
         });
-        setAccount(accountRow);
       } else {
         lastFetchedUserIdRef.current = null;
       }
@@ -252,6 +317,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setProfileLoading(false);
     }
+  }, []);
+
+  /**
+   * Switch workspace.
+   *
+   * ⚠️ A FULL PAGE LOAD, not a router.push. Every realtime channel, SWR cache
+   * and Supabase subscription in the dashboard is keyed by account id, and a
+   * soft navigation leaves the previous workspace's channels subscribed — one
+   * client's inbound messages would arrive in another client's inbox. There is
+   * no partial-teardown story worth trusting here; reloading is cheap and
+   * correct.
+   */
+  const switchWorkspace = useCallback(async (accountId: string) => {
+    const res = await fetch("/api/account/workspaces/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      throw new Error(body?.error ?? "Could not switch workspace");
+    }
+    window.location.assign("/dashboard");
   }, []);
 
   // Fetch user's subscription data
@@ -313,12 +403,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // profile enriches async. Callers that need to branch on
           // profile data gate on `profileLoading` instead.
           fetchProfile(currentUser.id);
+          fetchWorkspaces();
           fetchSubscription(currentUser.id);
         } else {
           // No user → no profile to load. Flip profileLoading off so
           // pages that gate on it don't wait forever on the logged-out
           // path (the route guard or redirect should fire instead).
           setProfileLoading(false);
+          setWorkspacesLoading(false);
           setSubscriptionLoading(false);
         }
       } catch (err) {
@@ -341,14 +433,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (currentUser) {
         if (currentUser.id !== lastFetchedUserIdRef.current) {
           fetchProfile(currentUser.id);
+          fetchWorkspaces();
           fetchSubscription(currentUser.id);
         }
       } else {
         lastFetchedUserIdRef.current = null;
         setProfile(null);
-        setAccount(null);
+        setWorkspaces([]);
+        setActiveAccountId(null);
         setSubscription(null);
         setProfileLoading(false);
+        setWorkspacesLoading(false);
         setSubscriptionLoading(false);
       }
 
@@ -360,32 +455,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
-  }, [fetchProfile, fetchSubscription]);
+  }, [fetchProfile, fetchWorkspaces, fetchSubscription]);
 
   const signOut = useCallback(async () => {
     const supabase = createClient();
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
-    setAccount(null);
+    setWorkspaces([]);
+    setActiveAccountId(null);
     setSubscription(null);
     window.location.href = "/login";
   }, []);
 
   const refreshProfile = useCallback(async () => {
     if (!user?.id) return;
-    await fetchProfile(user.id);
-  }, [user?.id, fetchProfile]);
+    // Workspaces too: renaming the workspace or changing its logo used to land
+    // on the `accounts` row this hook fetched itself, and now arrives through
+    // `GET /account/workspaces`. Without this, saving a new name in Settings
+    // leaves the old one in the header until a reload.
+    await Promise.all([fetchProfile(user.id), fetchWorkspaces()]);
+  }, [user?.id, fetchProfile, fetchWorkspaces]);
 
-  // Derive the role booleans once per profile change rather than on
+  /**
+   * The workspace this session is acting in. Everything account-scoped derives
+   * from here.
+   *
+   * ⚠️ `accountId` and `accountRole` keep their names and meanings on purpose —
+   * dozens of components read them — but their SOURCE changed: they were the
+   * caller's one profile row, and they are now the active membership. So
+   * `accountRole` is the role held HERE. A component that caches it across a
+   * switch would apply one workspace's permissions to another's data, which is
+   * the other half of why switching does a full page load.
+   */
+  const activeWorkspace = useMemo(
+    () => workspaces.find((w) => w.id === activeAccountId) ?? null,
+    [workspaces, activeAccountId],
+  );
+
+  const account = useMemo<AccountSummary | null>(
+    () =>
+      activeWorkspace
+        ? {
+            id: activeWorkspace.id,
+            name: activeWorkspace.name,
+            logo_url: activeWorkspace.logo_url ?? null,
+            default_currency:
+              activeWorkspace.default_currency ?? DEFAULT_CURRENCY,
+            default_country:
+              activeWorkspace.default_country ?? DEFAULT_COUNTRY,
+          }
+        : null,
+    [activeWorkspace],
+  );
+
+  // Derive the role booleans once per membership change rather than on
   // every consumer render. Cheap regardless, but the memo also gives
   // each derived value a stable identity for React.memo / useEffect
   // dependencies downstream.
   const derived = useMemo(() => {
-    const role = profile?.account_role ?? null;
+    const role = activeWorkspace?.role ?? null;
     return {
       accountRole: role,
-      accountId: profile?.account_id ?? null,
+      accountId: activeWorkspace?.id ?? null,
       isOwner: role === "owner",
       isAdmin: role === "admin",
       isAgent: role === "agent",
@@ -394,7 +526,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canEditSettings: role ? canEditSettingsFor(role) : false,
       canSendMessages: role ? canSendMessagesFor(role) : false,
     };
-  }, [profile?.account_role, profile?.account_id]);
+  }, [activeWorkspace]);
 
   return (
     <AuthContext.Provider
@@ -406,6 +538,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         refreshProfile,
         account,
+        workspaces,
+        activeWorkspace,
+        workspacesLoading,
+        switchWorkspace,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
         defaultCountry: account?.default_country ?? DEFAULT_COUNTRY,
         subscription,
@@ -439,6 +575,13 @@ export function useAuth(): AuthContextValue {
       },
       refreshProfile: async () => {},
       account: null,
+      workspaces: [],
+      activeWorkspace: null,
+      // `false`, not `true`: this fallback is a terminal state, not a load in
+      // progress. A component outside the provider that gated on `true` would
+      // spin for ever instead of rendering its empty case.
+      workspacesLoading: false,
+      switchWorkspace: async () => {},
       defaultCurrency: DEFAULT_CURRENCY,
       defaultCountry: DEFAULT_COUNTRY,
       subscription: null,

@@ -52,18 +52,12 @@ function rpcError(fn: string, error: unknown): Error {
   return new Error(e?.message ?? `${fn} failed`)
 }
 
-export async function resolveAccountId(db: DB): Promise<string | null> {
-  const {
-    data: { user },
-  } = await db.auth.getUser()
-  if (!user) return null
-  const { data } = await db
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', user.id)
-    .maybeSingle()
-  return (data as { account_id: string } | null)?.account_id ?? null
-}
+/**
+ * ⚠️ `resolveAccountId` REMOVED. It read `profiles.account_id`, which migration
+ * 096 dropped — and which had stopped being a single answer at 095 anyway. The
+ * active workspace is resolved once, server-side, and reaches this hook's
+ * caller as `useAuth().accountId`. See lib/workspace/scope.ts.
+ */
 
 // Postgres returns BIGINT as a string over PostgREST when it exceeds
 // the JS safe-integer range, and NUMERIC as a string always. Coerce

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 import { tint } from '@/lib/tint';
 import type { ContactSegment, SegmentMemberSource } from '@/types';
@@ -55,6 +56,7 @@ export function SegmentPicker({
   align = 'end',
 }: SegmentPickerProps) {
   const supabase = createClient();
+  const { accountId } = useAuth();
   const [open, setOpen] = useState(false);
   const [segments, setSegments] = useState<ContactSegment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,14 +64,15 @@ export function SegmentPicker({
   const memberSet = new Set(memberOf);
 
   const fetchSegments = useCallback(async () => {
+    if (!accountId) return;
     setLoading(true);
     try {
-      setSegments(await listSegmentsLight(supabase));
+      setSegments(await listSegmentsLight(supabase, accountId));
     } catch {
       toast.error('Failed to load segments');
     }
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, accountId]);
 
   // Fetched on open rather than on mount: this renders inside a table
   // row and an inbox sidebar that both remount constantly, and a list

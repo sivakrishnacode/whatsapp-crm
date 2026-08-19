@@ -22,6 +22,7 @@ import {
 } from 'react';
 
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import type { SampleData } from '@/lib/automations/tokens';
 import {
   googleConnectionFromSummary,
@@ -141,16 +142,26 @@ export function AutomationResourcesProvider({
   currentAutomationId?: string;
   children: ReactNode;
 }) {
+  const { accountId } = useAuth();
   const [state, setState] = useState<AutomationResources>(EMPTY);
   const [sample, setSample] = useState<SampleData | undefined>(undefined);
 
   useEffect(() => {
+    if (!accountId) return;
     let cancelled = false;
     const supabase = createClient();
 
-    // Straight from Postgres — RLS scopes every one of these to the
-    // caller's account. Only APPROVED templates can actually be sent
-    // (anything else 400s at send time), matching the broadcast picker.
+    // ⚠️ Straight from Postgres, and every one of these is scoped to the
+    // ACTIVE workspace explicitly. The comment here used to say "RLS scopes
+    // every one of these to the caller's account", which stopped being true at
+    // migration 095 — RLS now spans every workspace the caller belongs to.
+    // These lists populate an automation's step config, so an unscoped one
+    // would let someone build an automation that tags a contact with another
+    // client's tag id, and it would save, activate, and fail silently at run
+    // time (an unknown token resolves to empty, by design).
+    //
+    // Only APPROVED templates can actually be sent (anything else 400s at send
+    // time), matching the broadcast picker.
     void (async () => {
       const [
         tagsRes,
@@ -161,15 +172,30 @@ export function AutomationResourcesProvider({
         stagesRes,
         formsRes,
       ] = await Promise.all([
-        supabase.from('tags').select('*').order('name'),
-        supabase.from('contact_segments').select('*').order('name'),
+        supabase.from('tags').select('*').eq('account_id', accountId).order('name'),
+        supabase
+          .from('contact_segments')
+          .select('*')
+          .eq('account_id', accountId)
+          .order('name'),
         supabase
           .from('message_templates')
           .select('*')
+          .eq('account_id', accountId)
           .eq('status', 'APPROVED')
           .order('name'),
-        supabase.from('custom_fields').select('*').order('field_name'),
-        supabase.from('pipelines').select('id, name').order('name'),
+        supabase
+          .from('custom_fields')
+          .select('*')
+          .eq('account_id', accountId)
+          .order('field_name'),
+        supabase
+          .from('pipelines')
+          .select('id, name')
+          .eq('account_id', accountId)
+          .order('name'),
+        // `pipeline_stages` carries no account_id — it hangs off a pipeline —
+        // so it is scoped through this workspace's pipelines below.
         supabase
           .from('pipeline_stages')
           .select('id, name, pipeline_id, position')
@@ -177,18 +203,23 @@ export function AutomationResourcesProvider({
         supabase
           .from('forms')
           .select('id, name, status')
+          .eq('account_id', accountId)
           .eq('status', 'published')
           .order('name'),
       ]);
       if (cancelled) return;
+      const pipelines = (pipelinesRes.data as NamedRow[] | null) ?? [];
+      const pipelineIds = new Set(pipelines.map((p) => p.id));
       setState((s) => ({
         ...s,
         tags: (tagsRes.data as TagRecord[] | null) ?? [],
         segments: (segmentsRes.data as ContactSegment[] | null) ?? [],
         templates: (templatesRes.data as MessageTemplate[] | null) ?? [],
         customFields: (customFieldsRes.data as CustomField[] | null) ?? [],
-        pipelines: (pipelinesRes.data as NamedRow[] | null) ?? [],
-        stages: (stagesRes.data as PipelineStageOption[] | null) ?? [],
+        pipelines,
+        stages: ((stagesRes.data as PipelineStageOption[] | null) ?? []).filter(
+          (st) => pipelineIds.has(st.pipeline_id),
+        ),
         forms: (formsRes.data as NamedRow[] | null) ?? [],
       }));
     })();
@@ -200,6 +231,7 @@ export function AutomationResourcesProvider({
       const res = await supabase
         .from('appointment_types')
         .select('id, name')
+        .eq('account_id', accountId)
         .eq('is_active', true)
         .order('name');
       if (cancelled || res.error) return;
@@ -305,7 +337,7 @@ export function AutomationResourcesProvider({
     return () => {
       cancelled = true;
     };
-  }, [currentAutomationId]);
+  }, [currentAutomationId, accountId]);
 
   const value = useMemo(
     () => ({ ...state, currentAutomationId }),

@@ -25,6 +25,7 @@ import {
 import { useCan } from '@/hooks/use-can';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { formatCompact, type AdAudience } from '@/lib/ads/types';
 
 interface Tag {
@@ -56,6 +57,7 @@ const RATIOS = [
  *   actually sent.
  */
 export function AdsAudiences() {
+  const { accountId } = useAuth();
   const canEdit = useCan('edit-settings');
   const [audiences, setAudiences] = useState<AdAudience[] | null>(null);
   const [creating, setCreating] = useState(false);
@@ -88,18 +90,24 @@ export function AdsAudiences() {
   }, [load]);
 
   // Tags come straight from Supabase, matching how /contacts reads them —
-  // there is no tags endpoint on the Nest API, and RLS already scopes the
-  // query to this workspace.
+  // there is no tags endpoint on the Nest API.
+  //
+  // ⚠️ Scoped explicitly. "RLS already scopes the query to this workspace" was
+  // true until migration 095 and is now off by every other workspace the user
+  // belongs to — and these tags build a Meta custom audience, so the wrong one
+  // uploads another client's customers to this client's ad account.
   useEffect(() => {
+    if (!accountId) return;
     void (async () => {
       const supabase = createClient();
       const { data } = await supabase
         .from('tags')
         .select('id,name')
+        .eq('account_id', accountId)
         .order('name');
       setTags((data as Tag[] | null) ?? []);
     })();
-  }, []);
+  }, [accountId]);
 
   async function refresh(audienceId: string) {
     setRefreshing(audienceId);

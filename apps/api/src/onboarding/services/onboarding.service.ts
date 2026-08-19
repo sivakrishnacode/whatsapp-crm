@@ -75,6 +75,16 @@ export type OnboardingStep = 'workspace' | 'plan' | 'billing' | 'done';
 export interface OnboardingState {
   step: OnboardingStep;
   workspace: {
+    /**
+     * The workspace being onboarded.
+     *
+     * ⚠️ Sent because /welcome lives OUTSIDE `AuthProvider` (that is mounted
+     * by the dashboard shell), so the logo uploader there cannot read
+     * `useAuth().accountId` — and the storage path it builds is what the
+     * bucket's RLS policy matches on. Without it, that step went back to
+     * reading `profiles.account_id`, which migration 096 removed.
+     */
+    accountId: string;
     name: string;
     /** Public URL in the `workspace-logos` bucket, or null for none. */
     logoUrl: string | null;
@@ -168,6 +178,7 @@ export class OnboardingService {
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
       select: {
+        id: true,
         name: true,
         logoUrl: true,
         ownerUserId: true,
@@ -206,6 +217,7 @@ export class OnboardingService {
         trialAvailable,
       }),
       workspace: {
+        accountId: account.id,
         name: account.name,
         logoUrl: account.logoUrl,
         goals: onboarding?.goals ?? [],

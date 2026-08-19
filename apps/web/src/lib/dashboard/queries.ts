@@ -44,26 +44,29 @@ function logRpcError(fn: string, error: { message?: string; code?: string; detai
   )
 }
 
-// --- 0. Resolve account_id for the signed-in user ----------------
-// Called once per dashboard mount; result is passed into the RPCs.
-export async function resolveAccountId(db: DB): Promise<string | null> {
-  const { data: { user } } = await db.auth.getUser()
-  if (!user) return null
-  const { data } = await db
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', user.id)
-    .maybeSingle()
-  return (data as { account_id: string } | null)?.account_id ?? null
-}
+// --- 0. The account these queries run against --------------------
+//
+// ⚠️ PASSED IN, NOT RESOLVED HERE. This used to be
+// `profiles.account_id` for the signed-in user, which was the only
+// answer there could be. Since migration 095 a user can be in several
+// workspaces and the active one is decided by ONE resolver — apps/api's
+// active-workspace.ts, surfaced as `useAuth().accountId`. A second
+// resolver in this file would have to reimplement that fallback chain
+// (cookie → last_account_id → owned → oldest) and would disagree with
+// the server on exactly the cases the chain exists for, leaving these
+// charts describing one workspace while the page around them showed
+// another.
+//
+// Every loader below therefore takes `accountId` and every caller is a
+// React component that already has it. A null id means "not known yet",
+// and each loader returns its empty shape rather than querying.
 
 // --- 1. Metric cards (via RPC) ------------------------------------
 
-export async function loadMetrics(db: DB, startDate?: string, endDate?: string): Promise<MetricsBundle> {
+export async function loadMetrics(db: DB, accountId: string | null, startDate?: string, endDate?: string): Promise<MetricsBundle> {
   const sinceTs = startDate || startOfLocalDay().toISOString()
   const rangeEnd = endDate || new Date().toISOString()
 
-  const accountId = await resolveAccountId(db)
   if (!accountId) {
     return {
       activeConversations: { current: 0, previous: 0 },
@@ -128,15 +131,24 @@ export async function loadMetrics(db: DB, startDate?: string, endDate?: string):
 
 export async function loadConversationsSeries(
   db: DB,
+  accountId: string | null,
   rangeDays: number,
   startDate?: string,
   endDate?: string,
 ): Promise<ConversationsSeriesPoint[]> {
+  const keysEmpty = lastNDayKeys(rangeDays)
+  if (!accountId) {
+    return keysEmpty.map((day) => ({ day, incoming: 0, outgoing: 0 }))
+  }
   const start = startDate || daysAgoStart(rangeDays - 1).toISOString()
   const end = endDate || new Date().toISOString()
+  // ⚠️ `messages` carries its own account_id, and this query needs it: there
+  // is no conversation filter here to inherit scope from, so before migration
+  // 097 this counted every message in every workspace the caller belonged to.
   const { data, error } = await db
     .from('messages')
     .select('created_at, sender_type')
+    .eq('account_id', accountId)
     .gte('created_at', start)
     .lte('created_at', end)
     .order('created_at', { ascending: true })
@@ -159,11 +171,24 @@ export async function loadConversationsSeries(
 
 // --- 3. Pipeline donut -------------------------------------------
 
-export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
-  const [stagesRes, dealsRes] = await Promise.all([
-    db.from('pipeline_stages').select('id, name, color, pipeline_id, position').order('position'),
-    db.from('deals').select('stage_id, value, status').eq('status', 'open'),
+export async function loadPipelineDonut(
+  db: DB,
+  accountId: string | null,
+): Promise<PipelineDonutData> {
+  if (!accountId) return { stages: [], totalValue: 0 }
+  // `pipeline_stages` has no account_id of its own — it hangs off a pipeline —
+  // so it is scoped through the workspace's pipelines. `deals` does carry one.
+  const [pipelinesRes, dealsRes] = await Promise.all([
+    db.from('pipelines').select('id').eq('account_id', accountId),
+    db.from('deals').select('stage_id, value, status').eq('account_id', accountId).eq('status', 'open'),
   ])
+  const pipelineIds = ((pipelinesRes.data ?? []) as { id: string }[]).map((p) => p.id)
+  if (pipelineIds.length === 0) return { stages: [], totalValue: 0 }
+  const stagesRes = await db
+    .from('pipeline_stages')
+    .select('id, name, color, pipeline_id, position')
+    .in('pipeline_id', pipelineIds)
+    .order('position')
 
   const stages =
     (stagesRes.data ?? []) as { id: string; name: string; color: string }[]
@@ -195,8 +220,7 @@ export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
 
 // --- 4. Response time (via RPC) ----------------------------------
 
-export async function loadResponseTime(db: DB): Promise<ResponseTimeSummary> {
-  const accountId = await resolveAccountId(db)
+export async function loadResponseTime(db: DB, accountId: string | null): Promise<ResponseTimeSummary> {
 
   // Silence unused-import warning — kept because date-utils exports
   // it and other callers may still use it.
@@ -275,8 +299,7 @@ export async function loadResponseTime(db: DB): Promise<ResponseTimeSummary> {
 
 // --- 5. Activity feed (via RPC) ----------------------------------
 
-export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> {
-  const accountId = await resolveAccountId(db)
+export async function loadActivity(db: DB, accountId: string | null, limit = 20): Promise<ActivityItem[]> {
   if (!accountId) return []
 
   const { data, error } = await db.rpc('get_activity_feed', {

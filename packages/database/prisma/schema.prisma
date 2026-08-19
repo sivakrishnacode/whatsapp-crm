@@ -25,6 +25,7 @@ model Account {
   /// pins the value to this project's own Storage prefix.
   logoUrl                       String?                         @map("logo_url")
   account_invitations           account_invitations[]
+  account_members               account_members[]
   account_onboarding            account_onboarding?
   account_usage_monthly         account_usage_monthly[]
   users                         users                           @relation(fields: [ownerUserId], references: [id], onUpdate: NoAction)
@@ -73,7 +74,10 @@ model Account {
   notifications                 notifications[]
   pipelines                     pipelines[]
   plan_enquiries                plan_enquiries[]
-  profiles                      Profile[]
+  /// People whose switcher was last pointed here (profiles.last_account_id).
+  /// NOT the member list — that is `account_members`. A preference, and a
+  /// person keeps it after being removed until they next switch.
+  lastActiveProfiles            Profile[]                       @relation("profiles_last_account")
   tags                          tags[]
   web_config                    web_config?
   web_sessions                  web_sessions[]
@@ -86,24 +90,85 @@ model Account {
   @@schema("public")
 }
 
+/// ONE ROW PER PERSON — name, email, avatar, beta flags. Nothing here
+/// makes somebody a member of anything.
+///
+/// ⚠️ `account_id` / `account_role` USED TO LIVE HERE and were dropped by
+/// migration 096. That pair was migration 017's "locked design decision —
+/// single membership": one profile row meant one workspace, which is why an
+/// agency needed a separate login per client and why `redeem_invitation` had
+/// to MOVE your profile and delete your workspace to let you join someone
+/// else's. Membership and role are `account_members` now, many per user.
+///
+/// Do not reintroduce a workspace column here, however convenient. It would
+/// be a second answer to "which workspace is this person in" — stale in every
+/// multi-membership case, and right often enough to be believed.
 model Profile {
-  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId       String      @unique @map("user_id") @db.Uuid
-  fullName     String      @map("full_name")
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @unique @map("user_id") @db.Uuid
+  fullName     String    @map("full_name")
   email        String
-  avatarUrl    String?     @map("avatar_url")
-  role         String?     @default("user")
-  createdAt    DateTime?   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime?   @default(now()) @map("updated_at") @db.Timestamptz(6)
-  betaFeatures String[]    @default([]) @map("beta_features")
-  accountId    String      @map("account_id") @db.Uuid
-  accountRole  AccountRole @map("account_role")
+  avatarUrl    String?   @map("avatar_url")
+  role         String?   @default("user")
+  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime? @default(now()) @map("updated_at") @db.Timestamptz(6)
+  betaFeatures String[]  @default([]) @map("beta_features")
+  /// The workspace this person last had open — the switcher's cross-device
+  /// memory (migration 095). ⚠️ A HINT, NOT AUTHORITY: every reader
+  /// re-checks `account_members` before trusting it, and RLS never consults
+  /// it, so a forged value grants nothing. Nullable: a user removed from
+  /// their last workspace, or invited before ever choosing one, has none.
+  lastAccountId String?  @map("last_account_id") @db.Uuid
   deals        deals[]
-  account      Account     @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users        users       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  lastAccount  Account?  @relation("profiles_last_account", fields: [lastAccountId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  users        users     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([accountId, accountRole], map: "idx_profiles_account_role")
   @@map("profiles")
+  @@schema("public")
+}
+
+/// One row per (workspace, user) membership — migration 095, the table that
+/// made "one login, many workspaces" possible.
+///
+/// `(account_id, user_id)` IS the identity of a membership, so it is the
+/// primary key; nothing references a membership row, and a surrogate id
+/// would let the same person be inserted twice.
+///
+/// ⚠️ `role` is per MEMBERSHIP, never per person. The same user is `owner`
+/// of their own workspace and `viewer` in a client's, and every
+/// authorization decision in this product asks "what role here", not "what
+/// role".
+///
+/// ⚠️ THE BROWSER CANNOT WRITE THIS TABLE. RLS grants SELECT only — there is
+/// no insert, update or delete policy at all — so membership moves solely
+/// through the supervised SECURITY DEFINER RPCs (`redeem_invitation`,
+/// `set_member_role`, `remove_account_member`, `leave_account`,
+/// `transfer_account_ownership`) and the server connection. That is what
+/// replaced migration 033's trigger, which had to let a PATCH through and
+/// then catch privilege columns on the way past.
+///
+/// ⚠️ `is_account_member()` reads THIS TABLE, and it backs 227 RLS policies.
+/// Which is what makes the active workspace a selection rather than a
+/// security boundary: a tampered workspace cookie naming a foreign account
+/// fails RLS in the browser and fails the membership check in the Nest guard.
+model account_members {
+  account_id String            @db.Uuid
+  user_id    String            @db.Uuid
+  role       AccountRole
+  /// Who granted this membership. NULL means nobody chose it — the signup
+  /// trigger or the 095 backfill did — which is a different fact from an
+  /// admin having granted access, and the admin panel shows the difference.
+  invited_by String?           @db.Uuid
+  created_at DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at DateTime          @default(now()) @db.Timestamptz(6)
+  accounts   Account           @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users      users             @relation("account_members_user_idTousers", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  inviter    users?            @relation("account_members_invited_byTousers", fields: [invited_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@id([account_id, user_id])
+  @@index([user_id], map: "idx_account_members_user")
+  @@index([account_id, role], map: "idx_account_members_account_role")
+  @@map("account_members")
   @@schema("public")
 }
 
@@ -619,6 +684,8 @@ model users {
   account_invitations_account_invitations_accepted_by_user_idTousers account_invitations[]        @relation("account_invitations_accepted_by_user_idTousers")
   account_invitations_account_invitations_created_by_user_idTousers  account_invitations[]        @relation("account_invitations_created_by_user_idTousers")
   accounts                                                           Account?
+  account_members                                                    account_members[]           @relation("account_members_user_idTousers")
+  account_members_invited                                            account_members[]           @relation("account_members_invited_byTousers")
   ai_agent_actions                                                   ai_agent_actions[]
   ai_agents                                                          ai_agents[]
   ai_configs                                                         ai_configs[]

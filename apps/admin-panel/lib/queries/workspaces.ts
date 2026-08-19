@@ -146,7 +146,7 @@ const WORKSPACE_COLUMNS = Prisma.sql`
   a.owner_user_id as "ownerUserId",
   ou.email as "ownerEmail",
   op.full_name as "ownerName",
-  (select count(*) from profiles p2 where p2.account_id = a.id)::int as "members",
+  (select count(*) from account_members m2 where m2.account_id = a.id)::int as "members",
   (
     select count(*) from account_invitations i
      where i.account_id = a.id
@@ -188,7 +188,7 @@ const ORDER_BY: Record<WorkspaceSort, Prisma.Sql> = {
   credits: Prisma.sql`order by w.balance desc nulls last`,
   spend: Prisma.sql`order by ${SPENT_30D_EXPR} desc, a.created_at desc`,
   members: Prisma.sql`order by (
-    select count(*) from profiles p3 where p3.account_id = a.id
+    select count(*) from account_members m3 where m3.account_id = a.id
   ) desc, a.created_at desc`,
 };
 
@@ -305,7 +305,7 @@ export async function workspaceTotals(): Promise<WorkspaceTotals> {
       -- accounts are a single person" — the denominator for team features.
       (
         select count(*) from accounts a2
-         where (select count(*) from profiles p where p.account_id = a2.id) <= 1
+         where (select count(*) from account_members m where m.account_id = a2.id) <= 1
       )::int as "soloWorkspaces"
   `);
 
@@ -318,11 +318,17 @@ export async function workspaceTotals(): Promise<WorkspaceTotals> {
 
 export type WorkspaceMember = {
   userId: string;
-  profileId: string;
+  /** Null when the signup trigger never wrote a profile row for this login. */
+  profileId: string | null;
   email: string | null;
   fullName: string | null;
+  /** The role held IN THIS WORKSPACE. The same person may hold another
+   *  elsewhere — see `otherWorkspaces`. */
   accountRole: 'owner' | 'admin' | 'agent' | 'viewer';
   isAccountOwner: boolean;
+  /** How many OTHER workspaces this person belongs to. Zero means removing
+   *  them here leaves them in none, which the remove dialog says out loud. */
+  otherWorkspaces: number;
   createdAt: Date | null;
   lastSignInAt: Date | null;
   emailConfirmedAt: Date | null;
@@ -508,13 +514,18 @@ export async function getWorkspace(
  */
 async function listMembers(accountId: string): Promise<WorkspaceMember[]> {
   return prisma.$queryRaw<WorkspaceMember[]>(Prisma.sql`
+    -- Migration 095: the MEMBERSHIP is the row that says who is in this
+    -- workspace and what they are here. profiles supplies the person, and is
+    -- LEFT joined because a membership without a profile row is recoverable
+    -- (the signup trigger swallows its own errors) and should still be visible
+    -- to an operator rather than silently absent from the list.
     select
-      p.user_id as "userId",
+      m.user_id as "userId",
       p.id as "profileId",
       u.email as "email",
       p.full_name as "fullName",
-      p.account_role as "accountRole",
-      (a.owner_user_id = p.user_id) as "isAccountOwner",
+      m.role as "accountRole",
+      (a.owner_user_id = m.user_id) as "isAccountOwner",
       u.created_at as "createdAt",
       u.last_sign_in_at as "lastSignInAt",
       u.email_confirmed_at as "emailConfirmedAt",
@@ -524,15 +535,24 @@ async function listMembers(accountId: string): Promise<WorkspaceMember[]> {
       (${MRR_EXPR})::float8 as "ownSubscriptionMrr",
       (
         select count(*) from deals d where d.assigned_to = p.id
-      )::int as "assignedDeals"
-    from profiles p
-    join accounts a on a.id = p.account_id
-    join auth.users u on u.id = p.user_id
-    left join user_subscriptions s on s.user_id = p.user_id
+      )::int as "assignedDeals",
+      -- What this operator needs before removing somebody: how many other
+      -- workspaces they would still be in afterwards.
+      (
+        select count(*) from account_members m2
+         where m2.user_id = m.user_id and m2.account_id <> m.account_id
+      )::int as "otherWorkspaces"
+    from account_members m
+    join accounts a on a.id = m.account_id
+    join auth.users u on u.id = m.user_id
+    left join profiles p on p.user_id = m.user_id
+    left join user_subscriptions s on s.user_id = m.user_id
     left join subscription_plans pl on pl.id = s.plan_id
-    where p.account_id = ${accountId}::uuid
-    -- Owner first, then the rest by seniority in the workspace.
-    order by (a.owner_user_id = p.user_id) desc, p.created_at asc nulls last
+    where m.account_id = ${accountId}::uuid
+    -- Owner first, then the rest by seniority IN THIS WORKSPACE — the
+    -- membership's created_at, not the profile's, which is when they signed up
+    -- and for an agency's clients is months earlier.
+    order by (a.owner_user_id = m.user_id) desc, m.created_at asc nulls last
   `);
 }
 

@@ -78,31 +78,20 @@ export interface UploadAccountMediaResult {
  */
 export async function uploadAccountMedia(
   bucket: string,
+  accountId: string,
   file: File,
 ): Promise<UploadAccountMediaResult> {
   const supabase = createClient();
 
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user) {
-    throw new Error("Not signed in.");
-  }
-
-  // Resolve account_id so the path is account-scoped (matches the
-  // bucket's RLS write policy from migration 020/023). User-scoped
-  // paths would be rejected.
-  const { data: profile, error: profileErr } = await supabase
-    .from("profiles")
-    .select("account_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (profileErr || !profile?.account_id) {
-    throw new Error("Could not resolve your account.");
-  }
-
-  const path = buildMediaPath(profile.account_id as string, file.name);
+  // ⚠️ The workspace is PASSED IN, not resolved here.
+  //
+  // This used to read `profiles.account_id` — a column migration 096 dropped,
+  // and a question that stopped having one answer at 095. It matters more here
+  // than in a read: the path it builds is what the bucket's RLS write policy
+  // matches on (`storage_account_folder_ok`), so resolving the wrong workspace
+  // does not silently mis-scope, it uploads this file into another client's
+  // folder — where every member of that workspace can see it.
+  const path = buildMediaPath(accountId, file.name);
   const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, {
     cacheControl: "3600",
     upsert: false,

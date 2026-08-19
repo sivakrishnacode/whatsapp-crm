@@ -584,9 +584,9 @@ export function MembersTab() {
               <span className="font-medium text-muted-foreground">
                 {removingMember?.full_name || 'this teammate'}
               </span>{' '}
-              from the account? They&apos;ll be signed out of this account
-              and given a fresh personal account on their next sign-in. Their
-              login isn&apos;t deleted.
+              from this workspace? They lose access to it immediately. Any
+              other workspace they belong to is untouched, and their login
+              isn&apos;t deleted.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="bg-popover border-border">

@@ -61,6 +61,7 @@ import { SegmentPicker } from '@/components/contacts/segment-picker';
 import { listSegmentsLight, segmentsForContacts } from '@/lib/segments/api';
 import { tint } from '@/lib/tint';
 import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
 
@@ -74,6 +75,9 @@ interface ContactWithTags extends Contact {
 
 export default function ContactsPage() {
   const supabase = createClient();
+  // Scoped to the ACTIVE workspace, not to "everything RLS allows". See
+  // lib/workspace/scope.ts — since migration 095 those are different sets.
+  const { accountId } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const canEdit = useCan('send-messages');
@@ -119,7 +123,11 @@ export default function ContactsPage() {
   const fetchSeq = useRef(0);
 
   const fetchTags = useCallback(async () => {
-    const { data } = await supabase.from('tags').select('*');
+    if (!accountId) return;
+    const { data } = await supabase
+      .from('tags')
+      .select('*')
+      .eq('account_id', accountId);
     if (data) {
       const map: Record<string, Tag> = {};
       data.forEach((t) => (map[t.id] = t));
@@ -131,11 +139,12 @@ export default function ContactsPage() {
         return pruned.length === prev.length ? prev : pruned;
       });
     }
-  }, [supabase]);
+  }, [supabase, accountId]);
 
   const fetchSegments = useCallback(async () => {
+    if (!accountId) return;
     try {
-      const rows = await listSegmentsLight(supabase);
+      const rows = await listSegmentsLight(supabase, accountId);
       setSegments(rows);
       // Drop filter selections whose segment no longer exists, for the
       // same reason fetchTags prunes tags: an id nobody can see must not
@@ -148,9 +157,12 @@ export default function ContactsPage() {
     } catch {
       // Non-fatal: the contacts list itself does not depend on this.
     }
-  }, [supabase]);
+  }, [supabase, accountId]);
 
   const fetchContacts = useCallback(async () => {
+    // No workspace resolved yet: querying now would filter on null and render
+    // an empty list, which is indistinguishable from an empty workspace.
+    if (!accountId) return;
     const seq = ++fetchSeq.current;
     setLoading(true);
     // The visible rows are about to change — drop any selection that
@@ -174,6 +186,9 @@ export default function ContactsPage() {
       // including dynamic ones whose membership is computed rather than
       // stored, and its search covers company and @handle too.
       const { data, error } = await supabase.rpc('filter_contacts', {
+        // Required and first since migration 097. Without it the RPC's own
+        // RLS-only scoping returns every workspace the caller belongs to.
+        p_account_id: accountId,
         p_tag_ids: selectedTagIds.length > 0 ? selectedTagIds : null,
         p_segment_ids:
           selectedSegmentIds.length > 0 ? selectedSegmentIds : null,
@@ -194,6 +209,7 @@ export default function ContactsPage() {
       let query = supabase
         .from('contacts')
         .select('*', { count: 'exact' })
+        .eq('account_id', accountId)
         .order('created_at', { ascending: false })
         .range(from, to);
 
@@ -252,7 +268,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, selectedTagIds, selectedSegmentIds, tagsMap]);
+  }, [supabase, accountId, page, search, selectedTagIds, selectedSegmentIds, tagsMap]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not

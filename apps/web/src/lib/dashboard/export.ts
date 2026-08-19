@@ -1,7 +1,17 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+/**
+ * ⚠️ `accountId` is REQUIRED and is not optional for a reason worth spelling
+ * out: this produces a CSV the customer downloads and keeps. Every one of these
+ * four queries relied on RLS alone for scoping, which since migration 095 means
+ * "every workspace this user belongs to" — so an agency exporting one client's
+ * messages would have handed themselves a file containing all of their clients'
+ * conversations, with no column saying which was which. A wrong number on a
+ * chart is a bug; a wrong file is a disclosure that leaves the building.
+ */
 export async function exportAnalyticsData(
   db: SupabaseClient,
+  accountId: string,
   startDate: string,
   endDate: string,
   type: 'messages' | 'contacts' | 'deals' | 'broadcasts'
@@ -14,6 +24,7 @@ export async function exportAnalyticsData(
       const { data: msgs } = await db
         .from('messages')
         .select('created_at, sender_type, content_text, status, conversations!inner(contact_id, contacts!inner(name, phone))')
+        .eq('account_id', accountId)
         .gte('created_at', startDate)
         .lte('created_at', endDate)
         .order('created_at', { ascending: true });
@@ -33,6 +44,7 @@ export async function exportAnalyticsData(
       const { data: contacts } = await db
         .from('contacts')
         .select('*')
+        .eq('account_id', accountId)
         .gte('created_at', startDate)
         .lte('created_at', endDate)
         .order('created_at', { ascending: true });
@@ -45,6 +57,7 @@ export async function exportAnalyticsData(
       const { data: deals } = await db
         .from('deals')
         .select('*, pipeline_stages!inner(name), contacts!inner(name, phone)')
+        .eq('account_id', accountId)
         .gte('created_at', startDate)
         .lte('created_at', endDate)
         .order('created_at', { ascending: true });
@@ -67,6 +80,7 @@ export async function exportAnalyticsData(
       const { data: broadcasts } = await db
         .from('broadcasts')
         .select('*')
+        .eq('account_id', accountId)
         .gte('created_at', startDate)
         .lte('created_at', endDate)
         .order('created_at', { ascending: true });

@@ -7,10 +7,15 @@ import {
   Res,
   HttpStatus,
   Logger,
+  UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
 import { hashInviteToken } from '../utils/invitations.util';
+import {
+  CurrentUserId,
+  SupabaseUserGuard,
+} from '../../auth/guards/supabase-user.guard';
 
 function getClientIp(req: Request): string {
   const xff = req.headers['x-forwarded-for'];
@@ -81,13 +86,32 @@ export class InvitationsPublicController {
 
   /**
    * POST /api/invitations/:token/redeem
-   * Authenticated (SupabaseAuthGuard not used — auth is checked inside the RPC).
-   * Atomically moves caller from personal account to the inviting account.
+   * Adds a membership for the signed-in caller.
+   *
+   * ⚠️⚠️ THIS ENDPOINT HAD TWO DEFECTS AND BOTH ARE FIXED HERE.
+   *
+   * (1) It never verified anything. Its whole authentication was "does the
+   *     Authorization header start with 'Bearer '" — which the literal string
+   *     `Bearer x` satisfies — and it then relied on "auth is checked inside
+   *     the RPC".
+   *
+   * (2) The RPC could not check it. `redeem_invitation` opened with
+   *     `IF auth.uid() IS NULL THEN RAISE 'Unauthorized'`, and apps/api
+   *     connects over Prisma as `postgres`, where `auth.uid()` is NULL. So
+   *     every redemption returned 401 — accepting an invitation has never
+   *     worked in production. Defect (2) is what hid defect (1).
+   *
+   * ⚠️ SupabaseUserGuard, not SupabaseAuthGuard: since migration 095 a signup
+   * that arrived through an invite link gets no personal workspace, so at the
+   * moment of redeeming, "member of no workspace" is the EXPECTED state and a
+   * guard that requires one would reject the very request that creates the
+   * first membership.
    */
   @Post(':token/redeem')
+  @UseGuards(SupabaseUserGuard)
   async redeem(
     @Param('token') token: string,
-    @Req() req: Request,
+    @CurrentUserId() userId: string,
     @Res() res: Response,
   ) {
     if (!token || typeof token !== 'string') {
@@ -96,17 +120,14 @@ export class InvitationsPublicController {
         .json({ error: 'Missing invitation token' });
     }
 
-    const authHeader = req.headers.authorization ?? '';
-    if (!authHeader.startsWith('Bearer ')) {
-      return res
-        .status(HttpStatus.UNAUTHORIZED)
-        .json({ error: 'Unauthorized' });
-    }
-
     try {
       const result = await this.prisma.$queryRawUnsafe<
         { redeem_invitation: string }[]
-      >(`SELECT redeem_invitation($1)`, hashInviteToken(token));
+      >(
+        `SELECT redeem_invitation($1, $2::uuid)`,
+        hashInviteToken(token),
+        userId,
+      );
       const accountId = result[0]?.redeem_invitation ?? null;
       return res.status(HttpStatus.OK).json({ ok: true, accountId });
     } catch (err: unknown) {

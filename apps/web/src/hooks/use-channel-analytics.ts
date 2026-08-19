@@ -16,9 +16,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/hooks/use-auth'
 import { parseFilters, serialiseFilters } from '@/lib/analytics/filters'
 import { customRange, presetRange, type DateRange, type RangePreset } from '@/lib/analytics/range'
-import { loadIsConnected, resolveAccountId } from '@/lib/analytics/queries'
+import { loadIsConnected } from '@/lib/analytics/queries'
 import type { AnalyticsChannel, AnalyticsFilters } from '@/lib/analytics/types'
 
 const DEFAULT_PRESET: RangePreset = 30
@@ -48,6 +49,7 @@ export interface ChannelAnalyticsControls {
 }
 
 export function useChannelAnalytics(channel: AnalyticsChannel): ChannelAnalyticsControls {
+  const { accountId: activeAccountId } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -71,7 +73,14 @@ export function useChannelAnalytics(channel: AnalyticsChannel): ChannelAnalytics
     let cancelled = false
     const db = createClient()
     void (async () => {
-      const id = await resolveAccountId(db)
+      // The ACTIVE workspace, from the one resolver — not re-derived here.
+      // Every analytics RPC takes p_account_id and guards it with
+      // analytics_guard, so passing the wrong one returns an error rather
+      // than another workspace's numbers; passing a merged one was never
+      // expressible. The risk this removes is subtler: two resolvers
+      // disagreeing meant the chart header and the chart body could describe
+      // different workspaces.
+      const id = activeAccountId
       if (cancelled) return
       setAccountId(id)
       if (!id) {
@@ -87,7 +96,7 @@ export function useChannelAnalytics(channel: AnalyticsChannel): ChannelAnalytics
     return () => {
       cancelled = true
     }
-  }, [channel])
+  }, [channel, activeAccountId])
 
   const setPreset = useCallback((preset: RangePreset) => {
     setRange(presetRange(preset))

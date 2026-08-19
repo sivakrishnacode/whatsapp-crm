@@ -11,7 +11,7 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
-import { WorkspaceLogo } from "@/components/workspace/workspace-logo";
+import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,28 +62,15 @@ export function Header({ onOpenSidebar, title, breadcrumb }: HeaderProps) {
           <Menu className="h-5 w-5" />
         </button>
 
-        {/* Which workspace am I in?
+        {/* Which workspace am I in — and, since migration 095, a way to
+            change it.
             Multi-tenant apps put this top-left because the same person
             can own one workspace and be an agent in another — and every
             number on the page below means something different depending
             on which. The rail footer shows it too, but the rail
             collapses and is hidden entirely on mobile, so it cannot be
             the only place it appears. */}
-        {account?.name ? (
-          <div className="hidden min-w-0 shrink items-center gap-2 border-r border-border pr-3 md:flex">
-            {/* Their logo when they have uploaded one, the initial when
-                they have not — <WorkspaceLogo> owns that choice so the
-                header, the settings card and the signup wizard cannot
-                drift apart. */}
-            <WorkspaceLogo name={account.name} logoUrl={account.logo_url} />
-            <span
-              className="truncate text-sm font-medium text-foreground"
-              title={account.name}
-            >
-              {account.name}
-            </span>
-          </div>
-        ) : null}
+        <WorkspaceSwitcher />
 
         <h1 className="flex min-w-0 items-baseline gap-1.5 truncate text-base font-semibold text-foreground sm:text-lg">
           {breadcrumb ? (

@@ -58,6 +58,11 @@ export function PresenceHeartbeat() {
       lastBeatAt = t;
       const { error } = await supabase.rpc("touch_presence", {
         p_status: currentStatus(),
+        // Migration 095: presence is per workspace. Without this the RPC falls
+        // back to `profiles.last_account_id`, which is usually right but lags
+        // a switch by one beat — long enough to announce yourself in the
+        // workspace you just left.
+        p_account_id: accountId,
       });
       if (error && !cancelled) {
         // Non-fatal: presence is best-effort. Log once per failure so a

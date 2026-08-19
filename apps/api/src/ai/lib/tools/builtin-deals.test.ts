@@ -46,10 +46,16 @@ interface Fixture {
   profiles: Array<{
     id: string;
     userId: string;
-    accountId: string;
     fullName: string;
     email: string;
   }>;
+  /**
+   * Membership, separate from the person — migration 095. Keeping these as two
+   * lists is the point of the fixture: a profile in the list is NOT evidence of
+   * access to a workspace any more, which is exactly the mistake the
+   * cross-tenant test below guards against.
+   */
+  members: Array<{ account_id: string; user_id: string }>;
   deals: Array<{
     id: string;
     title: string;
@@ -113,17 +119,33 @@ function fakePrisma(fx: Fixture) {
     account: {
       findUnique: () => Promise.resolve({ ownerUserId: OWNER_USER }),
     },
-    profile: {
-      findFirst: ({ where }: any) =>
+    account_members: {
+      findUnique: ({ where }: any) =>
         Promise.resolve(
-          fx.profiles.find(
-            (p) =>
-              p.userId === where.userId && p.accountId === where.accountId,
+          fx.members.find(
+            (m) =>
+              m.account_id === where.account_id_user_id.account_id &&
+              m.user_id === where.account_id_user_id.user_id,
+          ) ?? null,
+        ),
+      findMany: ({ where }: any) =>
+        Promise.resolve(
+          fx.members.filter((m) => m.account_id === where.account_id),
+        ),
+    },
+    profile: {
+      findUnique: ({ where }: any) =>
+        Promise.resolve(
+          fx.profiles.find((p) =>
+            where.userId !== undefined
+              ? p.userId === where.userId
+              : p.id === where.id,
           ) ?? null,
         ),
       findMany: ({ where, take }: any) => {
+        const allowed = new Set(where.userId.in as string[]);
         const rows = fx.profiles
-          .filter((p) => p.accountId === where.accountId)
+          .filter((p) => allowed.has(p.userId))
           .filter((p) =>
             (where.OR as any[]).some((clause) =>
               clause.email
@@ -227,24 +249,27 @@ function standardFixture(): Fixture {
       {
         id: OWNER_PROFILE,
         userId: OWNER_USER,
-        accountId: ACCOUNT,
         fullName: 'Siva Krishna',
         email: 'siva@acme.test',
       },
       {
         id: 'profile-priya',
         userId: 'user-priya',
-        accountId: ACCOUNT,
         fullName: 'Priya Nair',
         email: 'priya@acme.test',
       },
       {
         id: 'profile-outsider',
         userId: 'user-outsider',
-        accountId: 'acc-2',
         fullName: 'Priya Sharma',
         email: 'priya@other.test',
       },
+    ],
+    members: [
+      { account_id: ACCOUNT, user_id: OWNER_USER },
+      { account_id: ACCOUNT, user_id: 'user-priya' },
+      // Same first name, different tenant, and NOT a member here.
+      { account_id: 'acc-2', user_id: 'user-outsider' },
     ],
     deals: [
       {
@@ -630,10 +655,10 @@ describe('assign_deal', () => {
     fx.profiles.push({
       id: 'profile-priya-2',
       userId: 'user-priya-2',
-      accountId: ACCOUNT,
       fullName: 'Priya Menon',
       email: 'priya.menon@acme.test',
     });
+    fx.members.push({ account_id: ACCOUNT, user_id: 'user-priya-2' });
     const { prisma, updated } = fakePrisma(fx);
 
     const result = await assignDeal.run({ assignee: 'Priya' }, ctxWith(prisma));
@@ -650,10 +675,10 @@ describe('assign_deal', () => {
     fx.profiles.push({
       id: 'profile-priya-2',
       userId: 'user-priya-2',
-      accountId: ACCOUNT,
       fullName: 'Priya Nair Menon',
       email: 'pnm@acme.test',
     });
+    fx.members.push({ account_id: ACCOUNT, user_id: 'user-priya-2' });
     const { prisma, updated } = fakePrisma(fx);
 
     const result = await assignDeal.run(

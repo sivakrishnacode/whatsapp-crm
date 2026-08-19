@@ -55,9 +55,10 @@ export function validateLogoFile(file: File): string | null {
  * Throws with a user-facing message; callers surface it via a toast.
  */
 export function uploadWorkspaceLogo(
+  accountId: string,
   file: File,
 ): Promise<UploadAccountMediaResult> {
-  return uploadAccountMedia(WORKSPACE_LOGO_BUCKET, file);
+  return uploadAccountMedia(WORKSPACE_LOGO_BUCKET, accountId, file);
 }
 
 /**

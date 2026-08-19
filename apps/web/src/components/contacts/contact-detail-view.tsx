@@ -294,10 +294,10 @@ export function ContactDetailView({
   }, [contactId, supabase]);
 
   const fetchSegments = useCallback(async () => {
-    if (!contactId) return;
+    if (!contactId || !accountId) return;
     try {
       const [segments, byContact] = await Promise.all([
-        listSegmentsLight(supabase),
+        listSegmentsLight(supabase, accountId),
         segmentsForContacts(supabase, [contactId]),
       ]);
       setAllSegments(segments);
@@ -305,7 +305,7 @@ export function ContactDetailView({
     } catch {
       // Non-fatal — the rest of the drawer still works without it.
     }
-  }, [contactId, supabase]);
+  }, [contactId, supabase, accountId]);
 
   async function toggleSegment(segment: ContactSegment) {
     if (!contactId || segment.kind !== 'static') return;

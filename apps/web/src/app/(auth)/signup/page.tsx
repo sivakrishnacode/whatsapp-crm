@@ -82,7 +82,21 @@ function SignupForm() {
       email,
       password,
       options: {
-        data: { full_name: fullName },
+        data: {
+          full_name: fullName,
+          // ⚠️ Read by `handle_new_user` (migration 095). Arriving through an
+          // invite link means the workspace they are joining is their first
+          // one, so the trigger creates NO personal workspace for them.
+          //
+          // Before 095, `redeem_invitation` cleaned that orphan up by
+          // deleting it — it had to, because joining MOVED your single profile
+          // row. Joining is now an INSERT that moves nothing, so nothing
+          // deletes it either, and without this flag every invited teammate
+          // would own an empty unpaid workspace for ever: visible in their
+          // switcher, wearing a "needs attention" dot (no plan resolves to
+          // `lapsed`), for something they never asked for.
+          ...(inviteToken ? { skip_personal_workspace: "true" } : {}),
+        },
         emailRedirectTo,
       },
     });

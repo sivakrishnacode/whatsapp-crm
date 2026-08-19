@@ -31,6 +31,7 @@ import {
 } from 'react';
 
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import type { CustomField, MessageTemplate } from '@/types';
 
 export interface FlowOption {
@@ -83,13 +84,20 @@ export function FlowResourcesProvider({
   currentFlowId?: string;
   children: ReactNode;
 }) {
+  const { accountId } = useAuth();
   const [state, setState] = useState<FlowResources>(EMPTY);
 
   useEffect(() => {
+    if (!accountId) return;
     let cancelled = false;
     const supabase = createClient();
 
     void (async () => {
+      // ⚠️ Scoped to the ACTIVE workspace, not to what RLS permits — since
+      // migration 095 those differ (lib/workspace/scope.ts). These lists become
+      // node config, so an id from another workspace would save happily and
+      // then do nothing at run time.
+      //
       // Only APPROVED templates can actually be sent — anything else
       // 400s at send time, so offering them would be offering a node
       // that cannot run. Same filter as the broadcast picker.
@@ -97,12 +105,18 @@ export function FlowResourcesProvider({
         supabase
           .from('message_templates')
           .select('*')
+          .eq('account_id', accountId)
           .eq('status', 'APPROVED')
           .order('name'),
-        supabase.from('custom_fields').select('*').order('field_name'),
+        supabase
+          .from('custom_fields')
+          .select('*')
+          .eq('account_id', accountId)
+          .order('field_name'),
         supabase
           .from('whatsapp_products')
           .select('retailer_id, name, price, currency')
+          .eq('account_id', accountId)
           .eq('is_active', true)
           .order('name'),
       ]);
@@ -137,6 +151,7 @@ export function FlowResourcesProvider({
       const res = await supabase
         .from('ai_agents')
         .select('id, name, is_active')
+        .eq('account_id', accountId)
         .order('priority');
       if (cancelled || res.error) return;
       setState((s) => ({
@@ -148,7 +163,7 @@ export function FlowResourcesProvider({
     return () => {
       cancelled = true;
     };
-  }, [currentFlowId]);
+  }, [currentFlowId, accountId]);
 
   return (
     <ResourcesContext.Provider value={state}>

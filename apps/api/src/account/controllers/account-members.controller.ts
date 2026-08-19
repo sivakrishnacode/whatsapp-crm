@@ -71,10 +71,17 @@ export class AccountMembersController {
     }
 
     try {
+      // Migration 095: the workspace is explicit (the caller may be in
+      // several), and so is the actor — apps/api connects as `postgres`, where
+      // `auth.uid()` is NULL, so without the 4th argument this RPC raises
+      // 'Unauthorized' every time. It did, for as long as this endpoint has
+      // existed. See section 9b of the migration.
       await this.prisma.$executeRawUnsafe(
-        `SELECT set_member_role($1::uuid, $2)`,
+        `SELECT set_member_role($1::uuid, $2::uuid, $3, $4::uuid)`,
+        account.accountId,
         userId,
         role,
+        account.userId,
       );
     } catch (err: unknown) {
       const pg = err as { code?: string; message?: string };
@@ -94,8 +101,16 @@ export class AccountMembersController {
 
   /**
    * DELETE /api/account/members/:userId
-   * Remove a member. Admin+.
+   * Remove a member from THIS workspace. Admin+.
    * Delegates to the `remove_account_member` SECURITY DEFINER RPC.
+   *
+   * ⚠️ No longer returns a `newPersonalAccountId`. Before migration 095,
+   * removing somebody meant moving their single profile row, so the RPC had to
+   * mint them a replacement personal workspace to land in. Now removal just
+   * deletes one membership row and every other one they hold is untouched — so
+   * there is nothing to hand back. A user removed from their only workspace
+   * ends up in none, which the web app handles explicitly rather than papering
+   * over with an empty workspace nobody asked for.
    */
   @Delete('members/:userId')
   async removeMember(
@@ -103,13 +118,13 @@ export class AccountMembersController {
     @CurrentAccount() account: SupabaseAccountContext,
     @Res() res: Response,
   ) {
-    let newPersonalAccountId: string | null = null;
-
     try {
-      const result = await this.prisma.$queryRawUnsafe<
-        { remove_account_member: string }[]
-      >(`SELECT remove_account_member($1::uuid)`, userId);
-      newPersonalAccountId = result[0]?.remove_account_member ?? null;
+      await this.prisma.$executeRawUnsafe(
+        `SELECT remove_account_member($1::uuid, $2::uuid, $3::uuid)`,
+        account.accountId,
+        userId,
+        account.userId,
+      );
     } catch (err: unknown) {
       const pg = err as { code?: string; message?: string };
       const code = pg.code ?? '';
@@ -123,7 +138,43 @@ export class AccountMembersController {
         .json({ error: 'Failed to remove member' });
     }
 
-    return res.status(HttpStatus.OK).json({ ok: true, newPersonalAccountId });
+    return res.status(HttpStatus.OK).json({ ok: true });
+  }
+
+  /**
+   * POST /api/account/leave
+   * Leave THIS workspace. Any member except the owner.
+   *
+   * New in migration 095, and only expressible now: before it, your membership
+   * WAS your account, so "leave" and "delete everything I have" were the same
+   * operation. An owner must transfer first — a workspace with no owner has no
+   * subscription to resolve a plan through.
+   */
+  @Post('leave')
+  async leaveWorkspace(
+    @CurrentAccount() account: SupabaseAccountContext,
+    @Res() res: Response,
+  ) {
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `SELECT leave_account($1::uuid, $2::uuid)`,
+        account.accountId,
+        account.userId,
+      );
+    } catch (err: unknown) {
+      const pg = err as { code?: string; message?: string };
+      const code = pg.code ?? '';
+      const message = pg.message ?? 'Failed to leave workspace';
+      if (code === '42501' || code === '22023') {
+        return res.status(rpcStatusCode(code)).json({ error: message });
+      }
+      this.logger.error('leave_account RPC error', err);
+      return res
+        .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .json({ error: 'Failed to leave workspace' });
+    }
+
+    return res.status(HttpStatus.OK).json({ ok: true });
   }
 
   /**
@@ -144,28 +195,31 @@ export class AccountMembersController {
         .json({ error: "'newOwnerUserId' must be a valid UUID" });
     }
 
-    // Belt-and-braces: verify caller is owner before hitting the RPC
-    const profile = await this.prisma.profile.findUnique({
-      where: { userId: account.userId },
-      select: { accountRole: true },
-    });
-
-    if (profile?.accountRole !== 'owner') {
+    // Belt-and-braces: the guard already resolved the caller's role in THIS
+    // workspace, which is the only role that matters here — they may well be a
+    // plain agent in another. The RPC re-checks it anyway.
+    if (account.role !== 'owner') {
       return res
         .status(HttpStatus.FORBIDDEN)
-        .json({ error: 'Only the account owner can transfer ownership' });
+        .json({ error: 'Only the workspace owner can transfer ownership' });
     }
 
     try {
       await this.prisma.$executeRawUnsafe(
-        `SELECT transfer_account_ownership($1::uuid)`,
+        `SELECT transfer_account_ownership($1::uuid, $2::uuid, $3::uuid)`,
+        account.accountId,
         newOwnerUserId,
+        account.userId,
       );
     } catch (err: unknown) {
       const pg = err as { code?: string; message?: string };
       const code = pg.code ?? '';
       const message = pg.message ?? 'Failed to transfer ownership';
-      if (code === '42501' || code === '22023') {
+      // 23505 is the phase-1 refusal: the new owner already owns a workspace,
+      // and `idx_accounts_one_per_owner` stands until billing is
+      // account-scoped. It carries a sentence worth showing, so surface it as
+      // a 409 rather than swallowing it into a 500.
+      if (code === '42501' || code === '22023' || code === '23505') {
         return res.status(rpcStatusCode(code)).json({ error: message });
       }
       this.logger.error('transfer_account_ownership RPC error', err);
