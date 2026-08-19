@@ -66,10 +66,18 @@ function dotClass(w: Workspace): string {
 
 export function WorkspaceSwitcher({
   className,
+  triggerClassName,
   labelClassName,
 }: {
   /** Wrapper classes — the rail and the header want very different boxes. */
   className?: string;
+  /**
+   * The host's own row class. The rail passes `rowClass`, which is what makes
+   * this line up with every nav row beneath it AND centre its logo at the
+   * collapsed width. Omitting it was why the trigger sat flush against the
+   * rail's edge and stayed left-aligned when the rail narrowed.
+   */
+  triggerClassName?: string;
   /**
    * Applied to everything except the logo, so the rail can hide the name and
    * chevron at its collapsed width. The logo survives on purpose: it is the
@@ -99,7 +107,7 @@ export function WorkspaceSwitcher({
       />
       <span
         className={cn(
-          "min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground",
+          "min-w-0 flex-1 truncate text-left text-[13px] font-medium leading-tight text-foreground",
           labelClassName,
         )}
         title={activeWorkspace.name}
@@ -119,8 +127,15 @@ export function WorkspaceSwitcher({
 
   if (single) {
     return (
-      <div className={cn("flex min-w-0 items-center gap-2", className)}>
-        {chip}
+      <div className={cn("min-w-0", className)}>
+        <div
+          className={cn(
+            "flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-border bg-muted/40 py-1.5",
+            triggerClassName,
+          )}
+        >
+          {chip}
+        </div>
       </div>
     );
   }
@@ -141,10 +156,13 @@ export function WorkspaceSwitcher({
   }
 
   return (
-    <div className={cn("flex min-w-0", className)}>
+    <div className={cn("min-w-0", className)}>
       <DropdownMenu>
         <DropdownMenuTrigger
-          className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/40 py-2 text-sm transition-colors hover:bg-muted"
+          className={cn(
+            "flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-border bg-muted/40 py-1.5 transition-colors hover:bg-muted",
+            triggerClassName,
+          )}
           aria-label="Switch workspace"
         >
           {chip}

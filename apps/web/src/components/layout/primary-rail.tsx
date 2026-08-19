@@ -242,6 +242,32 @@ export function PrimaryRail({
   const expanded = locked || peeking || menuOpen;
   const collapsed = !expanded;
 
+  /**
+   * Onboarding is a CHECKLIST, so it earns its row only while there is
+   * something left on it. Once every connectable channel is connected it is a
+   * permanent link to a page of ticks, sitting above Home in the most valuable
+   * part of the rail.
+   *
+   * ⚠️ Three states, and only one of them hides it:
+   *   - `loading` keeps it visible. Hiding on an unresolved status would make
+   *     the row appear and then vanish a moment later on every page load,
+   *     which reads as a glitch rather than as progress.
+   *   - `unavailable` (Phone — a frame with no backend) does not count. A
+   *     channel nobody can connect must not hold the checklist open for ever.
+   *   - every remaining channel `connected` hides it.
+   *
+   * It stays visible while you are ON the page, whatever its state: a rail
+   * with no row for the route you are looking at is disorienting, and the page
+   * itself remains reachable by URL either way.
+   */
+  const connectable = CHANNEL_ORDER.map((id) => statuses[id].state).filter(
+    (state) => state !== 'unavailable',
+  );
+  const onboardingComplete =
+    connectable.length > 0 && connectable.every((state) => state === 'connected');
+  const showOnboarding =
+    !onboardingComplete || pathname.startsWith(RAIL_ONBOARDING.href);
+
   // Peek is a `lg`-and-up behaviour, because that is the only place the
   // narrow rail exists. Below it the rail is a full-width drawer and
   // `mouseenter` fires on *tap*, which would re-render the whole rail
@@ -436,11 +462,21 @@ export function PrimaryRail({
 
               `labelClass` hides the name at the collapsed width, but the
               logo stays — see the note in the component. */}
-          <WorkspaceSwitcher className="mb-1" labelClassName={labelClass} />
+          <WorkspaceSwitcher
+            className="mb-2"
+            triggerClassName={rowClass}
+            labelClassName={labelClass}
+          />
 
-          <ul className="flex flex-col gap-0.5">{renderRailItem(RAIL_ONBOARDING)}</ul>
+          {showOnboarding ? (
+            <>
+              <ul className="flex flex-col gap-0.5">
+                {renderRailItem(RAIL_ONBOARDING)}
+              </ul>
 
-          <div className="my-2 border-t border-border" />
+              <div className="my-2 border-t border-border" />
+            </>
+          ) : null}
 
           <ul className="flex flex-col gap-0.5">{RAIL_WORKSPACE.map(renderRailItem)}</ul>
 
