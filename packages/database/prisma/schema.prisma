@@ -137,6 +137,10 @@ model google_script_connections {
   /// Last successful call, so Integrations can say "working" rather than
   /// merely "configured". NULL = never exercised.
   lastOkAt        DateTime? @map("last_ok_at") @db.Timestamptz(6)
+  /// BRIDGE_VERSION the deployed script last reported. NULL = never
+  /// reported (never called, or a v1 script predating the field), which is
+  /// deliberately NOT the same as "out of date".
+  scriptVersion   Int?      @map("script_version")
   lastError       String?   @map("last_error")
   lastErrorAt     DateTime? @map("last_error_at") @db.Timestamptz(6)
   createdBy       String?   @map("created_by") @db.Uuid

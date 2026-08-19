@@ -130,7 +130,9 @@ export function ConnectedApps() {
         : 'off';
   const statusLabel =
     status === 'connected'
-      ? 'Connected'
+      ? connection?.updateAvailable
+        ? 'Update available'
+        : 'Connected'
       : status === 'error'
         ? 'Needs attention'
         : status === 'provisioned'
@@ -495,6 +497,29 @@ function GoogleBridgeDialog({
                 ? ` ${formatWhen(connection.lastErrorAt)}`
                 : ''}
               : {connection?.lastError ?? 'the call to the bridge did not work.'}
+            </span>
+          </div>
+        )}
+
+        {connection?.updateAvailable && status !== 'error' && (
+          <div className="text-accent-amber flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-2.5 text-[11px]">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              {/*
+                An OFFER, not a warning: everything already built keeps
+                working, and only actions added since their script was
+                generated are missing. It sits below the error banner
+                because "a call is failing" is always more urgent, and it
+                names the cost up front — regenerating mints a new secret,
+                so this is a re-paste and a redeploy, not a click.
+              */}
+              <strong className="font-semibold">
+                A newer script is available
+              </strong>{' '}
+              (yours is v{connection.scriptVersion}, current is v
+              {connection.currentVersion}). New Google actions won&apos;t work
+              until you regenerate on step 1 and redeploy. Everything you have
+              already built keeps working either way.
             </span>
           </div>
         )}

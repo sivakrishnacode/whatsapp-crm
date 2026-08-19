@@ -56,7 +56,13 @@ export interface FieldSpec {
  * step picker so "Send email" sits under Gmail rather than in a flat list
  * of seven.
  */
-export type GoogleService = 'gmail' | 'calendar' | 'sheets';
+export type GoogleService =
+  | 'gmail'
+  | 'calendar'
+  | 'sheets'
+  | 'contacts'
+  | 'docs'
+  | 'tasks';
 
 export interface GoogleScriptAction {
   /**
@@ -97,6 +103,19 @@ export interface GoogleScriptConnectionSummary {
   lastError: string | null;
   lastErrorAt: string | null;
   createdAt: string | null;
+  /**
+   * The BRIDGE_VERSION the deployed script last reported, and whether the
+   * catalogue has moved past it.
+   *
+   * ⚠️ NULL IS NOT "OUT OF DATE". A workspace that has never made a
+   * successful call has told us nothing, and a v1 script predates the
+   * field entirely. Claiming staleness on absence would nag people whose
+   * setup is fine, so `updateAvailable` is false unless we have actually
+   * been told a lower number.
+   */
+  scriptVersion: number | null;
+  currentVersion: number;
+  updateAvailable: boolean;
 }
 
 /** Result of one bridge call, published to the automation context. */

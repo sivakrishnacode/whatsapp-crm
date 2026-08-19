@@ -495,8 +495,15 @@ that land in their execution log rather than ours.
   how 082's `connection_id` trap was removed rather than guarded: the
   deployment is resolved from the running automation's `account_id` alone,
   so there is nothing a hand-edit could repoint at another tenant.
-- ⚠️ **RESTRICTED SCOPES ARE STILL RESTRICTED** even inside a customer's own
-  script — it makes them invisible, not free. `gmail.send` only: no draft
+- ⚠️ **RESTRICTED SCOPES STAY OUT, BUT NOT BECAUSE OF CASA.** Be precise:
+  a script its owner deploys and uses themselves is never submitted for
+  verification, so CASA genuinely does not apply to the bridge. The reasons
+  are commercial and therefore arguable — Workspace admins commonly block
+  unverified apps asking for restricted scopes (failing for exactly the
+  larger customers), "read all your email" is a different trust ask on an
+  already-alarming consent screen, and building on them forecloses a future
+  first-party OAuth version that WOULD pay the CASA cost. The rule holds;
+  the old justification for it does not. `gmail.send` only: no draft
   action (`gmail.compose` can read drafts), nothing lists Drive files
   (spreadsheet ids are pasted from the URL, tabs are typed). ⚠️ **There is
   no standalone Meet action**: verified against a live deployment, a Meet
@@ -507,7 +514,23 @@ that land in their execution log rather than ours.
 - **`BRIDGE_VERSION` is a wire contract with scripts already deployed.**
   Renaming an action id or a field key breaks live automations against
   scripts we cannot update; adding an action means every customer must
-  re-paste before it works.
+  re-paste before it works. The script echoes its version in every reply
+  and the executor stores it (`script_version`, migration 094), so
+  Integrations can offer an update BEFORE an automation fails on an action
+  the deployment has never heard of. ⚠️ NULL is "never reported", NOT "out
+  of date", and an update is an OFFER ranked below the error banner —
+  everything already built keeps working.
+- **v2 adds Calendar reschedule/cancel/find, Sheets delete, Gmail
+  attachments (all on scopes already granted), plus Contacts, Docs and
+  Tasks (one new non-restricted scope each).** ⚠️ Docs are written from
+  scratch, never copied — copying a file needs Drive, and the doc is
+  private to the owner for the same reason. `contact_save` matches on
+  phone then email so a re-run updates rather than duplicating, and
+  People's search needs Google's documented warm-up call.
+- ⚠️ **GOOGLE CHAT IS RESTRICTED.** It looks like the obvious "notify the
+  team" integration and it is on Google's restricted list alongside Gmail,
+  Drive, Fit, Data Portability, Photos Ambient and Health. Contacts, Docs,
+  Tasks, Forms, Calendar and Sheets are not.
 - **Setup is a four-step stepper** (`components/integrations/connected-apps.tsx`),
   because two of the four steps happen inside Google. Steps 2 and 3 never
   show a tick: we cannot observe what somebody did in the Apps Script

@@ -44,7 +44,7 @@ The dashboard walks four steps, two of which happen inside Google:
 | Step | Where | What |
 | --- | --- | --- |
 | 1 | Converse360 | `POST /google-script/provision` mints a secret and returns the script with it already inside |
-| 2 | Apps Script | Paste into `Code.gs`, add the **Calendar** advanced service, paste `appsscript.json` |
+| 2 | Apps Script | Paste into `Code.gs`, add the **Calendar, People and Tasks** advanced services, paste `appsscript.json` |
 | 3 | Apps Script | Run `authorizeOnce`, then Deploy → Web app (**Execute as: Me**, **Who has access: Anyone**) |
 | 4 | Converse360 | `POST /google-script/url` saves the `/exec` URL, `POST /google-script/test` proves it |
 
@@ -91,10 +91,26 @@ AES-256-GCM at rest, decrypted only in `GoogleScriptConnectionService`, never
 in a queue payload, a response or a log line. "Disconnect" says plainly that
 it revokes our access and not the script's existence.
 
-⚠️ **Restricted scopes are still restricted inside a customer's own script.**
-It makes them invisible, not free. `gmail.send` only — there is no draft
-action, because `gmail.compose` can read drafts. Nothing lists Drive files;
-spreadsheet ids are pasted from the URL and tab names are typed.
+⚠️ **Restricted scopes stay out, and the reason is NOT what it was under
+OAuth.** Be precise about this, because the old rationale no longer holds:
+a script its owner deploys and uses themselves is never submitted for
+verification, so **CASA genuinely does not apply here**. Technically the
+bridge could read Gmail.
+
+It still doesn't, for three reasons that are commercial rather than a hard
+gate — which means they are arguable, and should be argued explicitly
+rather than assumed:
+
+- **Workspace admins commonly block unverified apps requesting restricted
+  scopes**, so it would fail for exactly the larger customers worth having.
+- **"Let this script read all your email" is a different trust ask** from
+  "send as me", on a consent screen the customer already finds alarming.
+- **It forecloses ever shipping a first-party OAuth version**, which would
+  face the real CASA cost with these features already built on it.
+
+So: `gmail.send` only, no draft action (`gmail.compose` can read drafts),
+and nothing lists Drive files — spreadsheet ids are pasted from the URL and
+tab names are typed.
 
 ⚠️ **There is no standalone Meet action.** Verified against a live deployment:
 a Meet space needs the Google Meet API enabled on the script's GCP project,
@@ -104,6 +120,62 @@ project fixes it and is an unacceptable step in a customer's setup.
 `create_event` with `add_meet: true` returns a real `meeting_url` through the
 Calendar API instead, which is why `meetings.space.created` is absent from the
 manifest.
+
+## What the bridge can do (v2)
+
+| Service | Actions | Scope |
+| --- | --- | --- |
+| Gmail | send email (with up to 5 attachments) | `gmail.send` |
+| Calendar & Meet | create · reschedule · cancel · find · check availability | `calendar.events`, `calendar.freebusy` |
+| Sheets | add · find · update · delete a row | `spreadsheets` |
+| Contacts | save to the address book | `contacts` |
+| Docs | create a document | `documents` |
+| Tasks | add a task | `tasks` |
+
+⚠️ **Every one of those scopes is non-restricted**, checked against
+Google's current [restricted list](https://support.google.com/cloud/answer/13464325)
+— which is Gmail, Drive, Fit, **Chat**, Data Portability, Photos Ambient
+and Health. Chat is the trap: it looks like an obvious "notify the team"
+integration and it is restricted.
+
+Three constraints that shaped the v2 additions:
+
+- **Docs are written from scratch, never copied from a template.** Copying
+  a file needs Drive. The document is also private to the owner for the
+  same reason — sharing needs Drive permissions — so they share it
+  themselves.
+- **`contact_save` matches on phone, then email, so a re-run updates
+  rather than duplicating.** Google's People API builds its search index
+  lazily and documents a warm-up call; the script does that, and falls
+  back to *creating* if search fails, because a duplicate is a nuisance
+  and a lost contact is the feature not working.
+- **`delete_event` treats "already gone" as success.** A customer who
+  cancels twice, or a retried automation, must not leave a run failed over
+  an event that reached the desired state anyway.
+
+## Versioning — how a customer learns their script is stale
+
+`BRIDGE_VERSION` is stamped into the script and echoed in every reply.
+`GoogleScriptExecutorService` stores it on each success
+(`google_script_connections.script_version`, migration 094), and
+Integrations offers an update when it falls behind the catalogue.
+
+Two rules that keep this honest:
+
+- **NULL is not "out of date."** A workspace that has never made a
+  successful call has told us nothing, and a v1 script predates the field.
+  Staleness is only claimed on a version we were actually told.
+- **An update is an OFFER, not a warning**, and it ranks below the error
+  banner. Everything already built keeps working; only actions added since
+  their script was generated are missing. It names the cost up front,
+  because regenerating mints a new secret — a re-paste and a redeploy, not
+  a click.
+
+If a stale script is called with a new action, it answers
+`unknown action: create_task`, which the executor rewrites into "the
+script deployed in your Google account is older than this action —
+regenerate and redeploy". Without that, the customer cannot tell "we
+shipped something new" from "the integration is broken".
 
 ## Adding an action
 
@@ -147,7 +219,21 @@ into the CRM as contacts — needs no bridge and no Google review at all: a
 script bound to the spreadsheet calls the **public API** with a Converse360
 key.
 
-Script: [`apps-script/sheet-to-converse360.gs`](apps-script/sheet-to-converse360.gs)
+Two recipes, both the same shape — a script bound to the customer's own
+document, calling our public API with a scoped Converse360 key:
+
+| From | Script |
+| --- | --- |
+| A spreadsheet | [`apps-script/sheet-to-converse360.gs`](apps-script/sheet-to-converse360.gs) |
+| A Google Form | [`apps-script/form-to-converse360.gs`](apps-script/form-to-converse360.gs) |
+
+The form one is the migration path for a business already collecting leads
+through Google Forms. ⚠️ It must be installed via `installTrigger`, not
+left as a bare `onFormSubmit`: a *simple* trigger runs without
+authorization, `UrlFetchApp` needs it, and the send would fail silently on
+every real submission while working perfectly when you press Run.
+
+Spreadsheet setup:
 
 1. **Settings → API keys → New API key**, scoped to **`contacts:write` and
    nothing else** — this key lives in a spreadsheet that may be shared widely.

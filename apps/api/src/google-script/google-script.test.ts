@@ -1,3 +1,4 @@
+import { Script } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GoogleScriptConnectionService } from './services/google-script-connection.service';
@@ -5,7 +6,7 @@ import {
   GoogleScriptError,
   GoogleScriptExecutorService,
 } from './services/google-script-executor.service';
-import { GOOGLE_SCRIPT_ACTIONS } from './google-script.catalog';
+import { BRIDGE_VERSION, GOOGLE_SCRIPT_ACTIONS } from './google-script.catalog';
 import { BRIDGE_MANIFEST, renderBridgeSource } from './bridge-source';
 
 /**
@@ -169,6 +170,71 @@ describe('GoogleScriptExecutorService', () => {
     ).rejects.toThrow(/Who has access/);
   });
 
+  it('records the version the script reports, and strips it from output', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(redirect(ECHO))
+        .mockResolvedValueOnce(json({ ok: true, version: 2, row: 7 })),
+    );
+
+    const connections = stubConnections({ execUrl: EXEC, secret: SECRET });
+    const executor = new GoogleScriptExecutorService(connections);
+    const result = await executor.run('acc-1', 'sheet_append', {
+      spreadsheet_id: 's',
+      values: ['a'],
+    });
+
+    expect(connections.recordSuccess).toHaveBeenCalledWith('acc-1', 2);
+    // `version` is protocol, like `ok` — it must not land in the step's
+    // published output where an author could bind a token to it.
+    expect(result.output).toEqual({ row: 7 });
+  });
+
+  it('translates an unknown action into "your script is out of date"', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(redirect(ECHO))
+        .mockResolvedValueOnce(
+          json({ ok: false, error: 'unknown action: create_task' }),
+        ),
+    );
+
+    const executor = new GoogleScriptExecutorService(
+      stubConnections({ execUrl: EXEC, secret: SECRET }),
+    );
+    const err = await executor
+      .run('acc-1', 'create_task', { title: 'x' })
+      .catch((e: unknown) => e);
+
+    // Without this the customer sees Google's phrasing and cannot tell
+    // "we shipped something new" from "the integration is broken".
+    expect((err as Error).message).toMatch(/older than this action/);
+    expect((err as Error).message).toMatch(/Regenerate/);
+  });
+
+  it('names the missing advanced service in the message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(redirect(ECHO))
+        .mockResolvedValueOnce(json({ ok: false, error: 'People is not defined' })),
+    );
+
+    const executor = new GoogleScriptExecutorService(
+      stubConnections({ execUrl: EXEC, secret: SECRET }),
+    );
+    const err = await executor
+      .run('acc-1', 'contact_save', { name: 'x' })
+      .catch((e: unknown) => e);
+
+    expect((err as Error).message).toMatch(/Services → People API/);
+  });
+
   it('says Google is not connected rather than calling nothing', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -278,6 +344,46 @@ describe('the catalogue and the script it is a contract with', () => {
     };
     expect(manifest.webapp.access).toBe('ANYONE_ANONYMOUS');
     expect(manifest.webapp.executeAs).toBe('USER_DEPLOYING');
+  });
+
+  it('renders JavaScript that actually parses', () => {
+    // The script lives in a template literal, so NOTHING else checks it:
+    // tsc sees a string, eslint sees a string, and a stray brace would
+    // ship to every customer and fail at paste time with a syntax error
+    // in a file they did not write. vm.Script compiles without running.
+    expect(() => new Script(renderBridgeSource(SECRET))).not.toThrow();
+  });
+
+  it('declares an advanced service for every one the script uses', () => {
+    const source = renderBridgeSource(SECRET);
+    const manifest = JSON.parse(BRIDGE_MANIFEST) as {
+      dependencies: { enabledAdvancedServices: { userSymbol: string }[] };
+    };
+    const declared = manifest.dependencies.enabledAdvancedServices.map(
+      (svc) => svc.userSymbol,
+    );
+    // Each of these is a global that only exists once the service is added
+    // in the editor; using one without declaring it throws "X is not
+    // defined" at run time, inside somebody else's Google account.
+    for (const symbol of ['Calendar', 'People', 'Tasks']) {
+      if (new RegExp(`\\b${symbol}\\.`).test(source)) {
+        expect(declared).toContain(symbol);
+      }
+    }
+  });
+
+  it('asks for the three Tier 1 scopes and no restricted one', () => {
+    for (const scope of ['auth/contacts', 'auth/documents', 'auth/tasks']) {
+      expect(BRIDGE_MANIFEST).toContain(scope);
+    }
+  });
+
+  it('stamps the current BRIDGE_VERSION into the script', () => {
+    // The version travels home in every reply and is what tells a
+    // workspace its deployment is behind the catalogue.
+    expect(renderBridgeSource(SECRET)).toContain(
+      `const BRIDGE_VERSION = ${BRIDGE_VERSION}`,
+    );
   });
 
   it('has no create_meet action', () => {

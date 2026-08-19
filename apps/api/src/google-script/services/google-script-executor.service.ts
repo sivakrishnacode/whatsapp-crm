@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
-import { findGoogleScriptAction } from '../google-script.catalog';
+import { BRIDGE_VERSION, findGoogleScriptAction } from '../google-script.catalog';
 import type { GoogleScriptCallResult } from '../google-script.types';
 import { GoogleScriptConnectionService } from './google-script-connection.service';
 
@@ -101,10 +101,16 @@ export class GoogleScriptExecutorService {
       if (parsed.ok === false) {
         throw new GoogleScriptError(this.explain(String(parsed.error ?? 'unknown error')));
       }
-      await this.connections.recordSuccess(accountId);
+      // The script echoes the version it was generated with. Storing it on
+      // every success is what lets Integrations offer an update BEFORE an
+      // automation fails on an action the deployed script has never heard
+      // of — the only honest moment to mention it.
+      const reported =
+        typeof parsed.version === 'number' ? parsed.version : undefined;
+      await this.connections.recordSuccess(accountId, reported);
       // `ok` and `action` are protocol, not result — strip them so
       // `context.steps[<key>]` holds only what the action produced.
-      const { ok: _ok, action: _action, ...output } = parsed;
+      const { ok: _ok, action: _action, version: _version, ...output } = parsed;
       return { output, detail: this.detailFor(actionId, output) };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -217,8 +223,21 @@ export class GoogleScriptExecutorService {
         'Integrations → Google and paste the new script in.'
       );
     }
+    if (/^unknown action/.test(error)) {
+      // The deployed script predates this action. Says so plainly rather
+      // than echoing Google — the customer cannot tell "we shipped
+      // something new" from "the integration is broken" otherwise.
+      return (
+        `${error}. The script deployed in your Google account is older than ` +
+        `this action (Converse360 is on bridge v${BRIDGE_VERSION}). ` +
+        'Regenerate it in Settings → Integrations → Google and redeploy.'
+      );
+    }
     if (/is not defined/.test(error)) {
-      return `${error}. In the Apps Script editor, add Services → Calendar API.`;
+      // Which advanced service is missing is in the message: "Calendar is
+      // not defined", "People is not defined", "Tasks is not defined".
+      const service = /^(\w+) is not defined/.exec(error)?.[1] ?? 'the';
+      return `${error}. In the Apps Script editor, add Services → ${service} API.`;
     }
     if (/Meet API/.test(error)) {
       return `${error}. Use "Add a Google Meet link" on Create calendar event instead.`;

@@ -3,6 +3,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { decrypt, encrypt } from '../../common/security/encryption.util';
+import { BRIDGE_VERSION } from '../google-script.catalog';
 import type { GoogleScriptConnectionSummary } from '../google-script.types';
 
 /**
@@ -184,6 +185,9 @@ export class GoogleScriptConnectionService {
         lastError: null,
         lastErrorAt: null,
         createdAt: null,
+        scriptVersion: null,
+        currentVersion: BRIDGE_VERSION,
+        updateAvailable: false,
       };
     }
     return {
@@ -193,6 +197,10 @@ export class GoogleScriptConnectionService {
       lastError: row.lastError,
       lastErrorAt: row.lastErrorAt?.toISOString() ?? null,
       createdAt: row.createdAt.toISOString(),
+      scriptVersion: row.scriptVersion,
+      currentVersion: BRIDGE_VERSION,
+      updateAvailable:
+        row.scriptVersion !== null && row.scriptVersion < BRIDGE_VERSION,
     };
   }
 
@@ -208,11 +216,21 @@ export class GoogleScriptConnectionService {
     return id.length > 6 ? `…${id.slice(-6)}` : id;
   }
 
-  async recordSuccess(accountId: string): Promise<void> {
+  /**
+   * `version` is what the script reported. Undefined leaves the stored
+   * value alone rather than clearing it — a reply without a version means
+   * an older script, not that the last known version stopped being true.
+   */
+  async recordSuccess(accountId: string, version?: number): Promise<void> {
     await this.prisma.google_script_connections
       .update({
         where: { account_id: accountId },
-        data: { lastOkAt: new Date(), lastError: null, lastErrorAt: null },
+        data: {
+          lastOkAt: new Date(),
+          lastError: null,
+          lastErrorAt: null,
+          ...(typeof version === 'number' ? { scriptVersion: version } : {}),
+        },
       })
       // Health bookkeeping must never fail the call it describes.
       .catch(() => undefined);

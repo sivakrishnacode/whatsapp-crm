@@ -67,6 +67,9 @@ export interface GoogleScriptSummary {
   lastError: string | null;
   lastErrorAt: string | null;
   createdAt: string | null;
+  scriptVersion: number | null;
+  currentVersion: number;
+  updateAvailable: boolean;
 }
 
 export type GoogleScriptConnectionStatus =
@@ -89,6 +92,18 @@ export interface GoogleScriptConnection {
    * that just went wrong and sends people hunting for a fixed problem.
    */
   lastErrorAt: string | null;
+  /**
+   * The deployed script is older than the current catalogue.
+   *
+   * ⚠️ NOT an error state. Everything the customer already built keeps
+   * working; only the actions added since their script was generated are
+   * missing. So this is an offer, never a warning — and it is deliberately
+   * ranked BELOW `error` in the status, because "a call is failing" is
+   * always the more urgent thing to say.
+   */
+  updateAvailable: boolean;
+  scriptVersion: number | null;
+  currentVersion: number;
 }
 
 /**
@@ -114,6 +129,9 @@ export function googleConnectionFromSummary(
     lastTestedAt: summary.lastOkAt,
     lastError: summary.lastError,
     lastErrorAt: summary.lastErrorAt,
+    updateAvailable: summary.updateAvailable,
+    scriptVersion: summary.scriptVersion,
+    currentVersion: summary.currentVersion,
   };
 }
 

@@ -41,7 +41,7 @@ import type { GoogleScriptAction } from './google-script.types';
  * version it was generated with; a mismatch is shown as "your script is
  * out of date" rather than left to fail as an unknown action.
  */
-export const BRIDGE_VERSION = 1;
+export const BRIDGE_VERSION = 2;
 
 const RECIPIENT_HELP =
   'One address, or several separated by commas. Tokens like {{ contact.email }} work.';
@@ -90,6 +90,13 @@ export const GOOGLE_SCRIPT_ACTIONS: GoogleScriptAction[] = [
         help: 'Where replies should land, if not the sending address.',
       },
       { key: 'from_name', label: 'From name', kind: 'text', tokens: true },
+      {
+        key: 'attachments',
+        label: 'Attachments',
+        kind: 'value_list',
+        tokens: true,
+        help: 'Up to 5 file URLs — paste from Media, or use a token from an earlier step.',
+      },
     ],
   },
 
@@ -167,6 +174,103 @@ export const GOOGLE_SCRIPT_ACTIONS: GoogleScriptAction[] = [
           { value: 'all', label: 'Yes, notify everyone' },
           { value: 'externalOnly', label: 'Only people outside the org' },
         ],
+      },
+    ],
+  },
+  {
+    id: 'update_event',
+    service: 'calendar',
+    label: 'Reschedule an event',
+    description: 'Move or edit an event booked earlier. Send only what changes.',
+    irreversible: true,
+    outputs: ['event_id', 'html_link', 'meeting_url'],
+    inputs: [
+      {
+        key: 'event_id',
+        label: 'Event id',
+        kind: 'text',
+        required: true,
+        tokens: true,
+        placeholder: '{{ steps.book.event_id }}',
+        help: 'From the Create calendar event step that made it. Nothing searches your calendar for one.',
+      },
+      { key: 'starts_at', label: 'New start', kind: 'text', tokens: true },
+      { key: 'ends_at', label: 'New end', kind: 'text', tokens: true },
+      { key: 'title', label: 'New title', kind: 'text', tokens: true },
+      { key: 'description', label: 'New description', kind: 'long_text', tokens: true },
+      { key: 'timezone', label: 'Timezone', kind: 'text', tokens: false },
+      {
+        key: 'notify',
+        label: 'Tell the attendees',
+        kind: 'select',
+        tokens: false,
+        default: 'all',
+        options: [
+          { value: 'all', label: 'Yes, notify everyone' },
+          { value: 'externalOnly', label: 'Only people outside the org' },
+          { value: 'none', label: 'No notifications' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'delete_event',
+    service: 'calendar',
+    label: 'Cancel an event',
+    description: 'Take an event off the calendar. Already gone counts as success.',
+    irreversible: true,
+    outputs: ['deleted'],
+    inputs: [
+      {
+        key: 'event_id',
+        label: 'Event id',
+        kind: 'text',
+        required: true,
+        tokens: true,
+        placeholder: '{{ steps.book.event_id }}',
+      },
+      {
+        key: 'notify',
+        label: 'Tell the attendees',
+        kind: 'select',
+        tokens: false,
+        default: 'all',
+        options: [
+          { value: 'all', label: 'Yes' },
+          { value: 'none', label: 'No' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'find_events',
+    service: 'calendar',
+    label: 'Find events',
+    description: "What's on between two instants. Reads titles and times.",
+    outputs: ['events', 'count'],
+    inputs: [
+      {
+        key: 'from',
+        label: 'From',
+        kind: 'text',
+        required: true,
+        tokens: true,
+        placeholder: '{{ now.iso }}',
+      },
+      { key: 'to', label: 'To', kind: 'text', required: true, tokens: true },
+      {
+        key: 'query',
+        label: 'Containing',
+        kind: 'text',
+        tokens: true,
+        help: 'Optional free-text match on the event.',
+      },
+      {
+        key: 'max',
+        label: 'Most to return',
+        kind: 'number',
+        tokens: false,
+        default: 10,
       },
     ],
   },
@@ -273,12 +377,121 @@ export const GOOGLE_SCRIPT_ACTIONS: GoogleScriptAction[] = [
       },
     ],
   },
+  {
+    id: 'sheet_delete_row',
+    service: 'sheets',
+    label: 'Delete a row',
+    description: 'Find a row by a column value and remove it.',
+    irreversible: true,
+    outputs: ['found', 'row'],
+    inputs: [
+      { key: 'spreadsheet_id', label: 'Spreadsheet', kind: 'text', required: true, tokens: false },
+      { key: 'tab', label: 'Tab', kind: 'text', tokens: false, placeholder: 'Leads' },
+      { key: 'column', label: 'Search column', kind: 'text', required: true, tokens: false },
+      { key: 'value', label: 'Search for', kind: 'text', required: true, tokens: true },
+    ],
+  },
+  /* ------------------------------------------------------------------
+   * Tier 1 — one new scope each, all verified NON-restricted against
+   * Google's current restricted list (which is Gmail, Drive, Fit, Chat,
+   * Data Portability, Photos Ambient and Health). Adding these costs every
+   * customer a re-paste AND a re-authorize, which is why they ship in one
+   * version bump rather than one at a time.
+   * ------------------------------------------------------------------ */
+
+  {
+    id: 'contact_save',
+    service: 'contacts',
+    label: 'Save to Google Contacts',
+    description: "Put the person in the account's own address book, so they show up on the phone.",
+    irreversible: true,
+    outputs: ['resource_name', 'created'],
+    inputs: [
+      {
+        key: 'name',
+        label: 'Name',
+        kind: 'text',
+        required: true,
+        tokens: true,
+        placeholder: '{{ contact.name }}',
+      },
+      {
+        key: 'phone',
+        label: 'Phone',
+        kind: 'text',
+        tokens: true,
+        placeholder: '{{ contact.phone }}',
+        help: 'Also what an existing entry is matched on, so a re-run updates rather than duplicates.',
+      },
+      { key: 'email', label: 'Email', kind: 'text', tokens: true },
+      { key: 'company', label: 'Company', kind: 'text', tokens: true },
+      { key: 'notes', label: 'Notes', kind: 'long_text', tokens: true },
+    ],
+  },
+
+  {
+    id: 'create_doc',
+    service: 'docs',
+    label: 'Create a document',
+    description: 'Write a quote, receipt or summary and get a link back.',
+    irreversible: true,
+    outputs: ['document_id', 'url'],
+    inputs: [
+      {
+        key: 'title',
+        label: 'Title',
+        kind: 'text',
+        required: true,
+        tokens: true,
+        placeholder: 'Quote for {{ contact.name }}',
+      },
+      {
+        key: 'body',
+        label: 'Contents',
+        kind: 'long_text',
+        required: true,
+        tokens: true,
+        help: 'Plain text. Tokens are filled in before the document is written.',
+      },
+    ],
+  },
+
+  {
+    id: 'create_task',
+    service: 'tasks',
+    label: 'Add a task',
+    description: "Put a follow-up on the account's own Google Tasks list.",
+    irreversible: true,
+    outputs: ['task_id'],
+    inputs: [
+      {
+        key: 'title',
+        label: 'Task',
+        kind: 'text',
+        required: true,
+        tokens: true,
+        placeholder: 'Call {{ contact.name }} back',
+      },
+      { key: 'notes', label: 'Notes', kind: 'long_text', tokens: true },
+      {
+        key: 'due',
+        label: 'Due date',
+        kind: 'text',
+        tokens: true,
+        placeholder: '2026-08-25',
+        help: 'A date, not a time — Google Tasks ignores the time of day.',
+      },
+    ],
+  },
 ];
 
 export const GOOGLE_SERVICE_LABELS: Record<string, string> = {
   gmail: 'Gmail',
   calendar: 'Calendar & Meet',
   sheets: 'Sheets',
+  contacts: 'Contacts',
+  docs: 'Docs',
+  tasks: 'Tasks',
 };
 
 export function findGoogleScriptAction(id: string): GoogleScriptAction | undefined {
