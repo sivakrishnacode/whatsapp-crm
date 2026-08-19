@@ -335,11 +335,32 @@ export interface CreateCampaignArgs {
   /** Minor units. Campaign-level budget is optional (we budget per ad set). */
   dailyBudgetMinor?: number;
   lifetimeBudgetMinor?: number;
+  /**
+   * May the campaign's ad sets lend each other up to 20% of their daily
+   * budget? Only meaningful WITHOUT a campaign budget, and Meta refuses
+   * to guess — see the note on `createCampaign`. Defaults to `false`.
+   */
+  adSetBudgetSharing?: boolean;
 }
 
 export async function createCampaign(
   args: CreateCampaignArgs,
 ): Promise<{ id: string }> {
+  // ⚠ Every builder budgets per AD SET, so this campaign carries no
+  // budget — and Meta then REQUIRES an explicit true/false for
+  // `is_adset_budget_sharing_enabled` ("Must specify True or False…",
+  // which is a 400 on create, i.e. nothing publishes at all). It won't
+  // default the answer because either one moves real money.
+  //
+  // `false` is the honest default: the wizard publishes one ad set per
+  // campaign, so there is nobody to share with, and `true` would let
+  // Meta reallocate spend away from what the customer configured.
+  // Omitted entirely when a campaign budget IS set — the field is not
+  // applicable to CBO and Meta rejects it there.
+  const hasCampaignBudget =
+    args.dailyBudgetMinor !== undefined ||
+    args.lifetimeBudgetMinor !== undefined;
+
   const { data } = await graphRequest<{ id: string }>({
     path: `/${toActPath(args.adAccountId)}/campaigns`,
     accessToken: args.accessToken,
@@ -352,6 +373,9 @@ export async function createCampaign(
       buying_type: args.buyingType,
       daily_budget: args.dailyBudgetMinor,
       lifetime_budget: args.lifetimeBudgetMinor,
+      is_adset_budget_sharing_enabled: hasCampaignBudget
+        ? undefined
+        : (args.adSetBudgetSharing ?? false),
     },
     fallbackError: 'Meta rejected the campaign.',
   });
