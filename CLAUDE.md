@@ -153,12 +153,29 @@ one login administering a dozen clients.
   realtime channel and cache is account-keyed, and a soft switch leaves the old
   workspace's subscriptions live, delivering one client's messages into
   another's inbox.
-- **The switcher is the header chip** (`components/workspace/workspace-switcher.tsx`)
-  — it already showed the workspace logo and name. It renders with one workspace
-  too (no chevron), carries a per-row standing dot, and ⚠️ **must stay reachable
-  on `/billing` and `/welcome`**: an agency whose one client lapsed is bounced
-  there and needs a way back to a workspace that works. `grace` is dunning and
-  still entitled — never paint it like `lapsed`.
+- **The switcher is the first row of the primary rail**
+  (`components/workspace/workspace-switcher.tsx`), in the slot the disabled
+  search placeholder used to hold — above every link whose contents it decides.
+  It renders with one workspace too (no chevron), carries a per-row standing
+  dot AND the reason in text, and ⚠️ **must stay reachable on `/billing` and
+  `/welcome`**: an agency whose one client lapsed is bounced there and needs a
+  way back to a workspace that works. `grace` is dunning and still entitled —
+  never paint it like `lapsed`. At the rail's collapsed 56px width the name
+  hides but the logo does not.
+- ⚠️ **Menus here are Base UI, not Radix.** `Menu.Item` has `onClick` and
+  `closeOnClick`; there is NO `onSelect`, and passing one is spread onto the DOM
+  and silently ignored — the switcher shipped that way and clicking a workspace
+  did nothing, with no error anywhere. And `DropdownMenuLabel` is
+  `Menu.GroupLabel`, which THROWS (Base UI error #31) outside a
+  `DropdownMenuGroup`, taking the page down with it; that one is issue #336 and
+  `ui/dropdown-menu-group-label.test.tsx` now scans every call site for it, not
+  just the primitive.
+- **After sign-in, `/select-workspace` asks which one** when there is more than
+  one, and forwards silently otherwise. Reached through
+  `DEFAULT_POST_AUTH_PATH`, the seam password login, Google OAuth and email
+  confirmation already share. It sits OUTSIDE the dashboard shell because the
+  shell's gate resolves a workspace and gates on that workspace's plan — the
+  work this page exists to happen before.
 - ⚠️ **"Member of no workspace" is a REAL state**, not an error:
   `remove_account_member` deliberately stopped minting a replacement personal
   workspace, because conjuring an empty unpaid one for somebody just removed
