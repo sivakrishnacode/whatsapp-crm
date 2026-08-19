@@ -764,13 +764,11 @@ export type AutomationStepType =
   // HTTP request whose response later steps can read. `send_webhook` is
   // its fire-and-forget ancestor, kept so existing automations run.
   | 'http_request'
-  // A named action on a connected app — \"Google Sheets: Append row\".
-  // ONE step type for every app and every action: the app and action are
-  // data in step_config, resolved through the connector catalogue served
-  // by GET /api/connections/catalog. The picker still lists each action
-  // separately. See docs/app-connections.md.
-  // ⚠️ DEPRECATED — replaced by `google_action`. Kept so saved automations
-  // still render; the executor no longer handles it.
+  // ⚠️ DEPRECATED (migration 092) — replaced by `google_action`. It named
+  // an action on an OAuth-connected app and carried a `connection_id`.
+  // Kept ONLY so a saved automation still renders instead of showing a
+  // blank node; the executor no longer handles it, so such a step is
+  // skipped silently. There were zero rows of this type when 092 shipped.
   | 'app_action'
   // A Google action executed via the workspace's Apps Script bridge.
   // Config is `{ action, input }` — no connection_id, no app field.

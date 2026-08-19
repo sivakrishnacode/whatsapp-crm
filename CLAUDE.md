@@ -57,7 +57,7 @@ Prisma client before compiling anything that needs it.
 ## Backend — `apps/api` (NestJS)
 
 - **Entry** `src/main.ts`: `cookie-parser`, global `ValidationPipe({ whitelist: true, transform: true })`, listens on `PORT ?? 8001`. No global route prefix — controllers own their full path.
-- **Feature modules** (`src/app.module.ts`): `prisma`, `common` (redis, rate-limit, security, messaging, phone), `queue` (BullMQ), `auth`, `health`, `automations`, `flows`, `v1`, `whatsapp`, `instagram`, `web`, `forms`, `account`, `integrations`, `ecommerce`, `campaigns`, `subscription`, `onboarding`, `ai`, `ads`.
+- **Feature modules** (`src/app.module.ts`): `prisma`, `common` (redis, rate-limit, security, messaging, phone), `queue` (BullMQ), `auth`, `health`, `automations`, `flows`, `v1`, `whatsapp`, `instagram`, `web`, `forms`, `account`, `integrations`, `google-script`, `ecommerce`, `campaigns`, `subscription`, `onboarding`, `ai`, `ads`.
 - **Two API surfaces by controller prefix:**
   - `@Controller('v1/...')` — the **public/partner REST API** (`v1/me`, `v1/messages`, `v1/webhooks`, `v1/broadcasts`, `v1/contacts`, `v1/conversations`). Lives in `src/v1/{controllers,services,types,utils}`. See `docs/public-api.md`.
   - `@Controller('whatsapp/...')` — **internal dashboard/webhook** endpoints consumed by the web app.
@@ -100,7 +100,7 @@ Internal operations panel: subscriptions and their amounts, sales, **tenant work
 - The CLI reads `DATABASE_URL` from `apps/api/.env` via `packages/database/prisma.config.ts`. Run `npm run db:generate` from the root after any schema edit.
 - Migrations also tracked as raw SQL in `supabase/migrations/`.
 - ⚠️ **Supabase Storage buckets are written from the BROWSER, not the API** (`avatars`, `flow-media` 016/020, `chat-media` 023, `workspace-logos` 071). The bucket's RLS policy is therefore the _only_ gate on those writes — it must carry the authorization itself, including any role check. Account-scoped buckets all use the path convention `account-<account_id>/…` matched on the first folder segment, built in one place by `buildMediaPath()` (`apps/web/src/lib/storage/upload-media.ts`); a hand-rolled path is silently rejected. When such a URL is later persisted to a column, pin it to our own bucket _and_ the caller's own folder server-side (`common/storage/workspace-logo.util.ts`) — a free-text URL that renders in every teammate's browser is a beacon.
-- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `forms`/`form_submissions`/`form_bookings` (migrations 054/055 — the form builder), `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs` (workspace AI settings)/`ai_agents`/`ai_agent_knowledge`/`ai_agent_action_links` (migration 084 — several agents per workspace)/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `app_connections` (migration 082 — OAuth app connectors), `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
+- **Domain models (public):** `Account`/`Profile`/`ApiKey` (tenancy + access), `account_onboarding`/`plan_enquiries` (guided signup), `contacts`/`contact_*`/`tags`/`custom_fields`, `contact_segments`/`contact_segment_members` (migration 076 — named audiences), `conversations`/`messages`/`message_reactions`/`message_templates`, `broadcasts`/`broadcast_recipients`/`campaign_schedules`, `pipelines`/`pipeline_stages`/`deals`, `forms`/`form_submissions`/`form_bookings` (migrations 054/055 — the form builder), `Automation`/`AutomationStep`/`AutomationLog`/`AutomationPendingExecution`, `Flow`/`FlowNode`/`FlowRun`/`FlowRunEvent`/`flow_state`, `whatsapp_config`/`whatsapp_products`/`whatsapp_orders`, `ecommerce_*`, `ai_configs` (workspace AI settings)/`ai_agents`/`ai_agent_knowledge`/`ai_agent_action_links` (migration 084 — several agents per workspace)/`ai_knowledge_documents`/`ai_knowledge_chunks`/`ai_agent_actions` (migration 069 — agent studio), `ctwa_campaigns`/`ctwa_clicks`/`retargeting_audiences`, `google_script_connections` (migration 092 — the Apps Script bridge, replacing 082's OAuth connectors), `meta_ads_config`/`meta_ads_campaigns`/`meta_ads_adsets`/`meta_ads_ads`/`meta_ads_insights`/`meta_ads_media`/`meta_lead_forms`/`meta_ad_audiences`/`meta_ads_audit` (migration 068 — Ads Manager), `ai_credit_wallets`/`ai_credit_ledger`/`ai_credit_packs`/`ai_credit_orders` (migration 072 — platform-key credits), `subscription_plans`/`user_subscriptions`/`usage_tracking`, `webhook_endpoints`, `notifications`, `admin_audit_log` (migration 073 — written only by `apps/admin-panel`, no FKs on purpose so a row outlives what it describes).
 
 ## Auth & signup
 
@@ -435,64 +435,88 @@ list becomes sixty entries nobody dares delete.
   segment scope: a new scope is absent from every key already issued, so every
   live integration would 403 the day it shipped.
 
-## App connections — OAuth connectors (migration 082)
+## Google — the Apps Script bridge (migration 092, replacing 082)
 
-Google Sheets, Gmail, Calendar and Meet, connected once per workspace
-through a server-side OAuth redirect. Design: `docs/app-connections.md`.
-Lives in `apps/api/src/connections`, **not** `integrations/` (that module
+Gmail, Calendar, Meet and Sheets, through **one small script the customer
+deploys in their own Google account**. Guide: `docs/google-apps-script.md`.
+Lives in `apps/api/src/google-script`, **not** `integrations/` (that module
 is Zapier: pasted webhook URLs, no stored credential).
 
-- ⚠️⚠️ **EVERY SCOPE IS "SENSITIVE", NEVER "RESTRICTED", AND THAT IS THE
-  CENTRAL CONSTRAINT.** A restricted scope commits the product to an
-  annual **paid third-party CASA security assessment**; a sensitive scope
-  needs a one-off verification review. Two counter-intuitive consequences
-  that must not be "simplified" later: **Gmail is send-only and there is
-  no draft action** (`gmail.send` is sensitive, `gmail.compose` is
-  RESTRICTED because it can read drafts), and **nothing lists Drive
-  files** (spreadsheet ids are pasted from the URL; only the TABS inside
-  are listed). Pinned by `connections.test.ts`.
-- ⚠️ **`ConnectionTokenService` is the only place a token is decrypted.**
-  No token in a queue payload, an API response or a log line — Redis
-  stores job data in plaintext and Bull Board renders it. Refresh is
-  serialised per connection (`inFlight`) with a 120s expiry skew; an
-  `invalid_grant` sets `status = 'needs_reauth'` rather than retrying
-  forever, and **a refresh response that omits a refresh token must never
-  overwrite the stored one** or the connection dies days later.
-- ⚠️ **`app_connections` has RLS on with ZERO policies and rights
-  revoked** (like `admin_audit_log`). RLS is row-level: any
-  browser-readable policy hands `refresh_token` to PostgREST. API-only,
-  redacted projection. Add an endpoint, never a policy.
-- **ONE `app_action` step type for every app and every action.** The app
-  and action are data in `step_config`, resolved through
-  `ConnectorRegistryService`; the picker still lists each action
-  separately. Adding an action is a server-side change only — the
-  editor renders from `FieldSpec` served by `GET /connections/catalog`,
-  which is also what the API validates against, so a field cannot render
-  without validating.
-- ⚠️ **`connection_id` in a step config is author-supplied data, not
-  authority.** Every read is filtered by the running automation's
-  `account_id` — same trap as `segment_id`, bigger prize.
-- ⚠️ **FOUR APPS, ONE CONNECTION ROW — so "connected" is a SCOPE
-  question, never a provider one.** One Google grant is one token, and
-  incremental consent means connecting Sheets grants `spreadsheets` and
-  nothing else. `connectionsGranting()` (web) asks whether the scopes
-  THIS app's actions need are granted; `connectionsFor()` asks only about
-  the provider and is correct solely for a picker offering the account
-  the author obviously meant, paired with `missingScopes`. The
-  Integrations page and the step picker both used the provider one, so
-  connecting Sheets showed Gmail, Calendar and Meet as **Connected**
-  while every action on them would be refused by the executor's scope
-  check — a green badge for something that cannot run. Pinned by
-  `lib/automations/connectors.test.ts`. Google has no per-scope revoke
-  either, so disconnecting from one card kills the siblings; the confirm
-  names them.
-- The OAuth callback (`/connections/oauth/callback`) has **no auth
-  guard**: cross-site GET, authorised by the HMAC-signed `state`, which
-  signs with its own `CONNECTIONS_STATE_SECRET` so a state cannot be
-  replayed into the Instagram or Ads callbacks.
-- `lib/automations/app-presets.ts` (Slack, Notion, Airtable…) still
-  exists for the long tail and is honestly labelled "Other services" —
-  those are pre-filled `http_request` steps where you paste your own key.
+⚠️⚠️ **THE DIRECTION IS INVERTED, AND THAT IS THE WHOLE DESIGN.** 082 had
+Converse360 calling Google's APIs, which put the product behind Google's
+OAuth verification: an unverified-app interstitial on every customer's
+consent screen and a hard, unresettable **100-grant lifetime cap** on the
+project. Here the script runs under the CUSTOMER's own authority and we
+only call the script. Google never has to verify us, because we never call
+Google. The costs are real and must not be forgotten: **no update channel**
+for a script living in somebody else's account, **per-customer Apps Script
+quotas** (consumer Gmail caps sending at ~100 recipients/day), and failures
+that land in their execution log rather than ours.
+
+- **ONE INTEGRATION, ONE CARD, ONE ROW.** `google_script_connections` is
+  keyed UNIQUE on `account_id`: one deployment answers every action, so
+  "connected" has a single answer. 082 needed four cards because
+  incremental OAuth consent made it a per-scope question; nothing here is
+  granted incrementally, so four cards would be four ways of displaying one
+  credential.
+- ⚠️⚠️ **`exec_url` + `secret_encrypted` IS A CREDENTIAL FOR THE CUSTOMER'S
+  GOOGLE ACCOUNT** — a web app deployed "execute as me / anyone" acts as
+  them for whoever holds the URL, and unlike an OAuth token **we cannot
+  revoke it**; only they can, by deleting the deployment. Hence RLS on with
+  **zero policies** and rights revoked (like `admin_audit_log`), AES-256-GCM
+  at rest, decryption in `GoogleScriptConnectionService` alone, and never in
+  a queue payload, a response or a log line.
+- ⚠️ **WE MINT THE SECRET AND PRE-FILL IT INTO THE SCRIPT WE SERVE.**
+  Asking somebody to run `openssl rand -hex 32` and paste it into two places
+  is how `secret123` reaches production. `POST /google-script/provision` is
+  the ONE response in the product containing it; calling it again mints a
+  new one and orphans whatever is deployed, which the UI warns about.
+- ⚠️⚠️ **THE 302 IS THE NORMAL CASE AND IS FOLLOWED AS A `GET`.** Apps Script
+  answers a POST to `/exec` with a 302 to `script.googleusercontent.com`,
+  which serves the body. Replaying the POST there fetches Google's Drive
+  error page — HTML that reads exactly like a broken script, and which
+  produced a real misdiagnosis before this was pinned. Following it is also
+  what gives steps their OUTPUTS (`meeting_url`, a found row); without it
+  the bridge would need a callback, and the script would need a Converse360
+  API key. **The served script deliberately holds no credential of ours.**
+  Redirect targets are pinned to Apps Script's own hosts. Pinned by
+  `google-script.test.ts`.
+- ⚠️ **`normaliseExecUrl` is a HOST ALLOWLIST, not a generic SSRF check.**
+  Our server POSTs a secret to whatever that field says, so "publicly
+  routable" (what `http_request` settles for) would accept an attacker's
+  collector. `script.google.com` only, `/exec` only — the `/dev` URL is
+  refused by name because it looks identical in the Apps Script UI and
+  fails every automation with a login page.
+- **ONE `google_action` step type for every service and action.** The action
+  is data in `step_config`, resolved against the served catalogue
+  (`GET /google-script/catalog`), which is also what the API validates
+  against — so a field cannot render without validating.
+- ⚠️ **A step config names NO connection, NO url and NO secret**, which is
+  how 082's `connection_id` trap was removed rather than guarded: the
+  deployment is resolved from the running automation's `account_id` alone,
+  so there is nothing a hand-edit could repoint at another tenant.
+- ⚠️ **RESTRICTED SCOPES ARE STILL RESTRICTED** even inside a customer's own
+  script — it makes them invisible, not free. `gmail.send` only: no draft
+  action (`gmail.compose` can read drafts), nothing lists Drive files
+  (spreadsheet ids are pasted from the URL, tabs are typed). ⚠️ **There is
+  no standalone Meet action**: verified against a live deployment, a Meet
+  space needs the Meet API on a GCP project an Apps Script *default* project
+  cannot enable. `create_event` with `add_meet` returns a real
+  `meeting_url` through the Calendar API instead — which is also why
+  `meetings.space.created` is absent from the manifest.
+- **`BRIDGE_VERSION` is a wire contract with scripts already deployed.**
+  Renaming an action id or a field key breaks live automations against
+  scripts we cannot update; adding an action means every customer must
+  re-paste before it works.
+- **Setup is a four-step stepper** (`components/integrations/connected-apps.tsx`),
+  because two of the four steps happen inside Google. Steps 2 and 3 never
+  show a tick: we cannot observe what somebody did in the Apps Script
+  editor, and a tick we guessed at would be a lie. The error banner carries
+  `lastErrorAt` — a stale failure at the top of a setup wizard otherwise
+  reads as current and sends people hunting for a fixed problem.
+- `lib/automations/app-presets.ts` (Slack, Notion, Airtable…) still exists
+  for the long tail and is honestly labelled "Other services" — those are
+  pre-filled `http_request` steps where you paste your own key.
 
 ## Automations — canvas editor + step engine
 
@@ -638,42 +662,42 @@ keyed by `field_key`.
 - Submitting fires the `form_submitted` automation trigger and the
   `form.submitted` webhook — see the channel-less warning above.
 
-### Google Calendar & Meet on booking forms (migration 085)
+### Booking forms and Google (085, REMOVED by 092)
 
-Booking forms can read the owner's Google calendar for busy times and put
-each booking on it with a Meet link, through the existing
-`app_connections` OAuth connection (082) — **one Google connection per
-workspace already covers Sheets, Gmail, Calendar and Meet**, so nothing
-here mints a second.
+⚠️ **Booking forms no longer touch Google at all.** 085 gave them busy-time
+reads and calendar events with Meet links through the OAuth connector; 092
+removed that connector, and this went with it. Slots are computed from our
+own `form_bookings` alone, which is what a workspace that never connected a
+calendar always saw.
 
-- **Config lives in `forms.availability.calendar`**, not its own table: it
-  IS availability configuration, and `parseAvailability` stays the single
-  gate on a malformed one. Only the RESULT needs columns —
-  `form_bookings.calendar_event_id` / `meeting_url`.
-- ⚠️ **Every call is BEST-EFFORT and must never lose a booking.**
-  `BookingCalendarService` swallows its own failures: `busyIntervals`
-  returns nothing to subtract, the event methods return null. Both columns
-  are nullable and `calendar_event_id` has no unique constraint, because a
-  duplicate event is something a human deletes whereas a constraint
-  violation would roll back a booking already confirmed to a customer.
-- ⚠️ **Busy lookup fails OPEN, deliberately.** Offering a slot the owner is
-  busy for is a human apology; failing closed would offer NO times, which
-  is a booking page that silently stops taking bookings and is invisible
-  until someone asks why nobody booked this week.
-- **Google busy blocks are merged into the same list as our own bookings**
-  before `computeSlots`, so buffers, capacity and minimum notice keep
-  applying with no second code path.
-- ⚠️ **`connection_id` is author-supplied data, not authority** — same trap
-  as `segment_id` in an automation step config, bigger prize. Every use
-  goes through `ConnectorExecutionService.run({ accountId, ... })`, whose
-  `getAccessToken` filters `app_connections` by `account_id`.
-- The event is created **after** the booking row commits (creating it first
-  would leave an event for a booking that lost the slot race), and it is
-  **awaited** unlike `fanOut`, because the Meet link is part of the
-  confirmation the customer is about to see.
-- `FormsModule` imports `ConnectionsModule` WITHOUT `forwardRef` —
-  `ConnectionsModule` imports nothing, so it cannot be part of a cycle.
-  Module wiring is not caught by typecheck; boot the container.
+What survives, and why:
+
+- **`form_bookings.calendar_event_id` and `meeting_url` are still there**,
+  nullable and unwritten. Dropping columns costs more than it saves and they
+  are exactly the right shape if this is rebuilt on the bridge.
+- **`forms.availability` may still carry a `calendar` key** on rows saved
+  before 092. `parseAvailability` **ignores** it rather than rejecting it —
+  a stale sync setting must not take a working booking form offline.
+
+If it is rebuilt on the Apps Script bridge, keep the three properties that
+made the original correct, all of which are easy to lose in a rewrite:
+
+- ⚠️ **Busy lookup fails OPEN.** Offering a slot the owner is busy for costs
+  a human apology; failing closed offers NO times, which is a booking page
+  that silently stops taking bookings and is invisible until somebody asks
+  why nobody booked this week.
+- **Busy blocks merge into the SAME list as our own bookings** before
+  `computeSlots`, so buffers, capacity and minimum notice keep applying with
+  no second code path.
+- **The event is created AFTER the booking row commits** — creating it first
+  leaves an event for a booking that lost the slot race — and is **awaited**
+  unlike `fanOut`, because the Meet link is part of the confirmation the
+  customer is about to see.
+
+And one trap that is now gone by construction: the old config carried a
+`connection_id`, author-supplied data that every read had to re-scope to the
+form's account. The bridge is resolved from `account_id` alone, so there is
+no id to defend against — do not reintroduce one.
 
 ## Flows — the WhatsApp chatbot builder
 
@@ -757,7 +781,7 @@ fire-and-forget — nothing recorded what existed, so the same file was
 re-uploaded per node and "how much are we storing?" was unanswerable.
 
 - **Browser-written under RLS**, like the buckets it describes, and
-  deliberately unlike `app_connections`: it holds a filename, a size and
+  deliberately unlike `google_script_connections`: it holds a filename, a size and
   a URL that is already public. There is no API endpoint and should not
   be. `apps/web/src/lib/media/library.ts` is the whole data layer.
 - ⚠️ **Upload is TWO writes and they can half-fail.** Object first, then

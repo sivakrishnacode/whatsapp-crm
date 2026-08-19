@@ -15,10 +15,10 @@ import { V1Module } from '../v1/v1.module';
  *   controller, service and processor moved to `src/ads`, resolving their
  *   tenant through `meta_ads_config` instead.
  *
- *   OAuth app connections — Google Sheets, Gmail, Calendar, Meet — are
- *   NOT here either. They are `src/connections`, which owns token
- *   storage, refresh and the connector catalogue for every provider.
- *   See docs/app-connections.md.
+ *   Google — Sheets, Gmail, Calendar, Meet — is NOT here either. It is
+ *   `src/google-script`, which owns the workspace's Apps Script bridge:
+ *   the deployment URL, its encrypted secret and the action catalogue.
+ *   See docs/google-apps-script.md.
  *
  * What remains is Zapier: outbound webhook endpoints registered by the
  * user, with no OAuth and no stored third-party credential.

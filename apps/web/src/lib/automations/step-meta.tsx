@@ -177,9 +177,10 @@ export interface StepMeta {
    * Hidden from the add menu because it is offered a BETTER way.
    *
    * Distinct from `deprecated`, which means "do not use this any more".
-   * `app_action` is hidden because the dialog lists connected apps and
-   * their individual actions instead — the step type is current, it just
-   * has no useful generic entry.
+   * `google_action` is hidden because the add dialog lists each Google
+   * action individually — the step type is current, it just has no
+   * useful generic entry. (`app_action` is hidden AND deprecated: it is
+   * gone, and only renders so old automations are not blank.)
    */
   hidden?: boolean;
 }

@@ -71,11 +71,15 @@ const TRIGGERS: Record<string, string> = {
  * Step types offered to the model, with the exact config keys allowed.
  *
  * A step type absent from here cannot appear in a draft at all — which
- * is why `send_webhook` and `close_conversation` are missing (both
- * superseded, see STEP_META.deprecated) and why `run_automation`,
- * `start_flow` and `app_action` are missing too: all three need an id of
+ * is why `send_webhook`, `close_conversation` and `app_action` are
+ * missing (all superseded, see STEP_META.deprecated) and why
+ * `run_automation` and `start_flow` are missing too: both need an id of
  * something in the workspace, so the model can only ever produce a
- * broken one. Those are jobs for the builder, and the draft says so in
+ * broken one.
+ *
+ * `google_action` is absent for a third reason: its fields are a wire
+ * contract with a script deployed in the customer's Google account, and
+ * a drafted spreadsheet id or ISO timestamp would be invented. Those are jobs for the builder, and the draft says so in
  * `needs` when the request clearly wanted one.
  */
 interface StepSpec {

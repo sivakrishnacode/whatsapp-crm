@@ -2,12 +2,13 @@
  * Third-party apps in the step picker.
  *
  * ⚠️ NOT EVERY APP IS A PRESET ANY MORE — READ THIS BEFORE ADDING ONE.
- *   Google Sheets, Gmail, Google Calendar and Google Meet GRADUATED to
- *   real OAuth connectors (`src/connections` in the API, the `app_action`
- *   step type, docs/app-connections.md). They have stored connections,
- *   refreshable tokens and typed action catalogues. Do not add a preset
- *   for any of them: two Google Sheets entries in one picker — one real,
- *   one asking for an Apps Script URL — is worse than either alone.
+ *   Gmail, Calendar, Meet and Sheets are a real integration: the
+ *   workspace's Apps Script bridge (`src/google-script` in the API, the
+ *   `google_action` step type, docs/google-apps-script.md). It has a
+ *   stored deployment, an encrypted secret and a typed action catalogue.
+ *   Do not add a preset for any of them: two Google Sheets entries in one
+ *   picker — one wired to the bridge, one asking the author to paste a
+ *   URL and a key — is worse than either alone.
  *
  *   The step picker shows connected apps FIRST and these second, under
  *   "Other services", so the difference is visible rather than implied.

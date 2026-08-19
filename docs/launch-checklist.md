@@ -7,7 +7,7 @@ Deep detail lives elsewhere and is linked per step:
 [meta-platform-setup.md](meta-platform-setup.md) (Meta, in full) ·
 [../deploy/README.md](../deploy/README.md) (proxy) ·
 [../deploy/WEBHOOKS.md](../deploy/WEBHOOKS.md) (callback URLs) ·
-[app-connections.md](app-connections.md) (Google) ·
+[google-apps-script.md](google-apps-script.md) (Google) ·
 [razorpay.md](razorpay.md) · [subscription-setup.md](subscription-setup.md).
 
 Hostnames used throughout — substitute your own:
@@ -150,7 +150,6 @@ Do this once, write them into a password manager, then into the env files.
 | `INSTAGRAM_WEBHOOK_VERIFY_TOKEN` | `openssl rand -hex 16` | Same. |
 | `FACEBOOK_WEBHOOK_VERIFY_TOKEN` | `openssl rand -hex 16` | Same. |
 | `WEB_IP_HASH_SALT` | `openssl rand -hex 32` | **Never rotate** — invalidates every stored visitor hash. |
-| `CONNECTIONS_STATE_SECRET` | `openssl rand -hex 32` | Its own secret, never shared with Instagram or Ads. |
 | `ADMIN_SESSION_SECRET` | `openssl rand -base64 48` | Rotating = log every admin out. |
 | `ADMIN_PASSWORD` | long passphrase | Never reuse a CRM password. |
 | `QUEUE_DASHBOARD_PASSWORD` | `openssl rand -hex 24` | Bull Board shows every tenant's job payloads. |
@@ -285,11 +284,11 @@ All on the **api** host — third parties call them, so they cannot go through t
 ### 6.3 Plans
 - [ ] Migration 044 seeds STARTER / GROWTH / ENTERPRISE (FREE is retired by 066). Set real prices in the **admin panel** — `SubscriptionService.listSelectablePlans()` reads the table live, so a price edit needs no deploy.
 
-### 6.4 Google app connections (Sheets / Gmail / Calendar / Meet) — [app-connections.md](app-connections.md)
-- [ ] A **separate Google Cloud project** from the Supabase login one. Verification, scopes and quotas are per-project; a Workspace-scope review must not be able to block your login button.
-- [ ] Credentials → OAuth client ID → **Web application**. Leave *Authorised JavaScript origins* **empty** — server-side redirect flow only.
-- [ ] Authorised redirect URI: `https://app.converse360.in/api/connections/oauth/callback` → `GOOGLE_OAUTH_REDIRECT_URI` (exact match, no trailing slash).
-- [ ] Scopes are fixed in code and every one is **sensitive, never restricted**. Do not add `gmail.compose` or any Drive scope — that triggers an annual paid CASA assessment.
+### 6.4 Google — the Apps Script bridge (Sheets / Gmail / Calendar / Meet) — [google-apps-script.md](google-apps-script.md)
+- [ ] **Nothing to do in Google Cloud Console, and that is the point.** Migration 092 replaced the OAuth connector with a script each customer deploys in their own account, so there is no OAuth client, no consent screen, no verification review, and no 100-grant cap to plan around.
+- [ ] `ENCRYPTION_KEY` must be set — the workspace's bridge secret is AES-256-GCM at rest and provisioning fails without it.
+- [ ] Nothing else is env-configured. Each workspace sets itself up in **Settings → Integrations → Google**; the product generates the script, the secret and the manifest.
+- [ ] Do not add `gmail.compose`, `gmail.readonly` or any Drive scope to the served manifest. They are Google-**restricted**, and being inside a customer's own script makes them invisible, not free. Pinned by `google-script.test.ts`.
 
 ### 6.5 Built-in AI credits (optional)
 - [ ] Google AI Studio key → `AI_PLATFORM_GEMINI_KEY`. Leave unset and the product simply falls back to bring-your-own-key; nothing breaks.
@@ -352,11 +351,8 @@ AI_PLATFORM_MODEL=gemini-3.5-flash-lite
 AI_PLATFORM_EMBEDDINGS_MODEL=gemini-embedding-001
 AI_SIGNUP_GRANT_CREDITS=250
 
-# Google connections (optional)
-GOOGLE_OAUTH_CLIENT_ID=
-GOOGLE_OAUTH_CLIENT_SECRET=
-GOOGLE_OAUTH_REDIRECT_URI=https://app.converse360.in/api/connections/oauth/callback
-CONNECTIONS_STATE_SECRET=
+# Google (Sheets/Gmail/Calendar/Meet) needs no env: each workspace
+# deploys its own Apps Script bridge from Settings → Integrations.
 
 # Ops
 QUEUE_DASHBOARD_USER=ops
