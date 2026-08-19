@@ -108,7 +108,8 @@ export const AGENT_SKILLS: SkillDefinition[] = [
         key: 'qualified_when',
         label: 'Treat as qualified when',
         type: 'textarea',
-        placeholder: 'e.g. they have a budget over ₹50,000 and a timeline this quarter',
+        placeholder:
+          'e.g. they have a budget over ₹50,000 and a timeline this quarter',
         maxLength: 500,
       },
     ],
@@ -123,7 +124,8 @@ export const AGENT_SKILLS: SkillDefinition[] = [
           `Collect: ${fields.join(', ')}. Ask for at most two of these per message, conversationally — never send a numbered form.`,
         );
       }
-      if (qualified) parts.push(`Treat the lead as qualified when: ${qualified}.`);
+      if (qualified)
+        parts.push(`Treat the lead as qualified when: ${qualified}.`);
       parts.push(
         'Once you have the details, call `save_lead_details` exactly once to record them, then confirm to the customer that someone will follow up.',
       );
@@ -174,7 +176,8 @@ export const AGENT_SKILLS: SkillDefinition[] = [
         key: 'policy_notes',
         label: 'Policy notes',
         type: 'textarea',
-        placeholder: 'e.g. unopened items only, original packaging, customer pays return shipping',
+        placeholder:
+          'e.g. unopened items only, original packaging, customer pays return shipping',
         maxLength: 1000,
       },
     ],
@@ -196,16 +199,23 @@ export const AGENT_SKILLS: SkillDefinition[] = [
     id: 'appointments',
     label: 'Appointments',
     description:
-      'Shares your booking link and explains availability instead of guessing at slots.',
+      'Checks the real calendar and books, when Google is connected. Shares your booking link otherwise.',
     defaultEnabled: false,
-    tools: [],
+    /**
+     * ⚠️ These tools only reach the model when Google is actually
+     * connected — agent-runtime withholds them otherwise, and
+     * `book_meeting` is withheld again while drafting. So this prompt has
+     * to work in THREE states, which is why it branches on the tool names
+     * it was told about rather than assuming any of them exist.
+     */
+    tools: ['check_availability', 'book_meeting'],
     config: [
       {
         key: 'booking_url',
         label: 'Booking link',
         type: 'url',
         placeholder: 'https://…',
-        help: 'Paste a Converse360 booking page or any external scheduler.',
+        help: 'Used when Google is not connected, or as a fallback the agent can offer.',
         maxLength: 500,
       },
       {
@@ -213,23 +223,90 @@ export const AGENT_SKILLS: SkillDefinition[] = [
         label: 'Availability in words',
         type: 'textarea',
         placeholder: 'e.g. Mon–Fri 10:00–18:00 IST, closed on public holidays',
+        help: 'The hours to offer within. The calendar says what is BUSY; only you can say what is OPEN.',
         maxLength: 500,
+      },
+      {
+        key: 'slot_minutes',
+        label: 'Meeting length in minutes',
+        type: 'text',
+        placeholder: '30',
+        help: 'How long a booking runs, when the agent creates one.',
+        maxLength: 4,
       },
     ],
     prompt: (config) => {
       const url = skillText(config, 'booking_url');
       const availability = skillText(config, 'availability');
+      const slot = skillText(config, 'slot_minutes') || '30';
       const parts = [
         'Appointments: when the customer wants to book, meet or visit, help them book.',
       ];
-      if (availability) parts.push(`Availability: ${availability}.`);
+      if (availability) parts.push(`Working hours: ${availability}.`);
+      parts.push(
+        // The distinction the model gets wrong otherwise: a calendar tells
+        // you what is taken, never what is on offer. Without this it will
+        // cheerfully propose 3am because nothing is booked then.
+        `If you can check availability, do so before naming a time, and offer only times that are BOTH inside the working hours above AND not busy. A free calendar slot outside working hours is not available. Assume meetings run ${slot} minutes.`,
+        'Book only after the customer has agreed to a specific time. When you book, tell them the time and the meeting link you get back.',
+        'If you cannot check or book, never state that a slot is confirmed.',
+      );
       if (url) {
         parts.push(
-          `Send this exact booking link when they are ready: ${url}. Do not shorten, alter or invent a different link.`,
+          `Booking link, for when you cannot book directly or they prefer to choose themselves: ${url}. Do not shorten, alter or invent a different link.`,
+        );
+      }
+      return parts.join(' ');
+    },
+  },
+  {
+    id: 'google_workspace',
+    label: 'Google Workspace',
+    description:
+      'Logs to a spreadsheet, saves the customer to Contacts, and creates follow-up tasks.',
+    defaultEnabled: false,
+    tools: ['log_to_sheet', 'save_to_contacts', 'create_task'],
+    config: [
+      {
+        key: 'spreadsheet_id',
+        label: 'Spreadsheet id',
+        type: 'text',
+        placeholder: '1rTmaYRAgu0JdICCxR-Qg5MHJ5Ysb1HPhD5Bca9o8tUQ',
+        help: 'From the sheet URL, between /d/ and /edit. The agent can only APPEND to this one sheet.',
+        maxLength: 120,
+      },
+      {
+        key: 'sheet_tab',
+        label: 'Tab name',
+        type: 'text',
+        placeholder: 'Leads',
+        help: 'Blank uses the first tab. A name that does not exist fails every write.',
+        maxLength: 100,
+      },
+      {
+        key: 'columns',
+        label: 'Columns, left to right',
+        type: 'text',
+        placeholder: 'Date, Name, Phone, What they wanted',
+        help: 'Tells the agent what to put in each cell. Without it, it guesses.',
+        maxLength: 300,
+      },
+    ],
+    prompt: (config) => {
+      const columns = skillText(config, 'columns');
+      const parts = [
+        'Google Workspace: you can log an enquiry to the business spreadsheet, save the customer to the address book, and raise a follow-up task for a human.',
+      ];
+      if (columns) {
+        parts.push(
+          `When logging a row, the columns are, left to right: ${columns}.`,
         );
       }
       parts.push(
-        'You cannot see the live calendar, so never confirm a specific slot as booked — the booking page does that.',
+        // Volume control. Without it a chatty thread produces a task per
+        // message, and the owner stops reading the list.
+        'Log a row or save a contact ONCE per conversation, not per message. Raise a task only when something genuinely needs a person later — not for anything you have already handled.',
+        'These are silent bookkeeping. Do not narrate them to the customer or mention spreadsheets, contacts or tasks in your reply.',
       );
       return parts.join(' ');
     },
@@ -308,7 +385,8 @@ export const AGENT_SKILLS: SkillDefinition[] = [
         key: 'assignment_criteria',
         label: 'How to assign deals',
         type: 'textarea',
-        placeholder: 'e.g. assign to the sales director for deals over 50k, to team leads otherwise',
+        placeholder:
+          'e.g. assign to the sales director for deals over 50k, to team leads otherwise',
         help: 'Guidance for which team member should own each deal.',
         maxLength: 500,
       },
@@ -348,7 +426,8 @@ export const AGENT_SKILLS: SkillDefinition[] = [
     ],
     prompt: (config) => {
       const types = skillList(config, 'automation_types');
-      let prompt = 'Automation triggers: when a customer event warrants an internal action, ';
+      let prompt =
+        'Automation triggers: when a customer event warrants an internal action, ';
       if (types.length > 0) {
         prompt += `call \`trigger_automation\` to run: ${types.join(', ')}. `;
       } else {
@@ -375,7 +454,9 @@ export function findSkill(id: string): SkillDefinition | undefined {
  * must stop influencing prompts, and keeping its state around would
  * silently resurrect it if the id were ever reused.
  */
-export function resolveSkills(stored: AgentSkills | null | undefined): AgentSkills {
+export function resolveSkills(
+  stored: AgentSkills | null | undefined,
+): AgentSkills {
   const out: AgentSkills = {};
   for (const skill of AGENT_SKILLS) {
     const raw = stored?.[skill.id];
@@ -384,7 +465,8 @@ export function resolveSkills(stored: AgentSkills | null | undefined): AgentSkil
         ? (raw.config as Record<string, unknown>)
         : {};
     out[skill.id] = {
-      enabled: typeof raw?.enabled === 'boolean' ? raw.enabled : skill.defaultEnabled,
+      enabled:
+        typeof raw?.enabled === 'boolean' ? raw.enabled : skill.defaultEnabled,
       config,
     };
   }
@@ -396,10 +478,12 @@ export function enabledSkills(skills: AgentSkills): Array<{
   state: AgentSkillState;
 }> {
   const resolved = resolveSkills(skills);
-  return AGENT_SKILLS.filter((s) => resolved[s.id]?.enabled).map((definition) => ({
-    definition,
-    state: resolved[definition.id],
-  }));
+  return AGENT_SKILLS.filter((s) => resolved[s.id]?.enabled).map(
+    (definition) => ({
+      definition,
+      state: resolved[definition.id],
+    }),
+  );
 }
 
 /** Built-in tool names unlocked by the enabled skills, de-duplicated. */
@@ -424,7 +508,9 @@ export function sanitizeSkills(input: unknown): AgentSkills {
   for (const skill of AGENT_SKILLS) {
     const entry = raw[skill.id] as Record<string, unknown> | undefined;
     const enabled =
-      typeof entry?.enabled === 'boolean' ? entry.enabled : skill.defaultEnabled;
+      typeof entry?.enabled === 'boolean'
+        ? entry.enabled
+        : skill.defaultEnabled;
     const inputConfig = (entry?.config ?? {}) as Record<string, unknown>;
     const config: Record<string, unknown> = {};
 

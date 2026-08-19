@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -87,6 +87,31 @@ export function AgentStudio({ agentId }: { agentId: string }) {
 
   const [tab, setTab] = useState<StudioTab>(requested ?? 'persona');
   const [testOpen, setTestOpen] = useState(false);
+  /**
+   * Whether the workspace's Apps Script bridge is set up.
+   *
+   * Undefined until it loads, and readiness treats that as "no claim" —
+   * a checklist that flashes a warning on every page load is one people
+   * learn to ignore. Fetched here rather than folded into the studio
+   * payload because it is a WORKSPACE fact, shared by every agent, and
+   * the studio endpoint is per-agent.
+   */
+  const [googleConnected, setGoogleConnected] = useState<boolean | undefined>();
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/google-script', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { connection?: { connected?: boolean } } | null) => {
+        if (!cancelled) setGoogleConnected(Boolean(data?.connection?.connected));
+      })
+      // Silence is correct: a failed status check must not put a warning
+      // on the agent, which has nothing to do with it.
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (missing) {
     return (
@@ -156,7 +181,11 @@ export function AgentStudio({ agentId }: { agentId: string }) {
       </div>
 
       <div className="mt-4">
-        <AgentReadiness studio={studio} onGoToTab={setTab} />
+        <AgentReadiness
+          studio={studio}
+          onGoToTab={setTab}
+          googleConnected={googleConnected}
+        />
       </div>
 
       <Tabs

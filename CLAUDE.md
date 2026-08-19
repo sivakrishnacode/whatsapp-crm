@@ -255,6 +255,25 @@ Everything below is account-scoped configuration on `ai_configs` (one row per wo
   skills deliberately: "never promise same-day delivery" must outrank anything a skill
   or a retrieved document implies. `ai_configs.system_prompt` is the pre-069 free-text
   field — still appended, never dropped, because older accounts have everything in it.
+- ⚠️ **THE GOOGLE TOOLS ARE GATED TWICE, AND BOTH GATES WITHHOLD.**
+  `appointments` (upgraded — it really checks the calendar and books now)
+  and `google_workspace` unlock five tools backed by the Apps Script
+  bridge. `agent-runtime` removes them from the toolset when Google is not
+  connected, and removes the WRITING ones again when `mode === 'draft'` —
+  pressing "draft a reply" three times must not book three meetings for a
+  customer who never got a message. Withholding beats offering-and-failing:
+  a tool the model cannot use still costs a round trip and a credit to
+  discover that, in front of a customer. Pinned by
+  `agent-google-tools.test.ts`, mirrored by `agent-readiness.tsx`.
+- ⚠️ **THE AGENT GETS A DELIBERATELY NARROWER SET THAN THE BRIDGE HAS.**
+  It talks to a CUSTOMER, so: no `find_events` or `sheet_find` (they read
+  event titles and other customers' rows, which a model will happily
+  summarise to whoever asked — `check_availability` returns intervals and
+  no content, which is why the bridge has two calendar reads); no
+  `send_email` (leaves WhatsApp, permanent, arrives under the owner's
+  address); nothing destructive. `log_to_sheet` takes its spreadsheet id
+  from the SKILL CONFIG, never a model argument — otherwise a prompt
+  injection could append to any sheet the owner can reach.
 - **Skills are a registry** (`lib/skills.ts`), one entry each: a prompt fragment plus
   the built-in tools it unlocks. The row stores only `{enabled, config}` per id, so a
   new skill is one entry and zero migrations. Built-in tools (`lib/tools/builtin.ts`)

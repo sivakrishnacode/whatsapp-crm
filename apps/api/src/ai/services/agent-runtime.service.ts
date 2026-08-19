@@ -16,6 +16,9 @@ import {
   builtinToolsByName,
   type BuiltinToolContext,
 } from '../lib/tools/builtin';
+import { GOOGLE_TOOL_NAMES, WRITE_GOOGLE_TOOLS } from '../lib/tools/google';
+import { GoogleScriptConnectionService } from '../../google-script/services/google-script-connection.service';
+import { GoogleScriptExecutorService } from '../../google-script/services/google-script-executor.service';
 import type { ToolExecutor } from '../lib/generate';
 import type {
   AiConfig,
@@ -67,7 +70,13 @@ export interface AssembledRun {
 export class AgentRuntimeService {
   private readonly logger = new Logger(AgentRuntimeService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /** "Is Google set up" — decides which tools the model is even shown. */
+    private readonly googleConnections: GoogleScriptConnectionService,
+    /** The bridge itself, handed to the tools only once it is set up. */
+    private readonly googleScript: GoogleScriptExecutorService,
+  ) {}
 
   /**
    * Load the enabled custom actions this agent may call, headers
@@ -147,10 +156,37 @@ export class AgentRuntimeService {
     config: AiConfig;
     ctx: RuntimeContext;
     actions: AgentAction[];
+    googleConnected: boolean;
   }): { tools: ToolDefinition[]; executeTool: ToolExecutor } {
-    const { config, ctx, actions } = args;
+    const { config, ctx, actions, googleConnected } = args;
 
-    const builtinNames = enabledSkillTools(config.skills);
+    /**
+     * Two gates on the Google tools, and both WITHHOLD rather than let a
+     * call fail:
+     *
+     *   1. Google not set up — the model is never shown a tool it cannot
+     *      use, so it cannot try, fail mid-conversation, and burn a tool
+     *      round and a credit learning what we already knew.
+     *   2. Draft mode — the WRITING ones go. Pressing "draft a reply"
+     *      three times must not book three meetings for a customer who
+     *      never received a message. Reading stays, so a draft can still
+     *      quote real availability.
+     *
+     * ⚠️ Both are mirrored by `agent-readiness.tsx`. A gate here that is
+     * not there makes the checklist lie about why the bot is quiet, which
+     * is worse than having no checklist.
+     */
+    const withheldGoogle = new Set<string>(
+      googleConnected
+        ? ctx.mode === 'draft'
+          ? WRITE_GOOGLE_TOOLS
+          : []
+        : GOOGLE_TOOL_NAMES,
+    );
+
+    const builtinNames = enabledSkillTools(config.skills).filter(
+      (name) => !withheldGoogle.has(name),
+    );
     const builtins = builtinToolsByName(builtinNames);
 
     const toolContext: BuiltinToolContext = {
@@ -163,6 +199,10 @@ export class AgentRuntimeService {
       // Resolved, not raw: a tool reading a default an admin set must see
       // the same config the skill's own prompt was built from.
       skills: resolveSkills(config.skills),
+      // Only handed over once a deployment is confirmed — see the gate
+      // above. The tools check for it anyway, because a tool that assumes
+      // its dependency is a tool that throws in somebody's inbox.
+      ...(googleConnected ? { googleScript: this.googleScript } : {}),
     };
 
     const actionByName = new Map<string, AgentAction>();
@@ -247,7 +287,19 @@ export class AgentRuntimeService {
       this.loadActions(ctx.accountId, config.actionIds ?? null),
     ]);
 
-    const { tools, executeTool } = this.buildToolset({ config, ctx, actions });
+    // One read, before the toolset is built, because "is Google set up"
+    // decides which tools the model is shown rather than what happens
+    // when it calls one.
+    const googleConnected = Boolean(
+      await this.googleConnections.resolveCredentials(ctx.accountId),
+    );
+
+    const { tools, executeTool } = this.buildToolset({
+      config,
+      ctx,
+      actions,
+      googleConnected,
+    });
 
     const systemPrompt = buildSystemPrompt({
       userPrompt: config.systemPrompt,

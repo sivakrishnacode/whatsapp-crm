@@ -1,6 +1,7 @@
 import { PrismaService } from '../../../prisma/prisma.service';
 import type { AgentSkills, ToolDefinition } from '../types';
 import { skillText } from '../skills';
+import { GOOGLE_TOOLS } from './google';
 
 /**
  * ============================================================
@@ -45,6 +46,22 @@ export interface BuiltinToolContext {
    * find one.
    */
   skills: AgentSkills;
+  /**
+   * The workspace's Apps Script bridge, when Google is set up.
+   *
+   * Absent rather than always-present on purpose: `agent-runtime` only
+   * supplies it once it has confirmed a deployment exists, and the Google
+   * tools are withheld from the model in the same breath. A tool that
+   * reached a missing bridge would burn a tool round and a credit to
+   * learn what the runtime already knew.
+   */
+  googleScript?: {
+    run: (
+      accountId: string,
+      actionId: string,
+      input: Record<string, unknown>,
+    ) => Promise<{ output: Record<string, unknown>; detail?: string }>;
+  };
 }
 
 /** One skill's saved config, defensively — it comes from JSONB. */
@@ -149,7 +166,9 @@ const lookupOrders: BuiltinTool = {
           `status: ${order.status}`,
           `total: ${money(order.total_amount, order.currency || currency)}`,
           items ? `${items} item(s)` : null,
-          order.created_at ? `placed ${order.created_at.toISOString().slice(0, 10)}` : null,
+          order.created_at
+            ? `placed ${order.created_at.toISOString().slice(0, 10)}`
+            : null,
         ]
           .filter(Boolean)
           .join(' | '),
@@ -162,7 +181,9 @@ const lookupOrders: BuiltinTool = {
           `Order ${order.external_order_id}`,
           `status: ${order.status}`,
           `total: ${money(order.total_amount, order.currency || currency)}`,
-          order.sync_at ? `updated ${order.sync_at.toISOString().slice(0, 10)}` : null,
+          order.sync_at
+            ? `updated ${order.sync_at.toISOString().slice(0, 10)}`
+            : null,
         ]
           .filter(Boolean)
           .join(' | '),
@@ -218,7 +239,8 @@ const searchProducts: BuiltinTool = {
       return { ok: false, detail: 'A search query is required.' };
     }
     const maxPrice = Number(args.max_price);
-    const priceFilter = Number.isFinite(maxPrice) && maxPrice > 0 ? maxPrice : null;
+    const priceFilter =
+      Number.isFinite(maxPrice) && maxPrice > 0 ? maxPrice : null;
 
     const [waProducts, shopProducts] = await Promise.all([
       ctx.prisma.whatsapp_products.findMany({
@@ -384,7 +406,9 @@ const saveLeadDetails: BuiltinTool = {
     }
 
     const saved = [
-      Object.keys(patch).length > 0 ? `updated ${Object.keys(patch).join(', ')}` : null,
+      Object.keys(patch).length > 0
+        ? `updated ${Object.keys(patch).join(', ')}`
+        : null,
       ctx.actorUserId ? 'saved a note on the contact' : null,
     ]
       .filter(Boolean)
@@ -598,7 +622,10 @@ const createDeal: BuiltinTool = {
       });
 
       if (!owner?.ownerUserId) {
-        return { ok: false, detail: 'This workspace has no owner to file the deal under.' };
+        return {
+          ok: false,
+          detail: 'This workspace has no owner to file the deal under.',
+        };
       }
 
       /**
@@ -665,7 +692,7 @@ const assignDeal: BuiltinTool = {
   definition: {
     name: 'assign_deal',
     description:
-      "Hand a deal to a teammate by their NAME or email — the same name you would say out loud. " +
+      'Hand a deal to a teammate by their NAME or email — the same name you would say out loud. ' +
       'Omit `deal_id` to assign the deal most recently opened for this customer.',
     parameters: {
       type: 'object',
@@ -673,12 +700,12 @@ const assignDeal: BuiltinTool = {
         assignee: {
           type: 'string',
           description:
-            "The teammate's name or email address, e.g. \"Priya\" or \"priya@acme.com\".",
+            'The teammate\'s name or email address, e.g. "Priya" or "priya@acme.com".',
         },
         deal_id: {
           type: 'string',
           description:
-            'Optional. The id returned by create_deal. Omit to use this customer\'s newest open deal.',
+            "Optional. The id returned by create_deal. Omit to use this customer's newest open deal.",
         },
       },
       required: ['assignee'],
@@ -901,6 +928,10 @@ export const BUILTIN_TOOLS: Record<string, BuiltinTool> = {
   create_deal: createDeal,
   assign_deal: assignDeal,
   trigger_automation: triggerAutomation,
+  // Backed by the customer's own Apps Script deployment rather than this
+  // database, and gated twice in agent-runtime: withheld when Google is
+  // not connected, and the writing ones withheld again while drafting.
+  ...GOOGLE_TOOLS,
 };
 
 export function builtinToolsByName(names: string[]): BuiltinTool[] {

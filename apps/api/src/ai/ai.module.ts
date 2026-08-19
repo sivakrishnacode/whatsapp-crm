@@ -20,6 +20,7 @@ import { AgentFeaturesService } from './services/agent-features.service';
 import { QueueModule } from '../queue/queue.module';
 import { AiReplyProcessor } from './queues/ai-reply.processor';
 import { AiCreditsModule } from './credits/ai-credits.module';
+import { GoogleScriptModule } from '../google-script/google-script.module';
 
 @Module({
   imports: [
@@ -33,6 +34,10 @@ import { AiCreditsModule } from './credits/ai-credits.module';
     // Metering. Every entry point that calls a provider on OUR key
     // charges through this.
     AiCreditsModule,
+    // The agent's Google tools. No forwardRef: GoogleScriptModule imports
+    // Prisma alone and knows nothing about AI, so it sits below this one.
+    // Module wiring is not caught by typecheck — boot the container.
+    GoogleScriptModule,
   ],
   controllers: [
     AiController,

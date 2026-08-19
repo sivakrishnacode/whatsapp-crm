@@ -5,6 +5,21 @@ import { AlertTriangle, Check, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AgentStudio } from '@/lib/agents/types';
 
+/**
+ * The tools the Apps Script bridge backs.
+ *
+ * ⚠️ MIRRORS `GOOGLE_TOOL_NAMES` in the API's lib/tools/google.ts. A tool
+ * added there and not here means a skill silently loses its tools with
+ * this checklist still claiming everything is fine.
+ */
+const GOOGLE_TOOL_NAMES = new Set([
+  'check_availability',
+  'book_meeting',
+  'log_to_sheet',
+  'save_to_contacts',
+  'create_task',
+]);
+
 export type StudioTab =
   | 'persona'
   | 'knowledge'
@@ -45,17 +60,37 @@ export interface ReadinessItem {
  *   3. no channel covers the conversation      → routing finds nobody
  *   4. auto-reply off                          → drafts only, by choice
  *   5. test mode with no numbers               → refused on save
+ *   6. a Google skill on, Google not connected → those tools are WITHHELD
  *
  * Items 4 and 5 are deliberately NOT blockers: "drafts only" is a
  * legitimate way to run an agent, and saying otherwise would nag
  * somebody who has chosen it on purpose.
+ *
+ * Item 6 is not a blocker either, and the distinction is worth keeping
+ * straight: the agent still answers, it just cannot check a calendar or
+ * write a row. `agent-runtime` withholds those tools rather than letting
+ * them fail, which is invisible from the chat — the reply simply reads as
+ * if the agent forgot it could book. This line is the only place that
+ * says why.
  * ============================================================
  */
-export function readinessOf(studio: AgentStudio): ReadinessItem[] {
+export function readinessOf(
+  studio: AgentStudio,
+  /** From GET /api/google-script. Undefined = not loaded yet, so no claim. */
+  googleConnected?: boolean,
+): ReadinessItem[] {
   const hasPersona = Boolean(
     studio.business_description?.trim() || studio.system_prompt?.trim(),
   );
   const knowsSomething = (studio.knowledge?.selected ?? 0) > 0;
+
+  // Which enabled skills unlock a Google tool, read from the SERVED
+  // registry rather than a hard-coded list here — a new Google skill on
+  // the server must not need a web change to be checked.
+  const googleSkillLabels = (studio.skills_registry ?? [])
+    .filter((def) => (def.tools ?? []).some((t) => GOOGLE_TOOL_NAMES.has(t)))
+    .filter((def) => studio.skills?.[def.id]?.enabled)
+    .map((def) => def.label);
 
   return [
     {
@@ -83,6 +118,22 @@ export function readinessOf(studio: AgentStudio): ReadinessItem[] {
       tab: 'knowledge',
       hint:
         'No documents are selected for this agent, so every answer comes from the persona alone.',
+      blocking: false,
+    },
+    {
+      id: 'google',
+      label: 'Its Google skills can reach Google',
+      // `googleConnected === undefined` means the status has not loaded.
+      // Treated as done, because a checklist that flickers a warning on
+      // every page load teaches people to ignore it.
+      done: googleSkillLabels.length === 0 || googleConnected !== false,
+      tab: 'skills',
+      hint:
+        `${googleSkillLabels.join(' and ')} ${
+          googleSkillLabels.length === 1 ? 'is' : 'are'
+        } on, but Google is not connected for this workspace — those tools are ` +
+        'withheld, so the agent answers without them and never says why. ' +
+        'Set it up in Settings → Integrations → Google.',
       blocking: false,
     },
     {
@@ -114,11 +165,15 @@ export function readinessOf(studio: AgentStudio): ReadinessItem[] {
 export function AgentReadiness({
   studio,
   onGoToTab,
+  googleConnected,
 }: {
   studio: AgentStudio;
   onGoToTab: (tab: StudioTab) => void;
+  googleConnected?: boolean;
 }) {
-  const items = readinessOf(studio).filter((item) => item.hint || !item.done);
+  const items = readinessOf(studio, googleConnected).filter(
+    (item) => item.hint || !item.done,
+  );
   const outstanding = items.filter((item) => !item.done);
 
   if (outstanding.length === 0) return null;
