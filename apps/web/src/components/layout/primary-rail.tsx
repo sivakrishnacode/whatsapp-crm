@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LogOut, Pin, PinOff, Search, Settings as SettingsIcon, User, X } from 'lucide-react';
+import { LogOut, Pin, PinOff, Settings as SettingsIcon, User, X } from 'lucide-react';
 import { useState, type ReactElement, type ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -31,12 +31,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { WorkspaceSwitcher } from '@/components/workspace/workspace-switcher';
 
 /**
  * The primary rail — first of the two sidebars.
  *
- * Structure mirrors the reference product: logo + lock pin, a search
- * placeholder, Onboarding, then divider-separated blocks (workspace,
+ * Structure mirrors the reference product: logo + lock pin, the workspace
+ * switcher, Onboarding, then divider-separated blocks (workspace,
  * channels) with Settings and the user card pinned to the bottom. There
  * are deliberately **no group labels** — dividers carry the grouping,
  * which is what keeps a 10-row rail scannable.
@@ -426,37 +427,16 @@ export function PrimaryRail({
         </div>
 
         <nav className="flex flex-1 flex-col overflow-y-auto px-2 pb-2">
-          {/* Search — visual placeholder. Rendered as a real disabled
-              control so wiring a command palette later is a one-file
-              change, but it is not focusable or clickable today. */}
-          <button
-            type="button"
-            disabled
-            aria-label="Search (coming soon)"
-            className={cn(
-              'mb-1 flex w-full cursor-not-allowed items-center gap-2 rounded-lg border border-border bg-muted/40 py-2 text-sm text-muted-foreground',
-              rowClass,
-            )}
-          >
-            <Search className="size-4 shrink-0" />
-            <span className={cn('flex-1 text-left', labelClass)}>Search</span>
-            <kbd
-              className={cn(
-                'rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px]',
-                labelClass,
-              )}
-            >
-              Ctrl
-            </kbd>
-            <kbd
-              className={cn(
-                'rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px]',
-                labelClass,
-              )}
-            >
-              K
-            </kbd>
-          </button>
+          {/* Which workspace am I in — and the way to change it.
+              It takes the slot the disabled search placeholder held: the
+              first row of the column, above every link whose contents it
+              decides. The search box was a visual stub with nothing behind
+              it, so it cost nothing to give up; a command palette can come
+              back somewhere that is not the most valuable row in the rail.
+
+              `labelClass` hides the name at the collapsed width, but the
+              logo stays — see the note in the component. */}
+          <WorkspaceSwitcher className="mb-1" labelClassName={labelClass} />
 
           <ul className="flex flex-col gap-0.5">{renderRailItem(RAIL_ONBOARDING)}</ul>
 

@@ -20,8 +20,9 @@ import {
 /**
  * Switch workspace without signing out.
  *
- * The header already drew the workspace's logo and name; this turns that chip
- * into the trigger rather than adding a second place that answers "where am I".
+ * Lives at the top of the primary rail, in the slot the disabled search
+ * placeholder used to occupy — so the answer to "which client am I in" is the
+ * first thing in the column, above every link whose contents it changes.
  *
  * ⚠️ IT RENDERS EVEN WHEN THERE IS ONE WORKSPACE, as a plain chip with no
  * chevron. The alternative — hide it until you have two — means the control
@@ -34,6 +35,10 @@ import {
  * back to a workspace that still works. That is a layout decision enforced
  * where those screens are composed, not here — but it is why the standing dot
  * below exists at all.
+ *
+ * ⚠️ At the rail's collapsed 56px width the NAME hides but the LOGO does not.
+ * A strip that answers "whose data is this" only when you hover it is a strip
+ * you have to interrogate before every click.
  *
  * ⚠️ The reason for a dot is ALSO written into the row's text, not only into a
  * `title`. A colour a person has to hover to decode is not information, and the
@@ -59,40 +64,62 @@ function dotClass(w: Workspace): string {
   return "bg-muted-foreground/40";
 }
 
-export function WorkspaceSwitcher() {
+export function WorkspaceSwitcher({
+  className,
+  labelClassName,
+}: {
+  /** Wrapper classes — the rail and the header want very different boxes. */
+  className?: string;
+  /**
+   * Applied to everything except the logo, so the rail can hide the name and
+   * chevron at its collapsed width. The logo survives on purpose: it is the
+   * only thing on a 56px rail that still says which client you are in, and a
+   * strip that answers that question only on hover is a strip you have to
+   * interrogate before every action.
+   */
+  labelClassName?: string;
+}) {
   const { workspaces, activeWorkspace, workspacesLoading, switchWorkspace } =
     useAuth();
   const [switching, setSwitching] = useState<string | null>(null);
 
   // Nothing to show yet. Deliberately renders nothing rather than a skeleton:
-  // the header is the first paint, and a shimmering block where the workspace
-  // name will be is more distracting than the name simply arriving.
+  // this is the first paint, and a shimmering block where the workspace name
+  // will be is more distracting than the name simply arriving.
   if (workspacesLoading && !activeWorkspace) return null;
   if (!activeWorkspace) return null;
 
   const single = workspaces.length <= 1;
 
   const chip = (
-    <div className="flex min-w-0 items-center gap-2">
+    <>
       <WorkspaceLogo
         name={activeWorkspace.name}
         logoUrl={activeWorkspace.logo_url}
       />
       <span
-        className="truncate text-sm font-medium text-foreground"
+        className={cn(
+          "min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground",
+          labelClassName,
+        )}
         title={activeWorkspace.name}
       >
         {activeWorkspace.name}
       </span>
       {!single ? (
-        <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
+        <ChevronsUpDown
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground",
+            labelClassName,
+          )}
+        />
       ) : null}
-    </div>
+    </>
   );
 
   if (single) {
     return (
-      <div className="hidden min-w-0 shrink items-center gap-2 border-r border-border pr-3 md:flex">
+      <div className={cn("flex min-w-0 items-center gap-2", className)}>
         {chip}
       </div>
     );
@@ -114,10 +141,10 @@ export function WorkspaceSwitcher() {
   }
 
   return (
-    <div className="hidden min-w-0 shrink items-center border-r border-border pr-3 md:flex">
+    <div className={cn("flex min-w-0", className)}>
       <DropdownMenu>
         <DropdownMenuTrigger
-          className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-muted"
+          className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/40 py-2 text-sm transition-colors hover:bg-muted"
           aria-label="Switch workspace"
         >
           {chip}
