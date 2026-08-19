@@ -10,12 +10,12 @@ import { WorkspaceLogo } from "@/components/workspace/workspace-logo";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
  * Switch workspace without signing out.
@@ -34,6 +34,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
  * back to a workspace that still works. That is a layout decision enforced
  * where those screens are composed, not here — but it is why the standing dot
  * below exists at all.
+ *
+ * ⚠️ The reason for a dot is ALSO written into the row's text, not only into a
+ * `title`. A colour a person has to hover to decode is not information, and the
+ * row it sits on is the one that decides which client's data they are about to
+ * open.
  */
 
 /** Does this workspace need the owner's attention, and what for? */
@@ -119,65 +124,71 @@ export function WorkspaceSwitcher() {
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="start" className="w-72">
-          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-            Your workspaces
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
+          {/* ⚠ The Group is REQUIRED, not decoration. DropdownMenuLabel is
+              base-ui's Menu.GroupLabel, which reads a Menu.Group context and
+              THROWS at render when it is missing (Base UI error #31) — the
+              menu never renders and the exception takes the whole page down
+              with it, which is what "This page couldn't load" looked like
+              here. Issue #336, pinned by
+              ui/dropdown-menu-group-label.test.tsx. A label always goes
+              inside a DropdownMenuGroup. */}
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              Your workspaces
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
 
-          {workspaces.map((w) => {
-            const note = attention(w);
-            const isActive = w.id === activeWorkspace.id;
-            return (
-              <DropdownMenuItem
-                key={w.id}
-                onSelect={(event) => {
-                  // Keep the menu open while the request is in flight —
-                  // closing it first makes a failed switch look like a
-                  // successful one that did nothing.
-                  event.preventDefault();
-                  void handleSwitch(w.id);
-                }}
-                className="flex items-start gap-2.5 py-2"
-              >
-                <WorkspaceLogo name={w.name} logoUrl={w.logo_url} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-sm font-medium">
-                      {w.name}
-                    </span>
-                    {note ? (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <span
-                              className={cn(
-                                "size-1.5 shrink-0 rounded-full",
-                                dotClass(w),
-                              )}
-                            />
-                          }
+            {workspaces.map((w) => {
+              const note = attention(w);
+              const isActive = w.id === activeWorkspace.id;
+              return (
+                <DropdownMenuItem
+                  key={w.id}
+                  onSelect={(event) => {
+                    // Keep the menu open while the request is in flight —
+                    // closing it first makes a failed switch look like a
+                    // successful one that did nothing.
+                    event.preventDefault();
+                    void handleSwitch(w.id);
+                  }}
+                  className="flex items-start gap-2.5 py-2"
+                >
+                  <WorkspaceLogo name={w.name} logoUrl={w.logo_url} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-medium">
+                        {w.name}
+                      </span>
+                      {note ? (
+                        <span
+                          title={note}
+                          aria-label={note}
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full",
+                            dotClass(w),
+                          )}
                         />
-                        <TooltipContent>{note}</TooltipContent>
-                      </Tooltip>
-                    ) : null}
+                      ) : null}
+                    </div>
+                    {/* The role held HERE. An agency operator is an owner in
+                        their own workspace and often an agent in a client's,
+                        and which one they are changes what the next screen
+                        lets them do. */}
+                    <span className="text-xs text-muted-foreground">
+                      {w.role ?? "member"}
+                      {w.plan_name ? ` · ${w.plan_name}` : ""}
+                      {note ? ` · ${note.toLowerCase()}` : ""}
+                    </span>
                   </div>
-                  {/* The role held HERE. An agency operator is an owner in
-                      their own workspace and often an agent in a client's,
-                      and which one they are changes what the next screen
-                      lets them do. */}
-                  <span className="text-xs text-muted-foreground">
-                    {w.role ?? "member"}
-                    {w.plan_name ? ` · ${w.plan_name}` : ""}
-                  </span>
-                </div>
-                {switching === w.id ? (
-                  <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
-                ) : isActive ? (
-                  <Check className="mt-0.5 size-4 shrink-0 text-foreground" />
-                ) : null}
-              </DropdownMenuItem>
-            );
-          })}
+                  {switching === w.id ? (
+                    <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
+                  ) : isActive ? (
+                    <Check className="mt-0.5 size-4 shrink-0 text-foreground" />
+                  ) : null}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
