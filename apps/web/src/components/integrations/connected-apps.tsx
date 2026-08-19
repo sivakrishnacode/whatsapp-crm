@@ -56,6 +56,7 @@ import {
   IntegrationGrid,
   IntegrationRow,
 } from './integration-card';
+import { AppIcon } from './app-icon';
 import {
   googleConnectionFromSummary,
   type GoogleScriptConnection,
@@ -65,6 +66,26 @@ import { useCan } from '@/hooks/use-can';
 import { cn } from '@/lib/utils';
 
 const GOOGLE_HUE = 'oklch(0.45 0.12 145)';
+
+/**
+ * The Google mark, in the shape `AppIcon` takes.
+ *
+ * Through AppIcon rather than a bare <img> so this inherits the 404 →
+ * monogram fallback: the file is referenced by path, and a rename that
+ * silently 404s should degrade to a tinted "G" rather than a broken-image
+ * glyph in the middle of a setup wizard.
+ *
+ * ONE ICON, NOT FOUR. The old connector had a card each for Gmail,
+ * Calendar, Meet and Sheets and a product logo for each; those PNGs are
+ * still in /public and are now unused here on purpose — one deployment
+ * serves all four, so four logos would advertise four things to connect.
+ */
+const GOOGLE_APP = {
+  name: 'Google',
+  icon: '/icons/google.png',
+  monogram: 'G',
+  hue: GOOGLE_HUE,
+};
 
 export function ConnectedApps() {
   const canEdit = useCan('edit-settings');
@@ -128,14 +149,7 @@ export function ConnectedApps() {
 
       <IntegrationGrid>
         <IntegrationCard
-          icon={
-            <span
-              className="flex size-9 shrink-0 items-center justify-center rounded-lg"
-              style={{ background: GOOGLE_HUE }}
-            >
-              <Zap className="size-4 text-white" />
-            </span>
-          }
+          icon={<AppIcon app={GOOGLE_APP} size={36} />}
           name="Google Apps Script bridge"
           blurb="Send mail, create calendar events and append sheet rows from automations."
           status={cardStatus}
@@ -414,10 +428,22 @@ function GoogleBridgeDialog({
    * and 3 happen inside Google, where we have no visibility, so they never
    * show a tick — claiming otherwise would be a guess presented as a fact.
    */
+  /**
+   * `external` marks the steps that happen in Google rather than here, and
+   * the rail badges them with the Google mark. The words already say "In
+   * Apps Script"; the logo makes the two-application split legible at a
+   * glance, which is the rail's entire justification — somebody who looks
+   * up mid-setup should see which window they were supposed to be in.
+   */
   const steps = [
     { title: 'Get the script', hint: 'In Converse360', done: Boolean(script) },
-    { title: 'Paste it in', hint: 'In Apps Script', done: false },
-    { title: 'Authorize & deploy', hint: 'In Apps Script', done: false },
+    { title: 'Paste it in', hint: 'In Apps Script', external: true, done: false },
+    {
+      title: 'Authorize & deploy',
+      hint: 'In Apps Script',
+      external: true,
+      done: false,
+    },
     {
       title: 'Connect & test',
       hint: 'Back in Converse360',
@@ -430,12 +456,7 @@ function GoogleBridgeDialog({
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <span
-              className="flex size-6 shrink-0 items-center justify-center rounded-md"
-              style={{ background: GOOGLE_HUE }}
-            >
-              <Zap className="size-3.5 text-white" />
-            </span>
+            <AppIcon app={GOOGLE_APP} size={22} />
             Connect Google
           </DialogTitle>
           <DialogDescription>
@@ -809,7 +830,12 @@ function StepRail({
   current,
   onPick,
 }: {
-  steps: { title: string; hint: string; done: boolean }[];
+  steps: {
+    title: string;
+    hint: string;
+    done: boolean;
+    external?: boolean;
+  }[];
   current: number;
   onPick: (index: number) => void;
 }) {
@@ -855,7 +881,10 @@ function StepRail({
               >
                 {s.title}
               </p>
-              <p className="text-muted-foreground/70 text-[10px]">{s.hint}</p>
+              <p className="text-muted-foreground/70 flex items-center gap-1 text-[10px]">
+                {s.external && <AppIcon app={GOOGLE_APP} size={11} />}
+                {s.hint}
+              </p>
             </div>
           </button>
         );
