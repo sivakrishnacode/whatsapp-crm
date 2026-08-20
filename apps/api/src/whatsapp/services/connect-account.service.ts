@@ -155,7 +155,15 @@ export class ConnectAccountService {
       const registeredAtMeta = isPhoneRegistered(phoneInfo);
 
       // Step 1: register the phone number for inbound webhooks.
-      let registeredAt: Date | null = existing?.registered_at ?? null;
+      //
+      // Only inherit the stored timestamp when the row is about the SAME
+      // number. Connecting a different number to this workspace and keeping
+      // the old date makes the card claim it has been receiving events since
+      // before that number existed here.
+      let registeredAt: Date | null =
+        existing?.phone_number_id === phoneNumberId
+          ? (existing?.registered_at ?? null)
+          : null;
       let registrationError: string | null = null;
       let registrationSkipped = false;
 
