@@ -50,8 +50,10 @@ type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
  * the honest reason is only ever available from here.
  */
 type WhatsAppHealth = {
-  /** AVAILABLE | LIMITED | BLOCKED | UNKNOWN */
+  /** AVAILABLE | LIMITED | BLOCKED | UNKNOWN — a pessimistic roll-up. */
   can_send_message: string;
+  /** The phone number's own verdict, which is the one worth headlining. */
+  phone_can_send_message?: string | null;
   blockers: Array<{
     entity: string;
     entityId?: string;
@@ -130,8 +132,13 @@ export function WhatsAppConfig() {
     ? null
     : (config?.last_registration_error ?? null);
   const sendBlockers = health?.blockers ?? [];
-  const sendingBlocked =
-    health != null && health.can_send_message === 'BLOCKED';
+  // Meta's top-level `can_send_message` is an AND across every entity, so a
+  // WABA-level payment fault — which by its own description stops only
+  // business-initiated conversations — drags the whole roll-up to BLOCKED.
+  // Verified against a live test number reporting BLOCKED while a template
+  // send came back `accepted`. Headline the PHONE's verdict instead, and let
+  // the blocker list carry the detail.
+  const sendingBlocked = health?.phone_can_send_message === 'BLOCKED';
 
   // Manual setup is an escape hatch, not a customer-facing path. Under the
   // Tech Provider model every business connects through Embedded Signup, and
@@ -643,7 +650,7 @@ export function WhatsAppConfig() {
             <AlertTitle className="mb-0">
               {sendingBlocked
                 ? 'Sending is blocked by Meta'
-                : 'Sending is limited by Meta'}
+                : 'Meta reports a restriction on this number'}
             </AlertTitle>
             <AlertDescription className="text-muted-foreground mt-2 space-y-2 text-xs leading-relaxed">
               {sendBlockers.map((b) => (

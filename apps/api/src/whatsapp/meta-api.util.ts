@@ -935,8 +935,19 @@ export interface MetaHealthBlocker {
 }
 
 export interface MetaPhoneHealth {
-  /** AVAILABLE | LIMITED | BLOCKED */
+  /**
+   * Meta's roll-up across every entity — deliberately pessimistic. It goes
+   * BLOCKED if ANY entity is blocked, including a WABA-level payment fault
+   * that only stops business-initiated conversations. Do not headline with
+   * this: verified against a live test number that Meta reported as
+   * `can_send_message: BLOCKED` while a template send returned `accepted`.
+   */
   canSendMessage: string;
+  /**
+   * The PHONE_NUMBER entity's own verdict, which is the one that tracks
+   * whether this number can send at all.
+   */
+  phoneCanSendMessage: string | null;
   /** Only the entities that are actually blocked or limited. */
   blockers: MetaHealthBlocker[];
   /** Non-fatal notes, e.g. "display name has not been approved yet". */
@@ -987,8 +998,12 @@ export async function getPhoneNumberHealth(
 
   const blockers: MetaHealthBlocker[] = [];
   const notes: string[] = [];
+  let phoneCanSendMessage: string | null = null;
 
   for (const entity of health?.entities ?? []) {
+    if (entity.entity_type === 'PHONE_NUMBER') {
+      phoneCanSendMessage = entity.can_send_message ?? null;
+    }
     for (const err of entity.errors ?? []) {
       if (err.error_code && IGNORED_HEALTH_CODES.has(err.error_code)) continue;
       blockers.push({
@@ -1004,6 +1019,7 @@ export async function getPhoneNumberHealth(
 
   return {
     canSendMessage: health?.can_send_message ?? 'UNKNOWN',
+    phoneCanSendMessage,
     blockers,
     notes,
   };

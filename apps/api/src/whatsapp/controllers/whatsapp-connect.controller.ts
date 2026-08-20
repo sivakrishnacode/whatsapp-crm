@@ -216,6 +216,7 @@ export class WhatsappConnectController {
         health: health
           ? {
               can_send_message: health.canSendMessage,
+              phone_can_send_message: health.phoneCanSendMessage,
               blockers: health.blockers,
               notes: health.notes,
             }
