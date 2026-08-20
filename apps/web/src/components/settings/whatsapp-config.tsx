@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useRefreshChannelStatus } from '@/hooks/use-channel-status';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -66,6 +67,10 @@ type WhatsAppHealth = {
 
 export function WhatsAppConfig() {
   const supabase = createClient();
+  // The rail's per-channel dots are fetched once per page load, so a connect
+  // made on this page leaves them stale — the rail says "Not connected" beside
+  // a card that just said the opposite.
+  const refreshChannelStatus = useRefreshChannelStatus();
   // After multi-user, whatsapp_config is one-row-per-account, not
   // one-row-per-user. We pull `accountId` straight off the auth
   // context and key every read off it — so a teammate who just
@@ -313,8 +318,9 @@ export function WhatsAppConfig() {
       toast.error('Failed to load WhatsApp configuration');
     } finally {
       setLoading(false);
+      refreshChannelStatus();
     }
-  }, [supabase]);
+  }, [supabase, refreshChannelStatus]);
 
   useEffect(() => {
     // Need both the auth session (`!authLoading`) AND the profile
