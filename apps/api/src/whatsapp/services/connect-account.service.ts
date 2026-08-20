@@ -4,6 +4,7 @@ import {
   verifyPhoneNumber,
   registerPhoneNumber,
   subscribeWabaToApp,
+  isPhoneRegistered,
   type MetaPhoneInfo,
 } from '../meta-api.util';
 import { encrypt } from '../../common/security/encryption.util';
@@ -148,6 +149,11 @@ export class ConnectAccountService {
         existing?.phone_number_id === phoneNumberId &&
         existing?.registered_at != null;
 
+      // Meta's own verdict, from the metadata we just fetched. This
+      // outranks anything we have stored: `registered_at` records what
+      // we last managed to do, which is a different question.
+      const registeredAtMeta = isPhoneRegistered(phoneInfo);
+
       // Step 1: register the phone number for inbound webhooks.
       let registeredAt: Date | null = existing?.registered_at ?? null;
       let registrationError: string | null = null;
@@ -157,6 +163,15 @@ export class ConnectAccountService {
         // Coexistence — Meta forbids re-registering a number the WhatsApp
         // Business App already owns.
         registrationSkipped = true;
+      } else if (registeredAtMeta) {
+        // Already registered on Meta's side, so /register has nothing to
+        // do — and doing it anyway is actively harmful. Once two-step
+        // verification is set (`is_pin_enabled`), re-registering with any
+        // PIN but the original one fails with "(#133005) Two step
+        // verification PIN Mismatch". That failure used to be treated as
+        // "not registered" and wiped a perfectly live connection.
+        registrationSkipped = true;
+        registeredAt = registeredAt ?? new Date();
       } else {
         const needsRegistration =
           !sameNumber || (typeof pin === 'string' && pin.length > 0);
@@ -192,14 +207,21 @@ export class ConnectAccountService {
         }
       }
 
+      // A registration failure only means "not connected" when Meta also
+      // says the number is not registered. Otherwise the connection is
+      // live and the failed call was redundant — writing `disconnected`
+      // there produced a banner announcing an outage that wasn't
+      // happening, on a number that was receiving messages at the time.
+      const liveAtMeta = registeredAtMeta || !registrationError;
+
       const baseRow = {
         phone_number_id: phoneNumberId,
         waba_id: wabaId || null,
         access_token: encryptedAccessToken,
         verify_token: encryptedVerifyToken,
-        status: registrationError ? 'disconnected' : 'connected',
-        connected_at: registrationError ? null : new Date(),
-        registered_at: registrationError ? null : registeredAt,
+        status: liveAtMeta ? 'connected' : 'disconnected',
+        connected_at: liveAtMeta ? new Date() : null,
+        registered_at: liveAtMeta ? registeredAt : null,
         subscribed_apps_at: subscribedAppsAt ?? null,
         last_registration_error: registrationError,
         connection_method: connectionMethod,

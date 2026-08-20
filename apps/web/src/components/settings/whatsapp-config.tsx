@@ -41,6 +41,27 @@ const MASKED_TOKEN = '••••••••••••••••';
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
 
+/**
+ * Meta's `health_status`, as forwarded by GET /api/whatsapp/config.
+ *
+ * Worth surfacing verbatim: a send blocked by a missing payment method
+ * comes back from the messages endpoint as "(#131005) Access denied",
+ * whose `details` string blames "the access token or permissions" — so
+ * the honest reason is only ever available from here.
+ */
+type WhatsAppHealth = {
+  /** AVAILABLE | LIMITED | BLOCKED | UNKNOWN */
+  can_send_message: string;
+  blockers: Array<{
+    entity: string;
+    entityId?: string;
+    code: number;
+    description: string;
+    solution?: string;
+  }>;
+  notes: string[];
+};
+
 export function WhatsAppConfig() {
   const supabase = createClient();
   // After multi-user, whatsapp_config is one-row-per-account, not
@@ -68,6 +89,11 @@ export function WhatsAppConfig() {
   // rating). Comes from the health check rather than the row, because the
   // row stores ids and Meta owns everything a human would recognise.
   const [phoneInfo, setPhoneInfo] = useState<WhatsAppPhoneInfo | null>(null);
+  // Meta's own answer to "is this number registered?" and "why can't it
+  // send?", from GET /api/whatsapp/config. Null until the check runs, or
+  // when Meta was unreachable — never assume "no" from an absent answer.
+  const [liveRegistered, setLiveRegistered] = useState<boolean | null>(null);
+  const [health, setHealth] = useState<WhatsAppHealth | null>(null);
   // Which setup path is showing — Embedded Signup ("connect") or the
   // credential-paste form ("manual").
   const [setupMode, setSetupMode] = useState<'connect' | 'manual'>('connect');
@@ -86,12 +112,23 @@ export function WhatsAppConfig() {
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
 
-  // True once /register has succeeded on Meta's side (timestamp set
-  // in the row). When false, the saved config is metadata-only and
-  // Meta will silently drop every inbound event — that's the
-  // multi-number bug that prompted this work.
-  const isRegistered = Boolean(config?.registered_at);
-  const lastRegistrationError = config?.last_registration_error ?? null;
+  // Is the number actually registered on Meta's side? `registered_at`
+  // is only a record of what WE last managed to do, and the two come
+  // apart: re-running Connect on an already-registered number that has
+  // two-step verification set fails with "(#133005) Two step
+  // verification PIN Mismatch", which used to null the column and put a
+  // "Meta will not deliver events" banner over a number that was
+  // receiving messages at the time. Meta's answer wins; the column is
+  // the fallback for when Meta was unreachable.
+  const isRegistered = liveRegistered ?? Boolean(config?.registered_at);
+  // A stale registration error is noise once Meta says the number is
+  // live — it describes a call that was never needed.
+  const lastRegistrationError = isRegistered
+    ? null
+    : (config?.last_registration_error ?? null);
+  const sendBlockers = health?.blockers ?? [];
+  const sendingBlocked =
+    health != null && health.can_send_message === 'BLOCKED';
 
   // Manual setup is an escape hatch, not a customer-facing path. Under the
   // Tech Provider model every business connects through Embedded Signup, and
@@ -213,10 +250,19 @@ export function WhatsAppConfig() {
           if (payload.connected) {
             setConnectionStatus('connected');
             setResetReason(null);
-            setStatusMessage('');
+            // A degraded check means we couldn't reach Meta, not that
+            // anything is wrong with the account — say so without
+            // tearing the connection down.
+            setStatusMessage(payload.degraded ? payload.message || '' : '');
             setTokenExpiringSoon(Boolean(payload.token_expiring_soon));
             setTokenExpiresAt(payload.token_expires_at ?? null);
             setPhoneInfo(payload.phone_info ?? null);
+            setLiveRegistered(
+              typeof payload.registration?.registered === 'boolean'
+                ? payload.registration.registered
+                : null,
+            );
+            setHealth(payload.health ?? null);
           } else {
             setConnectionStatus('disconnected');
             setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
@@ -224,11 +270,15 @@ export function WhatsAppConfig() {
             setTokenExpiringSoon(false);
             setTokenExpiresAt(null);
             setPhoneInfo(null);
+            setLiveRegistered(null);
+            setHealth(null);
           }
         } catch (err) {
           console.error('Health check failed:', err);
           setConnectionStatus('disconnected');
           setPhoneInfo(null);
+          setLiveRegistered(null);
+          setHealth(null);
         }
       } else {
         setConnectionStatus('disconnected');
@@ -237,6 +287,8 @@ export function WhatsAppConfig() {
         setTokenExpiresAt(null);
         setStatusMessage('');
         setPhoneInfo(null);
+        setLiveRegistered(null);
+        setHealth(null);
       }
     } catch (err) {
       console.error('fetchConfig error:', err);
@@ -563,6 +615,52 @@ export function WhatsAppConfig() {
                 'Configure your Meta API credentials below to connect your WhatsApp Business account.'}
           </AlertDescription>
         </Alert>
+        )}
+
+        {/* Sending health — the question the inbox actually asks.
+            A number can be perfectly connected and registered and still
+            refuse every send, most often because the WABA has no valid
+            payment method. Meta reports that here with a reason and a
+            fix; the messages endpoint reports it as "(#131005) Access
+            denied" whose details blame "the access token or
+            permissions", which sends people to re-connect a connection
+            that was never broken. Shown independently of `isHealthy`:
+            this is a healthy connection that cannot send. */}
+        {config && sendBlockers.length > 0 && (
+          <Alert variant={sendingBlocked ? 'destructive' : 'warning'}>
+            <AlertTriangle className="size-4" />
+            <AlertTitle className="mb-0">
+              {sendingBlocked
+                ? 'Sending is blocked by Meta'
+                : 'Sending is limited by Meta'}
+            </AlertTitle>
+            <AlertDescription className="text-muted-foreground mt-2 space-y-2 text-xs leading-relaxed">
+              {sendBlockers.map((b) => (
+                <p key={`${b.entity}-${b.code}`}>
+                  <span className="text-foreground font-medium">
+                    {b.description}
+                  </span>
+                  {b.solution ? <> {b.solution}</> : null}
+                  <span className="text-muted-foreground/70">
+                    {' '}
+                    ({b.entity.toLowerCase().replace('_', ' ')} · #{b.code})
+                  </span>
+                </p>
+              ))}
+              <p>
+                Fixed in{' '}
+                <a
+                  href="https://business.facebook.com/wa/manage/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-foreground underline underline-offset-2"
+                >
+                  WhatsApp Manager
+                </a>
+                , not here — Meta owns billing and account standing.
+              </p>
+            </AlertDescription>
+          </Alert>
         )}
 
         {/* Registration Status — the "is it actually live?" check.

@@ -5,6 +5,7 @@ import {
   Patch,
   Delete,
   Body,
+  Logger,
   Res,
   HttpStatus,
   UseGuards,
@@ -20,6 +21,10 @@ import {
   exchangeEmbeddedSignupCode,
   verifyPhoneNumber,
   getSubscribedApps,
+  getPhoneNumberHealth,
+  isPhoneRegistered,
+  MetaApiError,
+  MetaTokenExpiredError,
 } from '../meta-api.util';
 import {
   decrypt,
@@ -30,6 +35,8 @@ import {
 @Controller('whatsapp')
 @UseGuards(SupabaseAuthGuard)
 export class WhatsappConnectController {
+  private readonly logger = new Logger(WhatsappConnectController.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly connectAccount: ConnectAccountService,
@@ -138,6 +145,7 @@ export class WhatsappConnectController {
         status: true,
         token_expires_at: true,
         catalog_id: true,
+        registered_at: true,
       },
     });
 
@@ -163,18 +171,34 @@ export class WhatsappConnectController {
       });
     }
 
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+    const tokenExpiresAt = config.token_expires_at?.toISOString() ?? null;
+    const tokenExpiringSoon = Boolean(
+      tokenExpiresAt &&
+      new Date(tokenExpiresAt).getTime() - Date.now() < SEVEN_DAYS_MS,
+    );
+
     try {
       const phoneInfo = await verifyPhoneNumber({
         phoneNumberId: config.phone_number_id,
         accessToken,
       });
 
-      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-      const tokenExpiresAt = config.token_expires_at?.toISOString() ?? null;
-      const tokenExpiringSoon = Boolean(
-        tokenExpiresAt &&
-        new Date(tokenExpiresAt).getTime() - Date.now() < SEVEN_DAYS_MS,
-      );
+      // Health is advisory: it answers "why can't this number send?",
+      // and a number that cannot send is still connected. A failure here
+      // must never downgrade the connection.
+      let health: Awaited<ReturnType<typeof getPhoneNumberHealth>> | null =
+        null;
+      try {
+        health = await getPhoneNumberHealth({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `health_status unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
 
       return res.status(HttpStatus.OK).json({
         connected: true,
@@ -182,14 +206,58 @@ export class WhatsappConnectController {
         token_expires_at: tokenExpiresAt,
         token_expiring_soon: tokenExpiringSoon,
         catalog_id: config.catalog_id ?? null,
+        // Meta's own answer, not our bookkeeping. `registered_at` is what
+        // we last managed to write; this is whether the number is live.
+        registration: {
+          registered: isPhoneRegistered(phoneInfo),
+          status: phoneInfo.status ?? null,
+          is_pin_enabled: phoneInfo.is_pin_enabled ?? null,
+        },
+        health: health
+          ? {
+              can_send_message: health.canSendMessage,
+              blockers: health.blockers,
+              notes: health.notes,
+            }
+          : null,
       });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Unknown Meta API error';
+
+      // Only an authentication failure means the stored credentials are
+      // no longer good. Anything else — a throttle, a 500, a network
+      // blip, Meta being briefly inconsistent about a number registered
+      // seconds ago — is us failing to reach Meta, not the account being
+      // disconnected. Reporting those as `connected: false` is what made
+      // a fresh Embedded Signup take two page refreshes to show up.
+      const isAuthFailure =
+        err instanceof MetaTokenExpiredError ||
+        (err instanceof MetaApiError && err.code === 190);
+
+      if (isAuthFailure) {
+        return res.status(HttpStatus.OK).json({
+          connected: false,
+          reason: 'meta_api_error',
+          message: `Meta API rejected the credentials: ${message}`,
+        });
+      }
+
+      this.logger.warn(`WhatsApp config check degraded: ${message}`);
       return res.status(HttpStatus.OK).json({
-        connected: false,
-        reason: 'meta_api_error',
-        message: `Meta API rejected the credentials: ${message}`,
+        connected: true,
+        degraded: true,
+        reason: 'meta_unreachable',
+        message: `Could not reach Meta to refresh the connection: ${message}`,
+        token_expires_at: tokenExpiresAt,
+        token_expiring_soon: tokenExpiringSoon,
+        catalog_id: config.catalog_id ?? null,
+        registration: {
+          registered: config.registered_at != null,
+          status: null,
+          is_pin_enabled: null,
+        },
+        health: null,
       });
     }
   }
@@ -370,23 +438,33 @@ export class WhatsappConnectController {
       token_decryptable: boolean;
       phone_metadata_ok: boolean;
       waba_subscribed_to_app: boolean | null;
+      registered_at_meta: boolean | null;
       locally_marked_registered: boolean;
     } = {
       config_exists: true,
       token_decryptable: true,
       phone_metadata_ok: false,
       waba_subscribed_to_app: null,
+      registered_at_meta: null,
       locally_marked_registered: config.registered_at != null,
     };
     const errors: string[] = [];
 
-    // 1. Phone metadata
+    // 1. Phone metadata — and, from the same call, whether Meta itself
+    //    considers the number registered. That is the authority; the
+    //    local column is only a record of what we last managed to do.
     try {
-      await verifyPhoneNumber({
+      const phoneInfo = await verifyPhoneNumber({
         phoneNumberId: config.phone_number_id,
         accessToken,
       });
       checks.phone_metadata_ok = true;
+      checks.registered_at_meta = isPhoneRegistered(phoneInfo);
+      if (!checks.registered_at_meta) {
+        errors.push(
+          `Meta reports this number as "${phoneInfo.status ?? 'unknown'}" rather than CONNECTED — it is not registered for Cloud API.`,
+        );
+      }
     } catch (err) {
       errors.push(
         `Phone metadata check failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -417,10 +495,34 @@ export class WhatsappConnectController {
       );
     }
 
+    // Live = Meta can reach us and we can reach Meta. Deliberately NOT
+    // gated on `locally_marked_registered`: that column is bookkeeping,
+    // and a number Meta reports as CONNECTED is receiving events whatever
+    // our row happens to say.
     const live =
       checks.phone_metadata_ok &&
       (checks.waba_subscribed_to_app ?? false) &&
-      checks.locally_marked_registered;
+      (checks.registered_at_meta ?? false);
+
+    // Self-heal the row while we have the answer, so the banner that sent
+    // the user here stops lying on the next load.
+    if (live && config.registered_at == null) {
+      try {
+        await this.prisma.whatsapp_config.update({
+          where: { id: config.id },
+          data: {
+            registered_at: new Date(),
+            status: 'connected',
+            connected_at: config.connected_at ?? new Date(),
+            last_registration_error: null,
+          },
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Could not repair registration state: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     return res.status(HttpStatus.OK).json({
       live,

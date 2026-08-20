@@ -866,6 +866,21 @@ export interface MetaPhoneInfo {
   display_phone_number: string;
   verified_name?: string;
   quality_rating?: string;
+  /**
+   * Meta's own view of whether the number is registered on Cloud API.
+   * `CONNECTED` means registered and usable; anything else means it is
+   * not. This is the ONLY authority on registration — a local
+   * `registered_at` column records what *we* last managed to do, which
+   * is a different question and drifts the moment a re-register fails
+   * on an already-registered number (error 133005).
+   */
+  status?: string;
+  code_verification_status?: string;
+  name_status?: string;
+  platform_type?: string;
+  /** Two-step verification already set. A /register with any other PIN gives 133005. */
+  is_pin_enabled?: boolean;
+  messaging_limit_tier?: string;
 }
 
 export interface VerifyPhoneNumberArgs {
@@ -880,7 +895,7 @@ export async function verifyPhoneNumber(
   args: VerifyPhoneNumberArgs,
 ): Promise<MetaPhoneInfo> {
   const { phoneNumberId, accessToken } = args;
-  const url = `${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating`;
+  const url = `${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating,status,code_verification_status,name_status,platform_type,is_pin_enabled,messaging_limit_tier`;
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -888,6 +903,110 @@ export async function verifyPhoneNumber(
     await throwMetaError(response, `Meta API error: ${response.status}`);
   }
   return response.json();
+}
+
+/** Meta reports registration as this string on the phone number object. */
+export const META_PHONE_REGISTERED = 'CONNECTED';
+
+/** True when Meta itself says this number is registered on Cloud API. */
+export function isPhoneRegistered(info: MetaPhoneInfo | null | undefined) {
+  return info?.status === META_PHONE_REGISTERED;
+}
+
+// ============================================================
+// Health status — "why can't this number send?"
+//
+// Meta answers the question directly, per entity, with a reason and a
+// suggested fix. Worth using rather than inferring: a send blocked by a
+// missing payment method comes back from the messages endpoint as
+// `(#131005) Access denied` with the real cause buried in
+// `error_data.details` as "There was a problem with the access token or
+// permissions you are using for the API call" — which sends everybody
+// hunting through tokens and scopes for a billing problem.
+// ============================================================
+
+export interface MetaHealthBlocker {
+  /** PHONE_NUMBER | WABA | BUSINESS | APP */
+  entity: string;
+  entityId?: string;
+  code: number;
+  description: string;
+  solution?: string;
+}
+
+export interface MetaPhoneHealth {
+  /** AVAILABLE | LIMITED | BLOCKED */
+  canSendMessage: string;
+  /** Only the entities that are actually blocked or limited. */
+  blockers: MetaHealthBlocker[];
+  /** Non-fatal notes, e.g. "display name has not been approved yet". */
+  notes: string[];
+}
+
+interface MetaHealthResponse {
+  health_status?: {
+    can_send_message?: string;
+    entities?: Array<{
+      entity_type?: string;
+      id?: string;
+      can_send_message?: string;
+      errors?: Array<{
+        error_code?: number;
+        error_description?: string;
+        possible_solution?: string;
+      }>;
+      additional_info?: string[];
+    }>;
+  };
+}
+
+/**
+ * Codes that describe a capability the product does not use. WhatsApp
+ * Business calling reports SIP as unconfigured on every account that has
+ * not set it up, which is all of them — surfacing it would put a
+ * permanent warning on a healthy number.
+ */
+const IGNORED_HEALTH_CODES = new Set([138024, 138025]);
+
+export async function getPhoneNumberHealth(
+  args: VerifyPhoneNumberArgs,
+): Promise<MetaPhoneHealth> {
+  const { phoneNumberId, accessToken } = args;
+  const response = await fetch(
+    `${META_API_BASE}/${phoneNumberId}?fields=health_status`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!response.ok) {
+    await throwClassifiedMetaError(
+      response,
+      `Meta API error: ${response.status}`,
+    );
+  }
+  const data = (await response.json()) as MetaHealthResponse;
+  const health = data.health_status;
+
+  const blockers: MetaHealthBlocker[] = [];
+  const notes: string[] = [];
+
+  for (const entity of health?.entities ?? []) {
+    for (const err of entity.errors ?? []) {
+      if (err.error_code && IGNORED_HEALTH_CODES.has(err.error_code)) continue;
+      blockers.push({
+        entity: entity.entity_type ?? 'UNKNOWN',
+        entityId: entity.id,
+        code: err.error_code ?? 0,
+        description: err.error_description ?? 'Unknown problem',
+        solution: err.possible_solution,
+      });
+    }
+    for (const info of entity.additional_info ?? []) notes.push(info);
+  }
+
+  return {
+    canSendMessage: health?.can_send_message ?? 'UNKNOWN',
+    blockers,
+    notes,
+  };
 }
 
 export interface FetchPhoneNumberLimitsArgs {
