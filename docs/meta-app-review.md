@@ -395,7 +395,16 @@ with a published claim you cannot demonstrate.
 - [ ] **Demo workspace created** with channels connected
 - [ ] **Messaging round trip verified on both channels** — do this before recording, not on camera
 - [ ] **Three screencasts recorded**, each with its refusal beat
-- [x] **App still in Development mode** — correct. Flip to Live only after WhatsApp is approved.
+- [ ] ⚠️ **App switched to Live mode — do this FIRST, not last.** An earlier
+  version of this file said to stay in Development until WhatsApp was approved.
+  That is wrong and it cost half a day: **in Development mode the app can only
+  message people who hold a role on it**, so every send to a real customer fails
+  with `(#131005) Access denied`, whose `error_data.details` blames "the access
+  token or permissions". Live mode needs no approval — it needs a Business-type
+  app on a verified business with a privacy-policy URL, all of which are already
+  true. **Advanced Access is about messaging on OTHER businesses' WABAs; Live
+  mode is what lets you message from your own.** You also cannot record the
+  screencasts without it, since every one of them shows a real round trip.
 
 ---
 
@@ -403,7 +412,9 @@ with a published claim you cannot demonstrate.
 
 1. Confirm all three WhatsApp permissions read **Advanced Access** in App Review
    → Permissions and Features.
-2. Flip the app from **Development** to **Live** at the top of the dashboard.
+2. The app should already be **Live** (see the pre-flight note — Development mode
+   blocks messaging to anyone without a role on the app, so it cannot wait until
+   here). Advanced Access is what extends that from your own WABA to customers'.
 3. Onboard one friendly customer and watch their whole journey, including the
    payment-method step on their own WABA.
 4. **Instagram** follows the same day its approval lands. Nothing to deploy — it
