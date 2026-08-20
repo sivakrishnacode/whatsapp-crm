@@ -97,6 +97,9 @@ export function WhatsAppConfig() {
   // Which setup path is showing — Embedded Signup ("connect") or the
   // credential-paste form ("manual").
   const [setupMode, setSetupMode] = useState<'connect' | 'manual'>('connect');
+  // Reveals the manual credential form on a workspace that connected through
+  // Embedded Signup, where it is hidden by default. See `showManualSetup`.
+  const [manualOverride, setManualOverride] = useState(false);
   // Guards against re-hydrating the form when the load effect below
   // re-runs for reasons unrelated to actually switching accounts —
   // e.g. Supabase's onAuthStateChange fires a token refresh (new
@@ -148,8 +151,16 @@ export function WhatsAppConfig() {
     process.env.NEXT_PUBLIC_FACEBOOK_APP_ID &&
       process.env.NEXT_PUBLIC_FACEBOOK_CONFIG_ID,
   );
+  //   3. Somebody deliberately asked for it. There is one case Embedded Signup
+  //      cannot serve at all: Meta's **test number**, which is the only number
+  //      an app may send from before App Review grants Advanced Access on
+  //      `whatsapp_business_messaging`. Its credentials are pasted from the
+  //      App Dashboard's API Setup panel, not chosen through a signup dialog —
+  //      so without this escape hatch there is no way to record the screencast
+  //      that the review itself demands.
   const showManualSetup =
     !embeddedSignupConfigured ||
+    manualOverride ||
     (config != null && config.connection_method !== 'embedded_signup');
   // Derived rather than forced into `setupMode`, so a user who had the manual
   // tab open keeps it if `showManualSetup` flips back — fetchConfig resolving
@@ -798,6 +809,31 @@ export function WhatsAppConfig() {
                   if (accountId) void fetchConfig(accountId);
                 }}
               />
+            )}
+
+            {/* The one thing Embedded Signup cannot do: point this workspace
+                at Meta's test number, whose ids and token are pasted from the
+                App Dashboard. Needed before App Review, because Standard
+                Access allows sending from that number and no other. Kept as a
+                quiet link rather than a tab — under the Tech Provider model
+                manual credential entry is a support burden, not a path we
+                want customers taking by default. */}
+            {!showManualSetup && (
+              <p className="text-muted-foreground mt-4 text-xs">
+                Connecting Meta&apos;s test number, or a number you hold a
+                permanent access token for?{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualOverride(true);
+                    setSetupMode('manual');
+                  }}
+                  className="text-foreground underline underline-offset-2"
+                >
+                  Enter credentials manually
+                </button>
+                .
+              </p>
             )}
           </TabsContent>
 
