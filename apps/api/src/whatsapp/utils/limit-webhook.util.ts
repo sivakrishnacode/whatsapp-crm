@@ -7,8 +7,10 @@
  *
  *   phone_number_quality_update — quality rating changes; historically
  *     also carries `current_limit` (the tier string).
- *   business_capability_update  — carries `max_daily_conversation_per_phone`
- *     (a NUMBER, not a tier string).
+ *   business_capability_update  — carries the cap as a NUMBER, not a tier
+ *     string: `max_daily_conversations_per_business` on webhooks v24.0+
+ *     (limits now belong to the business portfolio), and the deprecated
+ *     `max_daily_conversation_per_phone` on v23.0 and older.
  *
  * The vendored Meta collection (notes/WhatsApp Cloud API.postman_collection.json)
  * documents neither webhook, so rather than betting on one shape we
@@ -20,6 +22,7 @@
 const TIER_FROM_LIMIT: Record<number, string> = {
   250: 'TIER_250',
   1000: 'TIER_1K',
+  2000: 'TIER_2K',
   10000: 'TIER_10K',
   100000: 'TIER_100K',
 };
@@ -38,7 +41,9 @@ export function isLimitWebhookField(field: string): boolean {
 export interface LimitWebhookValue {
   /** Tier string, e.g. "TIER_1K". */
   current_limit?: string;
-  /** Numeric daily conversation cap. */
+  /** Numeric daily cap for the business portfolio (webhooks v24.0+). */
+  max_daily_conversations_per_business?: number | string;
+  /** Numeric daily cap per phone (webhooks v23.0 and older; deprecated). */
   max_daily_conversation_per_phone?: number | string;
   /** On a quality update: FLAGGED / UNFLAGGED / ONBOARDING, or a rating. */
   event?: string;
@@ -80,8 +85,11 @@ export function parseLimitWebhookValue(
   // Fallback: a numeric cap we can map back onto a known tier. An
   // unmappable number is dropped rather than guessed at — a wrong tier
   // is worse than no tier, since it drives the pre-flight warning.
-  if (!tier && value.max_daily_conversation_per_phone !== undefined) {
-    const n = Number(value.max_daily_conversation_per_phone);
+  const cap =
+    value.max_daily_conversations_per_business ??
+    value.max_daily_conversation_per_phone;
+  if (!tier && cap !== undefined) {
+    const n = Number(cap);
     if (Number.isFinite(n)) {
       tier = TIER_FROM_LIMIT[n] ?? null;
     }

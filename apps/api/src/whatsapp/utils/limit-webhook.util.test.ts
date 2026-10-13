@@ -52,6 +52,24 @@ describe('parseLimitWebhookValue', () => {
     ).toMatchObject({ tier: null });
   });
 
+  it('reads the portfolio cap that webhooks v24.0+ send', () => {
+    expect(
+      parseLimitWebhookValue({ max_daily_conversations_per_business: 2000 }),
+    ).toMatchObject({ tier: 'TIER_2K' });
+    expect(
+      parseLimitWebhookValue({ max_daily_conversations_per_business: '10000' }),
+    ).toMatchObject({ tier: 'TIER_10K' });
+  });
+
+  it('prefers the portfolio cap over the deprecated per-phone cap', () => {
+    expect(
+      parseLimitWebhookValue({
+        max_daily_conversations_per_business: 2000,
+        max_daily_conversation_per_phone: 1000,
+      }),
+    ).toMatchObject({ tier: 'TIER_2K' });
+  });
+
   it('prefers the explicit tier string over the numeric cap', () => {
     expect(
       parseLimitWebhookValue({

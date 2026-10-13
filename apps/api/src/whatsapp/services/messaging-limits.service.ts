@@ -28,22 +28,33 @@ const SWEEP_DELAY_MS = 250;
  * tier — callers MUST disambiguate the two via the tier string itself
  * rather than testing the number, or a tier Meta adds tomorrow renders
  * as "Unlimited" to every operator.
+ *
+ * Meta's portfolio-level levels are 250, 2K, 10K, 100K and unlimited.
+ * TIER_1K and the bare UNLIMITED are the deprecated per-number spellings,
+ * kept for rows synced before the switch and numbers still reporting them.
  */
 const TIER_LIMITS: Record<string, number | null> = {
   TIER_250: 250,
   TIER_1K: 1000,
+  TIER_2K: 2000,
   TIER_10K: 10000,
   TIER_100K: 100000,
   UNLIMITED: null,
+  TIER_UNLIMITED: null,
 };
 
 const TIER_LABELS: Record<string, string> = {
   TIER_250: 'Unverified — 250/day',
   TIER_1K: 'Tier 1 — 1K/day',
+  TIER_2K: 'Tier 1 — 2K/day',
   TIER_10K: 'Tier 2 — 10K/day',
   TIER_100K: 'Tier 3 — 100K/day',
   UNLIMITED: 'Unlimited',
+  TIER_UNLIMITED: 'Unlimited',
 };
+
+/** Both spellings Meta has used for the top level. */
+const UNLIMITED_TIERS = new Set(['UNLIMITED', 'TIER_UNLIMITED']);
 
 /** Recipient statuses that represent a conversation Meta actually counted. */
 const COUNTED_RECIPIENT_STATUSES = ['sent', 'delivered', 'read', 'replied'];
@@ -84,6 +95,10 @@ export function resolveTierLimit(tier: string | null): number | null {
 
 export function isKnownTier(tier: string | null): boolean {
   return !!tier && tier in TIER_LIMITS;
+}
+
+export function isUnlimitedTier(tier: string | null): boolean {
+  return !!tier && UNLIMITED_TIERS.has(tier);
 }
 
 export function resolveTierLabel(tier: string | null): string {
@@ -326,7 +341,7 @@ export class MessagingLimitsService implements OnModuleInit {
     }
 
     const tier = config.messaging_limit_tier;
-    const isUnlimited = tier === 'UNLIMITED';
+    const isUnlimited = isUnlimitedTier(tier);
     const dailyLimit = config.tier_daily_limit;
     const syncedAt = config.limits_synced_at;
 

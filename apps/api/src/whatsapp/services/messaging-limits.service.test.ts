@@ -8,6 +8,7 @@ import {
   resolveTierLimit,
   resolveTierLabel,
   isKnownTier,
+  isUnlimitedTier,
 } from './messaging-limits.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 
@@ -95,9 +96,43 @@ describe('tier mapping', () => {
     expect(resolveTierLabel(null)).toBe('Not synced yet');
     expect(resolveTierLabel('TIER_10K')).toBe('Tier 2 — 10K/day');
   });
+
+  it('knows the portfolio-level levels Meta reports today', () => {
+    // A live portfolio came back as TIER_2K, which used to read as unknown.
+    expect(resolveTierLimit('TIER_2K')).toBe(2000);
+    expect(resolveTierLabel('TIER_2K')).toBe('Tier 1 — 2K/day');
+    expect(isKnownTier('TIER_2K')).toBe(true);
+    expect(resolveTierLimit('TIER_UNLIMITED')).toBeNull();
+    expect(resolveTierLabel('TIER_UNLIMITED')).toBe('Unlimited');
+    expect(isUnlimitedTier('TIER_UNLIMITED')).toBe(true);
+    expect(isUnlimitedTier('UNLIMITED')).toBe(true);
+    expect(isUnlimitedTier('TIER_5M')).toBe(false);
+    expect(isUnlimitedTier(null)).toBe(false);
+  });
 });
 
 describe('syncAccountLimits', () => {
+  it('stores a 2K portfolio with its 2,000 daily limit', async () => {
+    const prisma = makePrismaMock();
+    vi.mocked(fetchPhoneNumberLimits).mockResolvedValue({
+      messagingLimitTier: 'TIER_2K',
+      qualityRating: 'GREEN',
+      displayPhoneNumber: null,
+      verifiedName: null,
+    });
+
+    await makeService(prisma).syncAccountLimits(ACCOUNT);
+
+    expect(prisma.whatsapp_config.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          messaging_limit_tier: 'TIER_2K',
+          tier_daily_limit: 2000,
+        }),
+      }),
+    );
+  });
+
   it('writes all four columns on a successful fetch', async () => {
     const prisma = makePrismaMock();
     vi.mocked(fetchPhoneNumberLimits).mockResolvedValue({
@@ -318,6 +353,20 @@ describe('getTierStatus', () => {
     expect(a.isUnlimited).toBe(true);
     expect(b.isUnlimited).toBe(false);
     expect(b.tierLabel).toBe('Unknown tier (TIER_5M)');
+  });
+
+  it('reads the portfolio spelling of unlimited as unlimited', async () => {
+    const prisma = makePrismaMock({
+      messaging_limit_tier: 'TIER_UNLIMITED',
+      tier_daily_limit: null,
+      limits_synced_at: new Date(),
+    });
+
+    const status = await makeService(prisma).getTierStatus(ACCOUNT);
+
+    expect(status.isUnlimited).toBe(true);
+    expect(status.tierLabel).toBe('Unlimited');
+    expect(status.remaining).toBeNull();
   });
 
   it('marks data older than 12h as stale', async () => {

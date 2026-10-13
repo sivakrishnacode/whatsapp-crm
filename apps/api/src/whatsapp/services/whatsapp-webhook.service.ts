@@ -146,6 +146,7 @@ interface WhatsAppWebhookEntry {
       // Messaging tier / quality pushes (business_capability_update,
       // phone_number_quality_update). Shapes vary — see limit-webhook.util.
       current_limit?: string;
+      max_daily_conversations_per_business?: number | string;
       max_daily_conversation_per_phone?: number | string;
       event?: string;
       current_quality_rating?: string;

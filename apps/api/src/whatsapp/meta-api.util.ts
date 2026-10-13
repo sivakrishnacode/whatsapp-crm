@@ -1031,7 +1031,7 @@ export interface FetchPhoneNumberLimitsArgs {
 }
 
 export interface PhoneNumberLimits {
-  /** Raw Meta string (TIER_1K, …). Deliberately unmapped — see messaging-limits.service.ts. */
+  /** Raw Meta string (TIER_2K, …). Deliberately unmapped — see messaging-limits.service.ts. */
   messagingLimitTier: string | null;
   /** GREEN | YELLOW | RED | NA. */
   qualityRating: string | null;
@@ -1040,6 +1040,9 @@ export interface PhoneNumberLimits {
 }
 
 interface MetaPhoneLimitsResponse {
+  /** The portfolio-level limit, shared by every number in the business portfolio. */
+  whatsapp_business_manager_messaging_limit?: string;
+  /** Deprecated per-number field; Meta has stopped returning it for some numbers. */
   messaging_limit_tier?: string;
   quality_rating?: string;
   display_phone_number?: string;
@@ -1057,6 +1060,11 @@ interface MetaPhoneLimitsResponse {
  * Values come back raw. Meta owns this enum and can extend it, so
  * mapping tier -> daily limit happens in the service where an unknown
  * value degrades gracefully instead of failing a DB write.
+ *
+ * Messaging limits now belong to the business portfolio and are read from
+ * `whatsapp_business_manager_messaging_limit`. Meta has deprecated
+ * `messaging_limit_tier` and already omits it for some numbers (a portfolio
+ * at TIER_2K came back without it), so it is only a fallback.
  */
 export async function fetchPhoneNumberLimits(
   args: FetchPhoneNumberLimitsArgs,
@@ -1064,7 +1072,7 @@ export async function fetchPhoneNumberLimits(
   const { phoneNumberId, accessToken } = args;
   const url =
     `${META_API_BASE}/${phoneNumberId}` +
-    `?fields=messaging_limit_tier,quality_rating,display_phone_number,verified_name`;
+    `?fields=whatsapp_business_manager_messaging_limit,messaging_limit_tier,quality_rating,display_phone_number,verified_name`;
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -1078,7 +1086,10 @@ export async function fetchPhoneNumberLimits(
 
   const data = (await response.json()) as MetaPhoneLimitsResponse;
   return {
-    messagingLimitTier: data.messaging_limit_tier ?? null,
+    messagingLimitTier:
+      data.whatsapp_business_manager_messaging_limit ??
+      data.messaging_limit_tier ??
+      null,
     qualityRating: data.quality_rating ?? null,
     displayPhoneNumber: data.display_phone_number ?? null,
     verifiedName: data.verified_name ?? null,
