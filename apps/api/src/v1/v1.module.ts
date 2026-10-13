@@ -10,6 +10,7 @@ import { MessagesController } from './controllers/messages.controller';
 import { BroadcastsController } from './controllers/broadcasts.controller';
 import { WebhooksController } from './controllers/webhooks.controller';
 import { SegmentsController } from './controllers/segments.controller';
+import { TemplatesController } from './controllers/templates.controller';
 import { WebhookDeliverService } from './services/webhook-deliver.service';
 import { MessageSendService } from './services/message-send.service';
 import { BroadcastSendService } from './services/broadcast-send.service';
@@ -34,6 +35,7 @@ import { BroadcastSendService } from './services/broadcast-send.service';
     BroadcastsController,
     WebhooksController,
     SegmentsController,
+    TemplatesController,
   ],
   providers: [
     WebhookDeliverService,

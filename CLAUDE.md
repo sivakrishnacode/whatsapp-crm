@@ -59,7 +59,7 @@ Prisma client before compiling anything that needs it.
 - **Entry** `src/main.ts`: `cookie-parser`, global `ValidationPipe({ whitelist: true, transform: true })`, listens on `PORT ?? 8001`. No global route prefix — controllers own their full path.
 - **Feature modules** (`src/app.module.ts`): `prisma`, `common` (redis, rate-limit, security, messaging, phone), `queue` (BullMQ), `auth`, `health`, `automations`, `flows`, `v1`, `whatsapp`, `instagram`, `web`, `forms`, `account`, `integrations`, `google-script`, `ecommerce`, `campaigns`, `subscription`, `onboarding`, `ai`, `ads`.
 - **Two API surfaces by controller prefix:**
-  - `@Controller('v1/...')` — the **public/partner REST API** (`v1/me`, `v1/messages`, `v1/webhooks`, `v1/broadcasts`, `v1/contacts`, `v1/conversations`). Lives in `src/v1/{controllers,services,types,utils}`. See `docs/public-api.md`.
+  - `@Controller('v1/...')` — the **public/partner REST API** (`v1/me`, `v1/messages`, `v1/templates`, `v1/webhooks`, `v1/broadcasts`, `v1/contacts`, `v1/conversations`). Lives in `src/v1/{controllers,services,types,utils}`. See `docs/public-api.md`.
   - `@Controller('whatsapp/...')` — **internal dashboard/webhook** endpoints consumed by the web app.
 - **Auth (`src/auth/guards`):**
   - `supabase-auth.guard.ts` — verifies **Supabase** JWTs from cookies using `jose` (JWKS via `SUPABASE_URL/.well-known/jwks.json`, or HS256 with `SUPABASE_JWT_SECRET`). Used by the dashboard/web surface.

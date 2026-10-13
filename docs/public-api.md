@@ -49,7 +49,7 @@ it. Grant the minimum.
 
 | Scope                | Allows                                   |
 | -------------------- | ---------------------------------------- |
-| `messages:send`      | Send WhatsApp messages                   |
+| `messages:send`      | Send WhatsApp messages; list templates   |
 | `messages:read`      | Read messages and delivery status        |
 | `contacts:read`      | List and read contacts                   |
 | `contacts:write`     | Create and update contacts               |
@@ -180,6 +180,30 @@ Response (201):
 Domain error codes beyond the table above: `whatsapp_not_configured`
 (400), `meta_error` (502 — the request reached Meta and it rejected the
 send), `template_malformed` (500).
+
+### `GET /api/v1/templates`
+
+The account's WhatsApp templates, for syncing a template library on your
+side. Scope: `messages:send`. Read-only — templates are created and
+submitted to Meta in the app. Optional `?status=APPROVED` (also `PENDING`,
+`REJECTED`, `PAUSED`, `DISABLED`, `DRAFT`). Not paginated: an account has
+at most a few hundred templates.
+
+```bash
+curl https://your-crm.example.com/api/v1/templates \
+  -H "Authorization: Bearer $C360_KEY"
+# → 200 {
+#   "data": [{
+#     "id": "…", "name": "order_shipped", "language": "en_US",
+#     "category": "Utility", "status": "APPROVED",
+#     "parameter_format": "POSITIONAL", "header": null,
+#     "content": "Your order {{1}} has shipped. Track it here: {{2}}",
+#     "footer": null, "rejection_reason": null,
+#     "updated_at": "2026-10-12T08:00:00.000Z"
+#   }],
+#   "meta": { "next_cursor": null }
+# }
+```
 
 ### `GET /api/v1/contacts`
 
