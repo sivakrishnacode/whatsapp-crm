@@ -405,6 +405,10 @@ delivery uuid you can dedupe on, and `data` varies by `event`:
 { "conversation_id": "…", "contact_id": "…" }
 // message.status_updated
 { "whatsapp_message_id": "wamid.…", "conversation_id": "…", "status": "delivered" }
+// message.status_updated, failed: Meta's reason rides along (error_message is its detail, else its title)
+{ "whatsapp_message_id": "wamid.…", "conversation_id": "…", "status": "failed",
+  "error_code": 131049, "error_title": "This message was not delivered to maintain healthy ecosystem engagement.",
+  "error_message": "In order to maintain a healthy ecosystem engagement, the message failed to be delivered." }
 ```
 
 Headers: `X-Converse360-Event`, `X-Converse360-Webhook-Id`, and `X-Converse360-Signature`.

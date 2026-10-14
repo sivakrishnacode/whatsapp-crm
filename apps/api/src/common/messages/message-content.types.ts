@@ -95,7 +95,10 @@ export interface WhatsAppMessageMetadata {
     name?: string | null;
     address?: string | null;
   };
-  /** `unsupported` rows — why WhatsApp could not deliver the content. */
+  /**
+   * `unsupported` rows — why WhatsApp could not deliver the content.
+   * Failed outbound rows — why Meta did not deliver ours.
+   */
   error?: {
     code?: number | null;
     title?: string | null;

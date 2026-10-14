@@ -137,12 +137,7 @@ interface WhatsAppWebhookEntry {
         wa_id: string;
       }>;
       messages?: WhatsAppMessage[];
-      statuses?: Array<{
-        id: string;
-        status: string;
-        timestamp: string;
-        recipient_id: string;
-      }>;
+      statuses?: WhatsAppStatus[];
       // Messaging tier / quality pushes (business_capability_update,
       // phone_number_quality_update). Shapes vary — see limit-webhook.util.
       current_limit?: string;
@@ -154,6 +149,48 @@ interface WhatsAppWebhookEntry {
     };
     field: string;
   }>;
+}
+
+/**
+ * A delivery receipt for a message we sent. A `failed` receipt carries
+ * Meta's reason in `errors` - for a template, often the per-user marketing
+ * limit (131049) rather than anything wrong with the number.
+ */
+interface WhatsAppStatus {
+  id: string;
+  status: string;
+  timestamp: string;
+  recipient_id: string;
+  errors?: Array<{
+    code?: number;
+    title?: string;
+    message?: string;
+    error_data?: { details?: string };
+  }>;
+}
+
+/** Meta's reason for a failed send, in the shape inbound errors already use. */
+type StatusError = NonNullable<WhatsAppMessageMetadata['error']>;
+
+function statusError(status: WhatsAppStatus): StatusError | null {
+  const err = status.errors?.[0];
+
+  if (status.status !== 'failed' || !err) {
+    return null;
+  }
+
+  return {
+    code: err.code ?? null,
+    title: err.title ?? null,
+    detail: err.error_data?.details ?? err.message ?? null,
+  };
+}
+
+/** One line for a text column: "131049: This message was not delivered…". */
+function describeStatusError(error: StatusError): string {
+  const text = error.detail ?? error.title ?? 'Delivery failed';
+
+  return error.code ? `${error.code}: ${text}` : text;
 }
 
 const RECIPIENT_STATUS_LADDER = [
@@ -458,18 +495,35 @@ export class WhatsappWebhookService {
     }
   }
 
-  private async handleStatusUpdate(status: {
-    id: string;
-    status: string;
-    timestamp: string;
-    recipient_id: string;
-  }): Promise<void> {
-    // 1) Mirror onto messages
+  private async handleStatusUpdate(status: WhatsAppStatus): Promise<void> {
+    const error = statusError(status);
+
+    // 1) Mirror onto messages. A failure also keeps Meta's reason, merged
+    // into metadata so the template snapshot already there survives.
     try {
-      await this.prisma.messages.updateMany({
-        where: { message_id: status.id },
-        data: { status: status.status },
-      });
+      if (error) {
+        const rows = await this.prisma.messages.findMany({
+          where: { message_id: status.id },
+          select: { id: true, metadata: true },
+        });
+
+        for (const row of rows) {
+          const metadata = (row.metadata ?? {}) as WhatsAppMessageMetadata;
+
+          await this.prisma.messages.update({
+            where: { id: row.id },
+            data: {
+              status: status.status,
+              metadata: toMessageMetadata({ ...metadata, error }),
+            },
+          });
+        }
+      } else {
+        await this.prisma.messages.updateMany({
+          where: { message_id: status.id },
+          data: { status: status.status },
+        });
+      }
     } catch (err) {
       this.logger.error(`Error updating message status: ${err}`);
     }
@@ -490,6 +544,7 @@ export class WhatsappWebhookService {
         if (status.status === 'sent') update.sent_at = tsIso;
         if (status.status === 'delivered') update.delivered_at = tsIso;
         if (status.status === 'read') update.read_at = tsIso;
+        if (error) update.error_message = describeStatusError(error);
 
         await this.prisma.broadcast_recipients.update({
           where: { id: recipient.id },
@@ -520,6 +575,11 @@ export class WhatsappWebhookService {
             whatsapp_message_id: status.id,
             conversation_id: msgRow.conversation_id,
             status: status.status,
+            ...(error && {
+              error_code: error.code,
+              error_title: error.title,
+              error_message: error.detail ?? error.title,
+            }),
           },
         );
       }

@@ -20,6 +20,8 @@ function makePrismaMock() {
     },
     messages: {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      update: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
       findFirst: vi.fn().mockResolvedValue(null),
     },
     broadcast_recipients: {
@@ -133,6 +135,107 @@ describe('WhatsappWebhookService', () => {
           status: 'delivered',
         },
       );
+    });
+
+    const marketingLimit = {
+      id: 'msg-wamid',
+      status: 'failed',
+      timestamp: '1719914400',
+      recipient_id: 'rec-phone',
+      errors: [
+        {
+          code: 131049,
+          title:
+            'This message was not delivered to maintain healthy ecosystem engagement.',
+          message:
+            'This message was not delivered to maintain healthy ecosystem engagement.',
+          error_data: {
+            details:
+              'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+          },
+        },
+      ],
+    };
+
+    it("keeps Meta's reason for a failure, merged into the message metadata", async () => {
+      prisma.messages.findMany.mockResolvedValue([
+        { id: 'row-1', metadata: { template: { name: 'cart_recovery_30m' } } },
+      ]);
+
+      await (service as any).handleStatusUpdate(marketingLimit);
+
+      expect(prisma.messages.updateMany).not.toHaveBeenCalled();
+      expect(prisma.messages.update).toHaveBeenCalledWith({
+        where: { id: 'row-1' },
+        data: {
+          status: 'failed',
+          metadata: {
+            template: { name: 'cart_recovery_30m' },
+            error: {
+              code: 131049,
+              title:
+                'This message was not delivered to maintain healthy ecosystem engagement.',
+              detail:
+                'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+            },
+          },
+        },
+      });
+    });
+
+    it('records the reason on a broadcast recipient', async () => {
+      prisma.broadcast_recipients.findFirst.mockResolvedValue({
+        id: 'rcpt-1',
+        status: 'sent',
+      });
+
+      await (service as any).handleStatusUpdate(marketingLimit);
+
+      expect(prisma.broadcast_recipients.update).toHaveBeenCalledWith({
+        where: { id: 'rcpt-1' },
+        data: {
+          status: 'failed',
+          error_message:
+            '131049: In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+        },
+      });
+    });
+
+    it('forwards the reason to webhook subscribers', async () => {
+      prisma.messages.findFirst.mockResolvedValue({
+        conversation_id: 'conv-123',
+        conversations: { account_id: 'acc-456' },
+      });
+
+      await (service as any).handleStatusUpdate(marketingLimit);
+
+      expect(webhookDeliver.dispatchWebhookEvent).toHaveBeenCalledWith(
+        'acc-456',
+        'message.status_updated',
+        {
+          whatsapp_message_id: 'msg-wamid',
+          conversation_id: 'conv-123',
+          status: 'failed',
+          error_code: 131049,
+          error_title:
+            'This message was not delivered to maintain healthy ecosystem engagement.',
+          error_message:
+            'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+        },
+      );
+    });
+
+    it('stays a plain status write when a failure carries no reason', async () => {
+      await (service as any).handleStatusUpdate({
+        ...marketingLimit,
+        errors: undefined,
+      });
+
+      expect(prisma.messages.findMany).not.toHaveBeenCalled();
+      expect(prisma.messages.updateMany).toHaveBeenCalledWith({
+        where: { message_id: 'msg-wamid' },
+        data: { status: 'failed' },
+      });
     });
   });
 
