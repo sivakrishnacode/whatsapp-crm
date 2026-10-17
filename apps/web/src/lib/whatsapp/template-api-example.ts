@@ -42,11 +42,19 @@ function sampleAt(samples: string[] | undefined, i: number, token: string): stri
 function buttonParamsFor(
   buttons: TemplateButton[] | undefined,
   named: boolean,
+  otpCode: string,
 ): { params: Record<number, string>; notes: string[] } {
   const params: Record<number, string> = {};
   const notes: string[] = [];
   (buttons ?? []).forEach((b, i) => {
-    if (b.type === 'URL') {
+    if (b.type === 'OTP') {
+      // Authentication templates: Meta wants the one-time code twice —
+      // as the body's {{1}} and on the OTP button.
+      params[i] = otpCode;
+      notes.push(
+        `buttonParams[${i}] repeats the one-time code from body[0] — Meta requires it on the "${b.text}" button too.`,
+      );
+    } else if (b.type === 'URL') {
       const token = tokensFor(b.url, named)[0];
       if (token) {
         params[i] = b.example?.trim() || `<${token}>`;
@@ -84,6 +92,7 @@ export function buildTemplateApiExample(
   const { params: buttonParams, notes: buttonNotes } = buttonParamsFor(
     template.buttons,
     named,
+    bodyValues[0] ?? '<code>',
   );
 
   const needsStructured =
@@ -167,7 +176,7 @@ export function buildTemplateApiExample(
             entry.body = values;
           }
         }
-        const cardButtons = buttonParamsFor(card.buttons, named);
+        const cardButtons = buttonParamsFor(card.buttons, named, '<code>');
         if (Object.keys(cardButtons.params).length > 0) {
           entry.buttonParams = cardButtons.params;
         }

@@ -24,6 +24,9 @@
  *     back to the template's `example` value if the caller doesn't
  *     override — that matches the most common use case (a static
  *     promo code) without forcing UI work.
+ *   - OTP buttons (AUTHENTICATION templates) need the one-time code as
+ *     a `url`-subtype button parameter, on top of the body's {{1}}. It
+ *     comes from `buttonParams[i]`, falling back to `body[0]`.
  *   - LOCATION headers need `headerLocation` every time. The pin is a
  *     per-send value, so unlike media there is nothing on the template
  *     row to fall back to.
@@ -243,6 +246,7 @@ function buttonNeedsSendParam(
         extractNamedVariables(button.url).length > 0
       );
     case 'COPY_CODE':
+    case 'OTP':
       return true;
     case 'QUICK_REPLY':
     case 'PHONE_NUMBER':
@@ -250,15 +254,39 @@ function buttonNeedsSendParam(
   }
 }
 
+/**
+ * @param otpFallback The value an OTP button falls back to when no
+ *   `buttonParams[index]` is supplied — the body's first variable, which
+ *   on an AUTHENTICATION template *is* the code.
+ */
 function buildButtonComponent(
   button: TemplateButton,
   index: number,
   override: string | undefined,
   where = 'URL button',
+  otpFallback?: string,
 ): MetaSendComponent | null {
   if (!buttonNeedsSendParam(button, override)) return null;
 
   switch (button.type) {
+    case 'OTP': {
+      // Mirrors apps/api/src/v1/utils/template-send-builder.util.ts:
+      // Meta wants the code as the body's {{1}} AND as this url-subtype
+      // button parameter, or it rejects the authentication send.
+      const code =
+        String(override ?? '').trim() || String(otpFallback ?? '').trim();
+      if (!code) {
+        throw new Error(
+          `OTP button #${index + 1} needs the one-time code — pass it as buttonParams[${index}] or as the body's first value (params.body[0]).`,
+        );
+      }
+      return {
+        type: 'button',
+        sub_type: 'url',
+        index: String(index),
+        parameters: [{ type: 'text', text: code }],
+      };
+    }
     case 'URL': {
       if (!override || !override.trim()) {
         const token =
@@ -412,7 +440,13 @@ export function buildSendComponents(
   if (template.buttons?.length) {
     template.buttons.forEach((btn, i) => {
       const override = params.buttonParams?.[i];
-      const component = buildButtonComponent(btn, i, override);
+      const component = buildButtonComponent(
+        btn,
+        i,
+        override,
+        undefined,
+        params.body?.[0],
+      );
       if (component) out.push(component);
     });
   }

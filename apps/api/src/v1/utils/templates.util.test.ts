@@ -46,9 +46,54 @@ describe('serializeTemplate', () => {
       content:
         'Your DFFRNT order {{1}} has shipped. AWB: {{2}}. Track it here: {{3}}',
       footer: null,
+      buttons: [],
       rejection_reason: null,
       updated_at: '2026-10-12T08:00:00.000Z',
     });
+  });
+
+  it('exposes an Authentication template with its status and OTP button', () => {
+    const auth = serializeTemplate({
+      ...row,
+      name: 'dffrnt_login_otp',
+      category: 'Authentication',
+      status: 'APPROVED',
+      body_text:
+        '*{{1}}* is your verification code. For your security, do not share this code.',
+      footer_text: 'This code expires in 10 minutes.',
+      buttons: [{ type: 'OTP', otp_type: 'COPY_CODE', text: 'Copy code' }],
+    });
+    expect(auth).toMatchObject({
+      name: 'dffrnt_login_otp',
+      category: 'Authentication',
+      status: 'APPROVED',
+      content:
+        '*{{1}}* is your verification code. For your security, do not share this code.',
+      footer: 'This code expires in 10 minutes.',
+      buttons: [{ type: 'OTP', text: 'Copy code', otp_type: 'COPY_CODE' }],
+    });
+  });
+
+  it('lists buttons with only their public fields and skips malformed entries', () => {
+    expect(
+      serializeTemplate({
+        ...row,
+        buttons: [
+          { type: 'QUICK_REPLY', text: 'Stop alerts' },
+          {
+            type: 'URL',
+            text: 'Track',
+            url: 'https://dffrnt.in/t/{{1}}',
+            example: 'https://dffrnt.in/t/abc',
+          },
+          'garbage',
+          { text: 'no type' },
+        ],
+      }).buttons,
+    ).toEqual([
+      { type: 'QUICK_REPLY', text: 'Stop alerts' },
+      { type: 'URL', text: 'Track', url: 'https://dffrnt.in/t/{{1}}' },
+    ]);
   });
 
   it('keeps the text of a TEXT header only', () => {

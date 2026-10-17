@@ -344,6 +344,7 @@ function countButtonsByType(
     URL: 0,
     PHONE_NUMBER: 0,
     COPY_CODE: 0,
+    OTP: 0,
   };
   for (const b of buttons) counts[b.type]++;
   return counts;
@@ -448,6 +449,13 @@ export function validateButtonFields(
         throw new Error(`${label} (COPY_CODE) is missing example value.`);
       }
       break;
+    case 'OTP':
+      // OTP buttons only exist on AUTHENTICATION templates, which are
+      // created in Meta WhatsApp Manager and synced in — never submitted
+      // from here.
+      throw new Error(
+        `${label} is an OTP button — those belong to AUTHENTICATION templates, which are created in Meta WhatsApp Manager and pulled in with "Sync from Meta".`,
+      );
   }
 }
 

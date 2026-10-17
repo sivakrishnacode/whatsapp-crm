@@ -3,12 +3,22 @@
  * Used by WhatsappTemplatesController.sync().
  */
 
+import type { TemplateOtpButton, TemplateOtpType } from '../types/index';
+
 export interface MetaButton {
   type: string;
   text: string;
   url?: string;
   phone_number?: string;
   example?: string[] | string;
+  /** OTP buttons (AUTHENTICATION templates) only. */
+  otp_type?: string;
+  autofill_text?: string;
+  supported_apps?: { package_name?: string; signature_hash?: string }[];
+  /** Pre-`supported_apps` single-app shape of a one-tap button. */
+  package_name?: string;
+  signature_hash?: string;
+  zero_tap_terms_accepted?: boolean;
 }
 
 interface MetaNamedParamExample {
@@ -54,6 +64,68 @@ export function normalizeQualityScore(
     : null;
 }
 
+const OTP_TYPES: ReadonlySet<string> = new Set<TemplateOtpType>([
+  'COPY_CODE',
+  'ONE_TAP',
+  'ZERO_TAP',
+]);
+
+/**
+ * Meta implements an OTP button as a URL button pointing here — which
+ * is why the send-time component is `sub_type: 'url'` — and some Graph
+ * API responses surface it in that form rather than as `type: 'OTP'`.
+ */
+const META_OTP_URL_PREFIX = 'https://www.whatsapp.com/otp/code/';
+
+function normalizeOtpType(raw: string | null | undefined): TemplateOtpType {
+  const upper = (raw ?? '').toUpperCase();
+  return OTP_TYPES.has(upper) ? (upper as TemplateOtpType) : 'COPY_CODE';
+}
+
+function otpTypeFromUrl(url: string): TemplateOtpType {
+  try {
+    return normalizeOtpType(new URL(url).searchParams.get('otp_type'));
+  } catch {
+    return 'COPY_CODE';
+  }
+}
+
+/**
+ * Meta's OTP button → our row shape. Meta defaults the label to
+ * "Copy code" when the template was created without one, so the same
+ * default applies here: the inbox snapshot drops label-less buttons.
+ */
+function parseOtpButton(
+  b: MetaButton,
+  otpType: TemplateOtpType,
+): TemplateOtpButton {
+  const out: TemplateOtpButton = {
+    type: 'OTP',
+    otp_type: otpType,
+    text: b.text?.trim() || 'Copy code',
+  };
+  if (b.autofill_text) out.autofill_text = b.autofill_text;
+  const apps = (
+    b.supported_apps ??
+    (b.package_name
+      ? [{ package_name: b.package_name, signature_hash: b.signature_hash }]
+      : [])
+  ).filter(
+    (a): a is { package_name: string; signature_hash: string } =>
+      Boolean(a?.package_name) && Boolean(a?.signature_hash),
+  );
+  if (apps.length) {
+    out.supported_apps = apps.map((a) => ({
+      package_name: a.package_name,
+      signature_hash: a.signature_hash,
+    }));
+  }
+  if (typeof b.zero_tap_terms_accepted === 'boolean') {
+    out.zero_tap_terms_accepted = b.zero_tap_terms_accepted;
+  }
+  return out;
+}
+
 export function parseTemplateButtons(
   metaButtons: MetaButton[] | undefined,
 ): Array<Record<string, any>> {
@@ -64,7 +136,14 @@ export function parseTemplateButtons(
       case 'QUICK_REPLY':
         out.push({ type: 'QUICK_REPLY', text: b.text });
         break;
+      case 'OTP':
+        out.push(parseOtpButton(b, normalizeOtpType(b.otp_type)));
+        break;
       case 'URL':
+        if (b.url?.startsWith(META_OTP_URL_PREFIX)) {
+          out.push(parseOtpButton(b, otpTypeFromUrl(b.url)));
+          break;
+        }
         out.push({
           type: 'URL',
           text: b.text,

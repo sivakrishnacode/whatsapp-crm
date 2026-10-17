@@ -540,7 +540,34 @@ export type TemplateButton =
   | { type: 'QUICK_REPLY'; text: string }
   | { type: 'URL'; text: string; url: string; example?: string }
   | { type: 'PHONE_NUMBER'; text: string; phone_number: string }
-  | { type: 'COPY_CODE'; text: string; example: string };
+  | { type: 'COPY_CODE'; text: string; example: string }
+  | TemplateOtpButton;
+
+export type TemplateOtpType = 'COPY_CODE' | 'ONE_TAP' | 'ZERO_TAP';
+
+/** One Android app allowed to receive a one-tap / zero-tap code. */
+export interface TemplateOtpSupportedApp {
+  package_name: string;
+  signature_hash: string;
+}
+
+/**
+ * The one-time-password button of an AUTHENTICATION template. Mirrors
+ * apps/api/src/v1/types/index.ts. Created in Meta WhatsApp Manager and
+ * pulled in by "Sync from Meta" — the editor never creates one.
+ */
+export interface TemplateOtpButton {
+  type: 'OTP';
+  otp_type: TemplateOtpType;
+  /** The copy-code label ("Copy code") — the fallback for one-tap too. */
+  text: string;
+  /** ONE_TAP / ZERO_TAP: label of the autofill button. */
+  autofill_text?: string;
+  /** ONE_TAP / ZERO_TAP: Android apps the code may be handed to. */
+  supported_apps?: TemplateOtpSupportedApp[];
+  /** ZERO_TAP: Meta requires the terms to have been accepted. */
+  zero_tap_terms_accepted?: boolean;
+}
 
 export interface TemplateSampleValues {
   body?: string[];

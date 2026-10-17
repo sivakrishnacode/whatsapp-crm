@@ -217,6 +217,7 @@ function buttonNeedsSendParam(
         extractNamedVariables(button.url).length > 0
       );
     case 'COPY_CODE':
+    case 'OTP':
       return true;
     case 'QUICK_REPLY':
     case 'PHONE_NUMBER':
@@ -224,15 +225,43 @@ function buttonNeedsSendParam(
   }
 }
 
+/**
+ * @param otpFallback The value an OTP button falls back to when no
+ *   `buttonParams[index]` is supplied — the body's first variable, which
+ *   on an AUTHENTICATION template *is* the code.
+ */
 function buildButtonComponent(
   button: TemplateButton,
   index: number,
   override: string | undefined,
   where = 'URL button',
+  otpFallback?: string,
 ): MetaSendComponent | null {
   if (!buttonNeedsSendParam(button, override)) return null;
 
   switch (button.type) {
+    case 'OTP': {
+      // Meta wants the code twice on an authentication send: once as
+      // the body's {{1}} and once here. The button is a URL button
+      // under the hood (copy-code, one-tap and zero-tap alike), so the
+      // sub_type is `url` and the code rides as a text parameter —
+      // without this component Meta rejects the whole send.
+      // String() first: these arrive straight from a JSON request body,
+      // where an integrator may well send the code as a number.
+      const code =
+        String(override ?? '').trim() || String(otpFallback ?? '').trim();
+      if (!code) {
+        throw new Error(
+          `OTP button #${index + 1} needs the one-time code — pass it as buttonParams[${index}] or as the body's first value (params.body[0]).`,
+        );
+      }
+      return {
+        type: 'button',
+        sub_type: 'url',
+        index: String(index),
+        parameters: [{ type: 'text', text: code }],
+      };
+    }
     case 'URL': {
       if (!override || !override.trim()) {
         const token =
@@ -386,7 +415,13 @@ export function buildSendComponents(
   if (template.buttons?.length) {
     template.buttons.forEach((btn, i) => {
       const override = params.buttonParams?.[i];
-      const component = buildButtonComponent(btn, i, override);
+      const component = buildButtonComponent(
+        btn,
+        i,
+        override,
+        undefined,
+        params.body?.[0],
+      );
       if (component) out.push(component);
     });
   }

@@ -119,7 +119,9 @@ function buildButtons(
     // through to the quick-reply branch.
     const type =
       typeof button.type === 'string' ? button.type.toUpperCase() : '';
-    const text = typeof button.text === 'string' ? button.text : '';
+    const rawText = typeof button.text === 'string' ? button.text : '';
+    // Meta labels an OTP button "Copy code" when the template set none.
+    const text = rawText || (type === 'OTP' ? 'Copy code' : '');
     if (!text) return;
 
     if (type === 'URL') {
@@ -147,7 +149,11 @@ function buildButtons(
       return;
     }
 
-    if (type === 'COPY_CODE') {
+    // An AUTHENTICATION template's OTP button looks like a copy-code
+    // button on the customer's phone (one-tap shows its autofill label
+    // only on Android, with "Copy code" as the fallback), so the inbox
+    // renders it as one rather than learning a fifth button kind.
+    if (type === 'COPY_CODE' || type === 'OTP') {
       out.push({ type: 'COPY_CODE', text });
       return;
     }

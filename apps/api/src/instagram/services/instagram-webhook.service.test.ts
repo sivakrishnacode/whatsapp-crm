@@ -397,6 +397,45 @@ describe('InstagramWebhookService — inbound messages', () => {
       }),
     );
   });
+
+  it('sends message.received without a phone key when the contact has none', async () => {
+    const { service, webhookDeliver } = makeService(prisma);
+    await runWebhook(service, envelope(inboundText));
+
+    const received = (
+      webhookDeliver.dispatchWebhookEvent.mock.calls as [
+        string,
+        string,
+        Record<string, unknown>,
+      ][]
+    ).find(([, event]) => event === 'message.received');
+    expect(received?.[2]).toEqual({
+      channel: 'instagram',
+      conversation_id: CONVERSATION_ID,
+      contact_id: CONTACT_ID,
+      instagram_message_id: 'mid.inbound-1',
+      content_type: 'text',
+      text: 'hello there',
+    });
+  });
+
+  it('adds the phone to message.received when the Instagram contact has one', async () => {
+    const { service, identity, webhookDeliver } = makeService(prisma);
+    identity.findOrCreateContact.mockResolvedValue({
+      contact: { id: CONTACT_ID, name: 'Siva', phone: '+919876543210' },
+      wasCreated: false,
+    });
+    await runWebhook(service, envelope(inboundText));
+
+    expect(webhookDeliver.dispatchWebhookEvent).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      'message.received',
+      expect.objectContaining({
+        channel: 'instagram',
+        phone: '+919876543210',
+      }),
+    );
+  });
 });
 
 describe('InstagramWebhookService — echoes', () => {

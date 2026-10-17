@@ -240,6 +240,13 @@ describe('validateButtons', () => {
       validateButtons([{ type: 'COPY_CODE', text: 'Copy', example: '' }]),
     ).toThrow(/missing example/);
   });
+  it('rejects an OTP button — AUTHENTICATION templates are made in Meta', () => {
+    expect(() =>
+      validateButtons([
+        { type: 'OTP', otp_type: 'COPY_CODE', text: 'Copy code' },
+      ]),
+    ).toThrow(/OTP button.*Meta WhatsApp Manager/);
+  });
 });
 
 describe('validateSampleValues', () => {

@@ -163,6 +163,26 @@ curl -X POST https://your-crm.example.com/api/v1/messages \
 }
 ```
 
+**Authentication (OTP) templates.** Meta needs the one-time code twice:
+as the body's `{{1}}` and on the template's OTP ("Copy code") button. Pass
+it in both places — `buttonParams` is keyed by button index (the OTP
+button is `0` on Meta's authentication templates). If `buttonParams` is
+omitted the button falls back to `body[0]`; with neither, the send is
+refused before it reaches Meta. Authentication templates are created in
+Meta WhatsApp Manager, then pulled in with **Sync from Meta**.
+
+```json
+{
+  "to": "+919876543210",
+  "type": "template",
+  "template": {
+    "name": "login_otp",
+    "language": "en_US",
+    "params": { "body": ["123456"], "buttonParams": { "0": "123456" } }
+  }
+}
+```
+
 Response (201):
 
 ```json
@@ -198,12 +218,18 @@ curl https://your-crm.example.com/api/v1/templates \
 #     "category": "Utility", "status": "APPROVED",
 #     "parameter_format": "POSITIONAL", "header": null,
 #     "content": "Your order {{1}} has shipped. Track it here: {{2}}",
-#     "footer": null, "rejection_reason": null,
+#     "footer": null, "buttons": [], "rejection_reason": null,
 #     "updated_at": "2026-10-12T08:00:00.000Z"
 #   }],
 #   "meta": { "next_cursor": null }
 # }
 ```
+
+`buttons` lists each button as `{ "type", "text" }`, plus `url` on a
+`URL` button and `otp_type` (`COPY_CODE` / `ONE_TAP` / `ZERO_TAP`) on the
+`OTP` button of an `Authentication` template. A button needs a send-time
+`buttonParams[index]` value when it is a `URL` whose `url` contains a
+`{{…}}` suffix, a `COPY_CODE`, or an `OTP` (the one-time code).
 
 ### `GET /api/v1/contacts`
 
@@ -399,8 +425,13 @@ delivery uuid you can dedupe on, and `data` varies by `event`:
 `data` by event:
 
 ```jsonc
-// message.received
-{ "conversation_id": "…", "contact_id": "…", "whatsapp_message_id": "wamid.…", "content_type": "text", "text": "Hi 👋" }
+// message.received (WhatsApp) — `phone` is the sender in E.164
+{ "channel": "whatsapp", "conversation_id": "…", "contact_id": "…", "phone": "+919876543210",
+  "whatsapp_message_id": "wamid.…", "content_type": "text", "text": "Hi 👋" }
+// message.received (Instagram / website chat) — `phone` only when the contact has one on file
+{ "channel": "instagram", "conversation_id": "…", "contact_id": "…", "instagram_message_id": "…", "content_type": "text", "text": "Hi" }
+{ "channel": "web", "conversation_id": "…", "contact_id": "…", "message_id": "…", "content_type": "text", "text": "Hi" }
+// A tap on a template quick-reply button arrives as content_type "interactive" with the button label as text.
 // conversation.created
 { "conversation_id": "…", "contact_id": "…" }
 // message.status_updated

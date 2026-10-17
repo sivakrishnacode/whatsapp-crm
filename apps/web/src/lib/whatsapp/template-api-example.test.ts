@@ -121,6 +121,24 @@ describe('buildTemplateApiExample', () => {
     expect(notes.join(' ')).toMatch(/URL button/);
   });
 
+  it('repeats the body code on the OTP button of an Authentication template', () => {
+    const { body, notes } = buildTemplateApiExample(
+      tpl({
+        name: 'dffrnt_login_otp',
+        category: 'Authentication',
+        body_text:
+          '*{{1}}* is your verification code. For your security, do not share this code.',
+        sample_values: { body: ['123456'] },
+        buttons: [{ type: 'OTP', otp_type: 'COPY_CODE', text: 'Copy code' }],
+      }),
+    );
+    expect(templateOf(body).params).toEqual({
+      body: ['123456'],
+      buttonParams: { 0: '123456' },
+    });
+    expect(notes.join(' ')).toMatch(/one-time code/);
+  });
+
   it('emits one cards entry per carousel card', () => {
     const { body, notes } = buildTemplateApiExample(
       tpl({

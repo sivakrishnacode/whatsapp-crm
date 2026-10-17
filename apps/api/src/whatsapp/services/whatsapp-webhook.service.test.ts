@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { WhatsappWebhookService } from './whatsapp-webhook.service';
+import { senderE164, WhatsappWebhookService } from './whatsapp-webhook.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { WebhookDeliverService } from '../../v1/services/webhook-deliver.service';
 import type { FlowDispatchService } from '../../flows/services/flow-dispatch.service';
@@ -630,5 +630,123 @@ describe('WhatsappWebhookService', () => {
         '[Unsupported message type: some_future_type]',
       );
     });
+  });
+
+  describe('processMessage — message.received webhook', () => {
+    type ProcessMessage = (
+      message: Record<string, unknown>,
+      contact: { profile: { name: string }; wa_id: string },
+      accountId: string,
+      configOwnerUserId: string,
+      accessToken: string,
+    ) => Promise<void>;
+
+    /**
+     * Drives the private inbound handler with the contact/conversation
+     * lookups stubbed — their own behaviour is not what is under test,
+     * only what the public-API webhook says about the sender.
+     */
+    async function receive(
+      contactPhone: string | null,
+      message: Record<string, unknown>,
+    ) {
+      const internals = service as unknown as Record<string, unknown> & {
+        processMessage: ProcessMessage;
+      };
+      internals.findOrCreateContact = vi.fn().mockResolvedValue({
+        contact: { id: 'contact-1', phone: contactPhone, name: 'Siva' },
+        wasCreated: false,
+      });
+      internals.findOrCreateConversation = vi.fn().mockResolvedValue({
+        conversation: { id: 'conv-1', unread_count: 0 },
+        created: false,
+      });
+      internals.flagBroadcastReplyIfAny = vi.fn().mockResolvedValue(undefined);
+      const db = prisma as {
+        messages: Record<string, unknown>;
+        conversations?: unknown;
+      };
+      db.messages.create = vi.fn().mockResolvedValue({ id: 'msg-1' });
+      db.conversations = { update: vi.fn().mockResolvedValue({}) };
+
+      await internals.processMessage(
+        message,
+        { profile: { name: 'Siva' }, wa_id: '919876543210' },
+        'acc-1',
+        'user-1',
+        'token',
+      );
+
+      const deliver = webhookDeliver as ReturnType<
+        typeof makeWebhookDeliverMock
+      >;
+      const calls = deliver.dispatchWebhookEvent.mock.calls as [
+        string,
+        string,
+        Record<string, unknown>,
+      ][];
+      return calls.find(([, event]) => event === 'message.received');
+    }
+
+    it("carries the sender's E.164 phone and the whatsapp channel", async () => {
+      const received = await receive('+919876543210', {
+        from: '919876543210',
+        id: 'wamid.IN1',
+        timestamp: '1785240000',
+        type: 'text',
+        text: { body: 'STOP' },
+      });
+
+      expect(received?.[0]).toBe('acc-1');
+      expect(received?.[2]).toEqual({
+        channel: 'whatsapp',
+        conversation_id: 'conv-1',
+        contact_id: 'contact-1',
+        phone: '+919876543210',
+        whatsapp_message_id: 'wamid.IN1',
+        content_type: 'text',
+        text: 'STOP',
+      });
+    });
+
+    it('reports a template quick-reply tap with its label and the phone', async () => {
+      const received = await receive('+919876543210', {
+        from: '919876543210',
+        id: 'wamid.IN2',
+        timestamp: '1785240000',
+        type: 'button',
+        button: { text: 'Stop promotions', payload: 'Stop promotions' },
+      });
+
+      expect(received?.[2]).toMatchObject({
+        channel: 'whatsapp',
+        phone: '+919876543210',
+        content_type: 'interactive',
+        text: 'Stop promotions',
+      });
+    });
+
+    it("falls back to Meta's sender number when the contact row is not canonical", async () => {
+      const received = await receive('09876543210', {
+        from: '919876543210',
+        id: 'wamid.IN3',
+        timestamp: '1785240000',
+        type: 'text',
+        text: { body: 'hi' },
+      });
+
+      expect(received?.[2]).toMatchObject({ phone: '+919876543210' });
+    });
+  });
+});
+
+describe('senderE164', () => {
+  it('prefers the canonical contact phone', () => {
+    expect(senderE164('+919876543210', '919876543210')).toBe('+919876543210');
+  });
+
+  it("prefixes Meta's international digits otherwise", () => {
+    expect(senderE164(null, '14155550123')).toBe('+14155550123');
+    expect(senderE164('4155550123', '14155550123')).toBe('+14155550123');
   });
 });

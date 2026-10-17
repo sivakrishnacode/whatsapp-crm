@@ -69,7 +69,14 @@ export class WebInboundService {
         account_id: input.accountId,
         channel: 'web',
       },
-      select: { id: true, contact_id: true, last_inbound_at: true },
+      select: {
+        id: true,
+        contact_id: true,
+        last_inbound_at: true,
+        // For the message.received webhook — present only when the
+        // visitor has given a number (pre-chat form, CRM edit).
+        contacts: { select: { phone: true } },
+      },
     });
     if (!conversation) {
       throw new NotFoundException('This chat session is no longer available.');
@@ -137,6 +144,7 @@ export class WebInboundService {
       {
         messageId: message.id,
         isFirstInbound,
+        contactPhone: conversation.contacts?.phone ?? null,
       },
     );
 
@@ -155,7 +163,12 @@ export class WebInboundService {
    */
   private fanOut(
     input: InboundWebMessage,
-    meta: { messageId: string; isFirstInbound: boolean },
+    meta: {
+      messageId: string;
+      isFirstInbound: boolean;
+      /** E.164, when the visitor's contact has a phone on file. */
+      contactPhone?: string | null;
+    },
   ): void {
     const triggers: Array<
       | 'first_inbound_message'
@@ -210,6 +223,8 @@ export class WebInboundService {
         channel: 'web',
         conversation_id: input.conversationId,
         contact_id: input.contactId,
+        // Omitted, not null, for an anonymous visitor.
+        ...(meta.contactPhone ? { phone: meta.contactPhone } : {}),
         message_id: meta.messageId,
         content_type: input.contentType,
         text: input.text || null,

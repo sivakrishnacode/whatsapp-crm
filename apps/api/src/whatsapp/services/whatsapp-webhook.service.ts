@@ -969,13 +969,21 @@ export class WhatsappWebhookService {
       });
     }
 
-    // Trigger message.received event (public API)
+    // Trigger message.received event (public API). `phone` and `channel`
+    // are additive: a receiver acting on an inbound message (an opt-out
+    // keyword, an order reply) needs to know who sent it without a
+    // second call to GET /v1/contacts/{id}.
     void this.webhookDeliver.dispatchWebhookEvent(
       accountId,
       'message.received',
       {
+        channel: 'whatsapp',
         conversation_id: conversation.id,
         contact_id: contactRecord.id,
+        phone: senderE164(
+          (contactRecord as { phone?: string | null }).phone,
+          senderPhone,
+        ),
         whatsapp_message_id: message.id,
         content_type: contentType,
         text: parsedContent.contentText,
@@ -1468,6 +1476,22 @@ function safeEqual(a: string, b: string): boolean {
   const bufB = Buffer.from(b, 'utf8');
   if (bufA.length !== bufB.length) return false;
   return timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * The sender's number in E.164 for the `message.received` webhook.
+ *
+ * The contact row is canonical E.164 (contacts_phone_e164_chk), so it
+ * wins. The fallback covers a row whose in-passing canonicalization
+ * failed: Meta's `from` is the full international number without the
+ * `+`, so prefixing it is E.164 by construction.
+ */
+export function senderE164(
+  contactPhone: string | null | undefined,
+  metaFromDigits: string,
+): string {
+  if (contactPhone && isCanonicalE164(contactPhone)) return contactPhone;
+  return `+${metaFromDigits}`;
 }
 
 /**

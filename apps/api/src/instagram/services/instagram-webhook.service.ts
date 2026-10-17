@@ -489,6 +489,7 @@ export class InstagramWebhookService {
       ctx,
       conversation,
       contactId: contact.id,
+      contactPhone: contact.phone,
       customerIgsid,
       contactCreated,
       isFirstInbound,
@@ -572,6 +573,7 @@ export class InstagramWebhookService {
       ctx,
       conversation,
       contactId: contact.id,
+      contactPhone: contact.phone,
       customerIgsid,
       contactCreated,
       // A postback is a tap on something we sent, so the thread already
@@ -966,6 +968,8 @@ export class InstagramWebhookService {
     ctx: IgContext;
     conversation: conversations;
     contactId: string;
+    /** E.164, when this Instagram contact also has a phone on file. */
+    contactPhone?: string | null;
     /** The sender's IGSID. Per-event, not per-context — funnels need it
      *  to ask Meta whether this person follows the business. */
     customerIgsid: string;
@@ -1001,6 +1005,7 @@ export class InstagramWebhookService {
               channel: 'instagram',
               conversation_id: conversation.id,
               contact_id: contactId,
+              ...(args.contactPhone ? { phone: args.contactPhone } : {}),
               instagram_message_id: args.metaMessageId,
               content_type: args.contentType,
               text: args.text || null,
@@ -1072,6 +1077,9 @@ export class InstagramWebhookService {
         channel: 'instagram',
         conversation_id: conversation.id,
         contact_id: contactId,
+        // Instagram contacts usually have no phone; the key is omitted
+        // rather than sent as null so its presence means something.
+        ...(args.contactPhone ? { phone: args.contactPhone } : {}),
         instagram_message_id: args.metaMessageId,
         content_type: args.contentType,
         text: args.text || null,

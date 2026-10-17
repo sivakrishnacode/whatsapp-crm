@@ -57,6 +57,13 @@ function patchButton(current: TemplateButton, patch: ButtonPatch): TemplateButto
         ...(patch.text !== undefined && { text: patch.text }),
         ...(patch.example !== undefined && { example: patch.example }),
       };
+    case 'OTP':
+      // Synced from an AUTHENTICATION template; only the label is ours
+      // to touch, and that form is blocked for Authentication anyway.
+      return {
+        ...current,
+        ...(patch.text !== undefined && { text: patch.text }),
+      };
   }
 }
 
@@ -131,6 +138,13 @@ export function TemplateButtonsEditor({
           {buttons.map((btn, i) => {
             const urlVars =
               btn.type === 'URL' ? variableTokens(btn.url, parameterFormat) : [];
+            // A synced AUTHENTICATION template's OTP button is not
+            // offered for new buttons, but the trigger still needs a
+            // matching item to show a label.
+            const options =
+              btn.type === 'OTP'
+                ? [...types, { value: 'OTP' as const, label: 'One-time code' }]
+                : types;
             return (
               <div
                 key={i}
@@ -154,7 +168,7 @@ export function TemplateButtonsEditor({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="border-border bg-popover">
-                      {types.map((t) => (
+                      {options.map((t) => (
                         <SelectItem
                           key={t.value}
                           value={t.value}
@@ -224,6 +238,13 @@ export function TemplateButtonsEditor({
                     onChange={(e) => update(i, { example: e.target.value })}
                     className="h-8 border-border bg-muted text-xs text-foreground placeholder:text-muted-foreground"
                   />
+                )}
+
+                {btn.type === 'OTP' && (
+                  <p className="pl-1 text-[11px] text-muted-foreground">
+                    Managed in Meta WhatsApp Manager. Carries the one-time code
+                    passed at send time (the body&apos;s first value).
+                  </p>
                 )}
               </div>
             );

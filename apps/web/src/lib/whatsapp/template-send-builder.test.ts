@@ -275,3 +275,45 @@ describe('buildSendComponents — end-to-end mix', () => {
     expect((components[2] as { index: string }).index).toBe('1');
   });
 });
+
+describe('buildSendComponents — AUTHENTICATION (OTP) templates', () => {
+  const auth = row({
+    name: 'dffrnt_login_otp',
+    category: 'Authentication',
+    body_text:
+      '*{{1}}* is your verification code. For your security, do not share this code.',
+    buttons: [{ type: 'OTP', otp_type: 'COPY_CODE', text: 'Copy code' }],
+  });
+
+  it('sends the code in the body and as a url-subtype button parameter', () => {
+    expect(
+      buildSendComponents(auth, {
+        body: ['123456'],
+        buttonParams: { 0: '123456' },
+      }),
+    ).toEqual([
+      { type: 'body', parameters: [{ type: 'text', text: '123456' }] },
+      {
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [{ type: 'text', text: '123456' }],
+      },
+    ]);
+  });
+
+  it('falls back to body[0] when buttonParams is omitted', () => {
+    expect(buildSendComponents(auth, { body: ['424242'] })[1]).toEqual({
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: '424242' }],
+    });
+  });
+
+  it('throws a clear error when no code is supplied', () => {
+    expect(() =>
+      buildSendComponents({ ...auth, body_text: 'Your code' }, {}),
+    ).toThrow(/OTP button #1 needs the one-time code/);
+  });
+});

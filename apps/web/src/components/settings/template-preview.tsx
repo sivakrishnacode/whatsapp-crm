@@ -76,6 +76,8 @@ const BUTTON_ICONS: Record<TemplateButton['type'], typeof Phone> = {
   URL: ExternalLink,
   PHONE_NUMBER: Phone,
   COPY_CODE: Copy,
+  // An AUTHENTICATION template's OTP button renders as "Copy code".
+  OTP: Copy,
 };
 
 function PreviewButtons({ buttons }: { buttons: TemplateButton[] }) {

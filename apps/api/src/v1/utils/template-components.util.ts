@@ -52,11 +52,15 @@ export interface MetaComponent {
 }
 
 interface MetaButtonPayload {
-  type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'COPY_CODE';
+  type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'COPY_CODE' | 'OTP';
   text: string;
   url?: string;
   phone_number?: string;
   example?: string[];
+  otp_type?: string;
+  autofill_text?: string;
+  supported_apps?: { package_name: string; signature_hash: string }[];
+  zero_tap_terms_accepted?: boolean;
 }
 
 const MEDIA_FORMATS = {
@@ -198,6 +202,23 @@ function buildButtonPayload(b: TemplateButton): MetaButtonPayload {
       };
     case 'COPY_CODE':
       return { type: 'COPY_CODE', text: b.text, example: [b.example] };
+    case 'OTP': {
+      // Unreachable from the submit route today (AUTHENTICATION is
+      // created in Meta WhatsApp Manager and validateButtonFields
+      // rejects OTP buttons), but kept faithful to Meta's creation shape
+      // so the union stays exhaustive and nothing is silently dropped.
+      const payload: MetaButtonPayload = {
+        type: 'OTP',
+        otp_type: b.otp_type,
+        text: b.text,
+      };
+      if (b.autofill_text) payload.autofill_text = b.autofill_text;
+      if (b.supported_apps?.length) payload.supported_apps = b.supported_apps;
+      if (b.zero_tap_terms_accepted !== undefined) {
+        payload.zero_tap_terms_accepted = b.zero_tap_terms_accepted;
+      }
+      return payload;
+    }
   }
 }
 

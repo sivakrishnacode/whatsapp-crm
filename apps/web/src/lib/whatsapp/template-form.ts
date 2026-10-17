@@ -106,6 +106,10 @@ export function emptyButton(type: TemplateButton['type']): TemplateButton {
       return { type: 'PHONE_NUMBER', text: '', phone_number: '' };
     case 'COPY_CODE':
       return { type: 'COPY_CODE', text: '', example: '' };
+    case 'OTP':
+      // Not offered in the editor (AUTHENTICATION templates are made in
+      // Meta); here only so the switch covers every button type.
+      return { type: 'OTP', otp_type: 'COPY_CODE', text: 'Copy code' };
   }
 }
 

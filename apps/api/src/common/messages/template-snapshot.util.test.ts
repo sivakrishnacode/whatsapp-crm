@@ -149,4 +149,24 @@ describe('buildTemplateSnapshot', () => {
     });
     expect(snapshot.footer).toBe('Reply STOP to opt out of offers');
   });
+
+  it('shows an AUTHENTICATION template\'s OTP button as a "Copy code" button', () => {
+    const snapshot = buildTemplateSnapshot(
+      {
+        name: 'dffrnt_login_otp',
+        language: 'en_US',
+        footer_text: 'This code expires in 10 minutes.',
+        buttons: [
+          { type: 'OTP', otp_type: 'COPY_CODE', text: 'Copy code' },
+          // A row synced before labels were defaulted.
+          { type: 'OTP', otp_type: 'ONE_TAP', text: '' },
+        ],
+      },
+      { body: ['123456'], buttonParams: { 0: '123456' } },
+    );
+    expect(snapshot.buttons).toEqual([
+      { type: 'COPY_CODE', text: 'Copy code' },
+      { type: 'COPY_CODE', text: 'Copy code' },
+    ]);
+  });
 });
