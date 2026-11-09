@@ -37,10 +37,19 @@ export type AuditTargetType =
   | 'subscription'
   | 'plan'
   | 'credit_pack'
-  | 'credit_wallet';
+  | 'credit_wallet'
+  // Control Center (migration 098)
+  | 'client'
+  | 'client_note'
+  | 'client_task'
+  | 'ticket'
+  | 'staff'
+  | 'catalog'
+  | 'settings'
+  | 'export';
 
 export type AuditEntry = {
-  /** The signed-in ADMIN_USERNAME. */
+  /** `Staff.actor` — the staff email, or "<username> (break-glass)". */
   actor: string;
   /** Stable dotted verb, e.g. 'credits.adjust'. Grouped on in the UI. */
   action: string;

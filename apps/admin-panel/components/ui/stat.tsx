@@ -1,13 +1,14 @@
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 /**
  * Figures, per the stat-tile contract: label (sentence case, no colon), value,
  * optional context line.
  *
- * There is no delta on the money tiles and that is deliberate — a delta needs a
- * prior value, and this database keeps no history of what MRR was last month.
- * Inventing a comparison would be worse than omitting one, so the tiles carry a
- * factual context line instead.
+ * A tile only shows a delta when the comparison is real (a prior window the
+ * source actually measured). Money tiles never do: this database keeps no
+ * history of what MRR was last month, and an invented comparison is worse
+ * than none.
  */
 
 export function HeroStat({
@@ -21,15 +22,72 @@ export function HeroStat({
 }) {
   return (
     <div>
-      <p className="text-muted text-xs font-medium tracking-wide uppercase">
+      <p className="text-muted text-[11px] font-semibold tracking-wider uppercase">
         {label}
       </p>
       {/* Proportional figures: tabular-nums makes a large number look loose. */}
-      <p className="text-ink mt-2 text-5xl leading-none font-semibold">
+      <p className="text-ink mt-2 text-4xl leading-none font-bold tracking-tight sm:text-5xl">
         {value}
       </p>
       {context ? <p className="text-ink-2 mt-3 text-sm">{context}</p> : null}
     </div>
+  );
+}
+
+export type StatTone = 'neutral' | 'good' | 'warning' | 'critical';
+
+const MARKER: Record<StatTone, string | null> = {
+  neutral: null,
+  good: 'bg-good',
+  warning: 'bg-warning',
+  critical: 'bg-critical',
+};
+
+/**
+ * A delta against a measured prior window. `better` says which direction is
+ * good, because a rise in failed messages is not good news. Rendered as text
+ * with a sign, so it reads without colour.
+ */
+export type StatDelta = {
+  current: number;
+  previous: number;
+  better: 'up' | 'down';
+  /** e.g. "vs previous 30 days" */
+  label: string;
+};
+
+function DeltaLine({ delta }: { delta: StatDelta }) {
+  if (delta.previous === 0) {
+    return (
+      <span className="text-muted">
+        {delta.current === 0 ? 'no change' : 'up from 0'} {delta.label}
+      </span>
+    );
+  }
+  const change = ((delta.current - delta.previous) / delta.previous) * 100;
+  // Past ten-fold, a percentage stops meaning anything ("+18225%"); say the
+  // multiple instead.
+  if (change >= 900) {
+    const multiple = delta.current / delta.previous;
+    const good = delta.better === 'up';
+    return (
+      <span className={good ? 'text-good-fg' : 'text-bad-fg'}>
+        {multiple >= 100 ? '>100' : Math.round(multiple)}×{' '}
+        <span className="text-muted">{delta.label}</span>
+      </span>
+    );
+  }
+  const rounded = Math.round(change);
+  const good = rounded === 0 ? null : rounded > 0 === (delta.better === 'up');
+  return (
+    <span
+      className={
+        good === null ? 'text-muted' : good ? 'text-good-fg' : 'text-bad-fg'
+      }
+    >
+      {rounded > 0 ? '+' : rounded < 0 ? '−' : '±'}
+      {Math.abs(rounded)}% <span className="text-muted">{delta.label}</span>
+    </span>
   );
 }
 
@@ -38,51 +96,77 @@ export function StatTile({
   value,
   context,
   tone = 'neutral',
+  href,
+  delta,
 }: {
   label: string;
   value: string;
   context?: ReactNode;
-  tone?: 'neutral' | 'good' | 'warning' | 'critical';
+  tone?: StatTone;
+  /** Makes the whole tile a link to the list behind the number. */
+  href?: string;
+  delta?: StatDelta;
 }) {
-  // Tone is carried by a small marker beside the value, never by coloring the
-  // value text — a status hue as text either fails contrast or impersonates a
-  // series color.
-  const marker: Record<typeof tone, string | null> = {
-    neutral: null,
-    good: 'bg-good',
-    warning: 'bg-warning',
-    critical: 'bg-critical',
-  };
-
-  return (
-    <div className="border-ring bg-surface rounded-xl border px-4 py-3.5">
-      <p className="text-muted text-xs font-medium">{label}</p>
-      <p className="text-ink mt-1.5 flex items-center gap-2 text-2xl leading-none font-semibold">
-        {marker[tone] ? (
+  const body = (
+    <>
+      <p className="text-muted text-[11px] font-semibold tracking-wider uppercase">
+        {label}
+      </p>
+      {/* Tone is a marker beside the value, never the value's colour — a
+       * status hue as text either fails contrast or impersonates a series. */}
+      <p className="text-ink mt-2 flex items-center gap-2 text-[26px] leading-none font-bold tracking-tight">
+        {MARKER[tone] ? (
           <span
             aria-hidden
-            className={`size-2 shrink-0 rounded-full ${marker[tone]}`}
+            className={`size-2.5 shrink-0 rounded-full ${MARKER[tone]}`}
           />
         ) : null}
         {value}
       </p>
+      {delta ? (
+        <p className="mt-2 text-xs">
+          <DeltaLine delta={delta} />
+        </p>
+      ) : null}
       {context ? (
         <p className="text-muted mt-1.5 text-xs leading-relaxed">{context}</p>
       ) : null}
-    </div>
+    </>
+  );
+
+  const shell =
+    'border-ring bg-surface shadow-card block min-w-0 rounded-2xl border px-4 py-4';
+
+  return href ? (
+    <Link
+      href={href}
+      className={`${shell} hover:border-primary/40 transition-colors`}
+    >
+      {body}
+    </Link>
+  ) : (
+    <div className={shell}>{body}</div>
   );
 }
 
-export function StatRow({ children }: { children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{children}</div>
-  );
+export function StatRow({
+  children,
+  columns = 4,
+}: {
+  children: ReactNode;
+  columns?: 3 | 4 | 5 | 6;
+}) {
+  const cols = {
+    3: 'md:grid-cols-3',
+    4: 'md:grid-cols-4',
+    5: 'md:grid-cols-3 xl:grid-cols-5',
+    6: 'md:grid-cols-3 xl:grid-cols-6',
+  }[columns];
+  return <div className={`grid grid-cols-2 gap-3 ${cols}`}>{children}</div>;
 }
 
 /**
- * A single ratio against a limit. The unfilled track is a lighter step of the
- * fill's own ramp so the state reads across the whole bar; severity escalates
- * as the limit approaches.
+ * A single ratio against a limit. Severity escalates as the limit approaches.
  */
 export function Meter({
   label,
@@ -100,7 +184,7 @@ export function Meter({
   const pct = Math.round(ratio * 100);
 
   const fill =
-    ratio >= 1 ? 'bg-critical' : ratio >= 0.8 ? 'bg-warning' : 'bg-series-1';
+    ratio >= 1 ? 'bg-critical' : ratio >= 0.8 ? 'bg-warning' : 'bg-primary';
 
   return (
     <div>
@@ -111,13 +195,41 @@ export function Meter({
           {unlimited ? ' / unlimited' : ` / ${format(limit)}`}
         </span>
       </div>
-      <div className="bg-surface-2 mt-1.5 h-1.5 overflow-hidden rounded-full">
+      <div className="bg-surface-3 mt-1.5 h-2 overflow-hidden rounded-full">
         {unlimited ? null : (
           <div
             className={`h-full rounded-full ${fill}`}
             style={{ width: `${Math.max(pct, ratio > 0 ? 2 : 0)}%` }}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+/** A plain 0–100 progress bar with its number. */
+export function Progress({ value, label }: { value: number; label?: string }) {
+  const pct = Math.max(0, Math.min(100, Math.round(value)));
+  return (
+    <div>
+      {label ? (
+        <div className="text-ink-2 mb-1.5 flex justify-between text-xs">
+          <span>{label}</span>
+          <span className="tabular font-semibold">{pct}%</span>
+        </div>
+      ) : null}
+      <div
+        className="bg-surface-3 h-2 overflow-hidden rounded-full"
+        role="progressbar"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={label}
+      >
+        <div
+          className="bg-good h-full rounded-full"
+          style={{ width: `${pct}%` }}
+        />
       </div>
     </div>
   );

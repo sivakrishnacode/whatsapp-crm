@@ -1,66 +1,131 @@
 @import 'tailwindcss';
 
 /* ============================================================
- * Tokens
+ * Converse360 Control Center — tokens
  *
- * Two families, kept separate on purpose:
+ * The palette follows the C2.0 handoff prototype: a navy rail, a cool
+ * near-white plane, white cards, and one blue (#284e92) for action.
  *
- *  - chrome (plane / surface / ink / line) — the UI
- *  - data   (series / seq / status)        — the charts
+ * Three families, kept separate on purpose:
  *
- * The data colors are a validated set, not a taste call: the two series hues
- * clear the lightness band, chroma floor, CVD separation (worst adjacent ΔE
- * 21.6 light / 19.2 dark, OKLab ×100) and 3:1 contrast against both surfaces in
- * light and dark. Dark is a *selected* set of steps for the dark surface, not an
- * automatic flip. If you change a series hex, re-validate the pair rather than
- * eyeballing it.
+ *  - chrome (plane / surface / ink / line / primary / rail) — the UI
+ *  - tone   (good / warn / bad / info / neutral, each a soft fill plus a
+ *            readable foreground) — status pills and callouts
+ *  - data   (series)  — the charts
+ *
+ * ⚠️ Status is NEVER carried by colour alone. Every pill renders a shape
+ * glyph and a word (components/ui/badge.tsx); the tone colours are a second
+ * channel, not the only one. That is what keeps the panel readable under
+ * CVD, in print and in forced-colors mode.
+ *
+ * The two series hues are the previously validated pair (worst adjacent ΔE
+ * 21.6 light / 19.2 dark, OKLab ×100, 3:1 against both surfaces). If you
+ * change one, re-validate the pair rather than eyeballing it.
  * ============================================================ */
 
 :root {
   color-scheme: light;
 
-  --plane: #f9f9f7;
-  --surface: #fcfcfb;
-  --surface-2: #f2f1ed;
+  --plane: #f5f7fb;
+  --surface: #ffffff;
+  --surface-2: #f3f6fa;
+  --surface-3: #e9eef5;
 
-  --ink: #0b0b0b;
-  --ink-2: #52514e;
-  --muted: #898781;
+  --ink: #172338;
+  --ink-2: #3c4a61;
+  --muted: #64718a;
 
-  --line: #e1e0d9; /* gridline hairline */
-  --rule: #c3c2b7; /* baseline / axis */
-  --ring: rgba(11, 11, 11, 0.1);
+  --line: #e5e9f0;
+  --rule: #cdd5e1;
+  --ring: #dbe2ec;
 
-  --series-1: #2a78d6; /* additions, and the single-series default */
-  --series-2: #e34948; /* losses — the other pole of the diverging pair */
+  --primary: #284e92;
+  --primary-hover: #213f78;
+  --primary-soft: #edf3ff;
+  --primary-soft-ink: #284e92;
 
-  --good: #0ca30c;
-  --warning: #fab219;
+  --rail: #142239;
+  --rail-2: #1b2d4a;
+  --rail-ink: #bfcee3;
+  --rail-ink-strong: #ffffff;
+  --rail-muted: #8094b3;
+  --rail-active: #2b4268;
+
+  --good-soft: #e5f5ec;
+  --good-fg: #11694e;
+  --warn-soft: #fff4d6;
+  --warn-fg: #855a07;
+  --bad-soft: #feebed;
+  --bad-fg: #a62f3a;
+  --info-soft: #edf4ff;
+  --info-fg: #2f5794;
+  --neutral-soft: #f0f3f7;
+  --neutral-fg: #4f5c71;
+
+  --series-1: #2a78d6;
+  --series-2: #e34948;
+
+  --good: #15785a;
+  --warning: #e0a019;
   --serious: #ec835a;
-  --critical: #d03b3b;
-  --good-ink: #006300; /* success as *text* needs a darker step */
+  --critical: #c63a45;
+  --good-ink: #11694e;
+
+  --shadow-card:
+    0 1px 2px rgb(23 35 56 / 0.04), 0 3px 16px rgb(34 51 75 / 0.04);
+  --shadow-pop: 0 20px 60px rgb(23 35 56 / 0.18);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
 
-    --plane: #0d0d0d;
-    --surface: #1a1a19;
-    --surface-2: #232322;
+    --plane: #0a111e;
+    --surface: #101a2b;
+    --surface-2: #152237;
+    --surface-3: #1c2b44;
 
-    --ink: #ffffff;
-    --ink-2: #c3c2b7;
-    --muted: #898781;
+    --ink: #e9eef7;
+    --ink-2: #b7c3d7;
+    --muted: #8492a9;
 
-    --line: #2c2c2a;
-    --rule: #383835;
-    --ring: rgba(255, 255, 255, 0.1);
+    --line: #1f2d45;
+    --rule: #2e3f5c;
+    --ring: #26364f;
+
+    --primary: #5d8ef0;
+    --primary-hover: #77a1f3;
+    --primary-soft: #182a4a;
+    --primary-soft-ink: #a9c4f7;
+
+    --rail: #070d18;
+    --rail-2: #0e1829;
+    --rail-ink: #a9b8cf;
+    --rail-ink-strong: #ffffff;
+    --rail-muted: #6c7d98;
+    --rail-active: #1b2c48;
+
+    --good-soft: #0f2f26;
+    --good-fg: #63d3a6;
+    --warn-soft: #33270b;
+    --warn-fg: #f1c25e;
+    --bad-soft: #3a1820;
+    --bad-fg: #f28e98;
+    --info-soft: #16264a;
+    --info-fg: #9fbef4;
+    --neutral-soft: #1a2638;
+    --neutral-fg: #b2bed1;
 
     --series-1: #3987e5;
     --series-2: #e66767;
 
-    --good-ink: #0ca30c;
+    --good: #2fb383;
+    --warning: #f1b73a;
+    --critical: #ec6672;
+    --good-ink: #63d3a6;
+
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-pop: 0 20px 60px rgb(0 0 0 / 0.55);
   }
 }
 
@@ -68,6 +133,7 @@
   --color-plane: var(--plane);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
 
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
@@ -77,6 +143,29 @@
   --color-rule: var(--rule);
   --color-ring: var(--ring);
 
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-soft-ink: var(--primary-soft-ink);
+
+  --color-rail: var(--rail);
+  --color-rail-2: var(--rail-2);
+  --color-rail-ink: var(--rail-ink);
+  --color-rail-ink-strong: var(--rail-ink-strong);
+  --color-rail-muted: var(--rail-muted);
+  --color-rail-active: var(--rail-active);
+
+  --color-good-soft: var(--good-soft);
+  --color-good-fg: var(--good-fg);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-fg: var(--warn-fg);
+  --color-bad-soft: var(--bad-soft);
+  --color-bad-fg: var(--bad-fg);
+  --color-info-soft: var(--info-soft);
+  --color-info-fg: var(--info-fg);
+  --color-neutral-soft: var(--neutral-soft);
+  --color-neutral-fg: var(--neutral-fg);
+
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
 
@@ -85,6 +174,9 @@
   --color-serious: var(--serious);
   --color-critical: var(--critical);
   --color-good-ink: var(--good-ink);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-pop: var(--shadow-pop);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -109,8 +201,27 @@ td,
   font-variant-numeric: tabular-nums;
 }
 
-/* Focus that is visible on every surface without being decorative. */
+/* Focus that is visible on every surface, including the navy rail. */
 :where(a, button, input, select, textarea, summary):focus-visible {
-  outline: 2px solid var(--series-1);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+.rail :where(a, button, input):focus-visible {
+  outline-color: #8eb8fa;
+}
+
+/* The rail scrolls on its own when the nav outgrows a short viewport. */
+.rail-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail-active) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

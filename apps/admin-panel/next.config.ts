@@ -42,6 +42,36 @@ const SECURITY_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  /**
+   * The C2.0 revamp renamed sections. Old bookmarks and links pasted into
+   * tickets keep working. Temporary (307) rather than permanent so a browser
+   * does not cache them forever if a route is ever reused.
+   */
+  async redirects() {
+    return [
+      { source: '/workspaces', destination: '/clients', permanent: false },
+      {
+        source: '/workspaces/:accountId',
+        destination: '/clients/:accountId',
+        permanent: false,
+      },
+      {
+        source: '/subscribers',
+        destination: '/subscriptions',
+        permanent: false,
+      },
+      {
+        source: '/subscribers/:userId',
+        destination: '/subscriptions/:userId',
+        permanent: false,
+      },
+      {
+        source: '/sales',
+        destination: '/subscriptions/revenue',
+        permanent: false,
+      },
+    ];
+  },
   async headers() {
     return [{ source: '/:path*', headers: SECURITY_HEADERS }];
   },

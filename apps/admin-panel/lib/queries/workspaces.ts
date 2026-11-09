@@ -452,15 +452,23 @@ export type WorkspaceDetail = {
   }[];
 };
 
-export async function getWorkspace(
+/** The list row for one workspace — the header facts, without the detail. */
+export async function getWorkspaceRow(
   accountId: string
-): Promise<WorkspaceDetail | null> {
+): Promise<WorkspaceRow | null> {
   const [workspace] = await prisma.$queryRaw<WorkspaceRow[]>(Prisma.sql`
     select ${WORKSPACE_COLUMNS}
     ${WORKSPACE_FROM}
     where a.id = ${accountId}::uuid
     limit 1
   `);
+  return workspace ?? null;
+}
+
+export async function getWorkspace(
+  accountId: string
+): Promise<WorkspaceDetail | null> {
+  const workspace = await getWorkspaceRow(accountId);
 
   if (!workspace) return null;
 
@@ -512,7 +520,9 @@ export async function getWorkspace(
  * removing a member whose deals are assigned to them is a decision, and the
  * operator should see the number before making it.
  */
-async function listMembers(accountId: string): Promise<WorkspaceMember[]> {
+export async function listMembers(
+  accountId: string
+): Promise<WorkspaceMember[]> {
   return prisma.$queryRaw<WorkspaceMember[]>(Prisma.sql`
     -- Migration 095: the MEMBERSHIP is the row that says who is in this
     -- workspace and what they are here. profiles supplies the person, and is
@@ -557,7 +567,9 @@ async function listMembers(accountId: string): Promise<WorkspaceMember[]> {
 }
 
 /** Live invitations only — an expired or redeemed one is history. */
-async function listInvites(accountId: string): Promise<WorkspaceInvite[]> {
+export async function listInvites(
+  accountId: string
+): Promise<WorkspaceInvite[]> {
   return prisma.$queryRaw<WorkspaceInvite[]>(Prisma.sql`
     select
       i.id as "id",
@@ -575,7 +587,9 @@ async function listInvites(accountId: string): Promise<WorkspaceInvite[]> {
   `);
 }
 
-async function getWallet(accountId: string): Promise<WorkspaceWallet | null> {
+export async function getWallet(
+  accountId: string
+): Promise<WorkspaceWallet | null> {
   const [row] = await prisma.$queryRaw<WorkspaceWallet[]>(Prisma.sql`
     select
       balance as "balance",
@@ -590,7 +604,7 @@ async function getWallet(accountId: string): Promise<WorkspaceWallet | null> {
   return row ?? null;
 }
 
-async function listLedger(
+export async function listLedger(
   accountId: string,
   limit = 25
 ): Promise<LedgerEntry[]> {
@@ -619,7 +633,7 @@ async function listLedger(
  * Intl. Exact for any realistic amount — float8 holds integers to 2^53, which
  * is ninety trillion rupees in paise.
  */
-async function listOrders(
+export async function listOrders(
   accountId: string,
   limit = 10
 ): Promise<CreditOrder[]> {
@@ -650,7 +664,7 @@ async function listOrders(
  * hold a customer's provider key in a server render, and "we only show the last
  * four" is how the whole key ends up in a log.
  */
-async function getAi(accountId: string): Promise<WorkspaceAi | null> {
+export async function getAi(accountId: string): Promise<WorkspaceAi | null> {
   // Anchored on `accounts`, not on `ai_configs`: a workspace can have
   // agents and no config row at all (it runs on the platform key and has
   // never pasted one), and anchoring on the config would report that
@@ -695,7 +709,9 @@ async function getAi(accountId: string): Promise<WorkspaceAi | null> {
   return row ?? null;
 }
 
-async function getChannels(accountId: string): Promise<WorkspaceChannels> {
+export async function getChannels(
+  accountId: string
+): Promise<WorkspaceChannels> {
   const [row] = await prisma.$queryRaw<WorkspaceChannels[]>(Prisma.sql`
     select
       wc.status as "whatsappStatus",
@@ -718,7 +734,9 @@ async function getChannels(accountId: string): Promise<WorkspaceChannels> {
   return row;
 }
 
-async function getActivity(accountId: string): Promise<WorkspaceActivity> {
+export async function getActivity(
+  accountId: string
+): Promise<WorkspaceActivity> {
   const [row] = await prisma.$queryRaw<WorkspaceActivity[]>(Prisma.sql`
     select
       (select count(*) from contacts where account_id = ${accountId}::uuid)::int
@@ -753,7 +771,7 @@ async function getActivity(accountId: string): Promise<WorkspaceActivity> {
   return row;
 }
 
-async function listEnquiries(accountId: string) {
+export async function listEnquiries(accountId: string) {
   return prisma.$queryRaw<WorkspaceDetail['enquiries']>(Prisma.sql`
     select
       id as "id",

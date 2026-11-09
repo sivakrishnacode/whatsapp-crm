@@ -10,6 +10,7 @@ import {
   Input,
   Textarea,
 } from '@/components/ui/form';
+import { Callout } from '@/components/ui/page';
 import { SubmitButton } from '@/components/ui/submit-button';
 import { updatePlan } from '@/lib/actions/plans';
 import type { ActionState } from '@/lib/actions/subscriptions';
@@ -57,22 +58,16 @@ export function PlanForm({
       <input type="hidden" name="planId" value={planId} />
 
       {activeSubscribers > 0 ? (
-        <p className="border-ring text-ink-2 flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-xs leading-relaxed">
-          <span
-            aria-hidden
-            className="bg-warning mt-1 size-1.5 shrink-0 rounded-full"
-          />
-          <span>
-            <strong className="text-ink font-semibold">
-              {activeSubscribers} active subscription
-              {activeSubscribers === 1 ? '' : 's'} on this plan.
-            </strong>{' '}
-            A price change applies to all of them at once — and because the plan
-            table is the only record of price, it also changes every historical
-            figure in this panel. It does not change anything at Stripe or
-            Razorpay.
-          </span>
-        </p>
+        <Callout tone="warn">
+          <strong className="font-semibold">
+            {activeSubscribers} active subscription
+            {activeSubscribers === 1 ? '' : 's'} on this plan.
+          </strong>{' '}
+          A price change applies to all of them at once — and because the plan
+          table is the only record of price, it also changes every historical
+          figure in this panel. It does not change anything at Stripe or
+          Razorpay.
+        </Callout>
       ) : null}
 
       <FieldGrid>

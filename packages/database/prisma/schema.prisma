@@ -3029,3 +3029,178 @@ model media_assets {
   @@map("media_assets")
   @@schema("public")
 }
+
+// ============================================================
+// Control Center (migration 098) — INTERNAL operations data for
+// apps/admin-panel. RLS on with zero policies, rights revoked from
+// anon/authenticated: only an owner connection can read these.
+//
+// Scalar-only on purpose: no relation fields, so adding them did not
+// touch `Account` or any model apps/api is typed against. The foreign
+// keys exist in the database; reads that need a join use raw SQL.
+// ============================================================
+
+/// Staff who sign in to the Control Center. `session_version` is the
+/// revoke button — every session JWT carries the version it was minted
+/// under. The password hash is scrypt (apps/admin-panel/lib/staff/password.ts).
+model admin_staff {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String    @unique(map: "idx_admin_staff_email")
+  full_name       String
+  /// super_admin | account_manager | billing | support_l1 | support_l2 | support_l3
+  role            String
+  password_hash   String
+  is_active       Boolean   @default(true)
+  session_version Int       @default(1)
+  last_login_at   DateTime? @db.Timestamptz(6)
+  created_by      String?
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@schema("public")
+}
+
+/// One row per workspace, created lazily on first assignment/tag/pin.
+/// Lifecycle stage is DERIVED on read; `lifecycle_override` is only the
+/// operator's explicit classification, never an enforcement.
+model client_accounts {
+  account_id         String   @id @db.Uuid
+  lifecycle_override String?
+  lifecycle_reason   String?
+  account_manager_id String?  @db.Uuid
+  backup_manager_id  String?  @db.Uuid
+  support_lead_id    String?  @db.Uuid
+  /// standard | priority | enterprise
+  service_tier       String   @default("standard")
+  tags               String[] @default([])
+  updated_by         String?
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([account_manager_id], map: "idx_client_accounts_manager", where: raw("(account_manager_id IS NOT NULL)"))
+  @@schema("public")
+}
+
+model client_lifecycle_events {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id String   @db.Uuid
+  from_stage String?
+  to_stage   String?
+  reason     String
+  actor      String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_client_lifecycle_events_account")
+  @@schema("public")
+}
+
+model client_notes {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id      String   @db.Uuid
+  body            String
+  pinned          Boolean  @default(false)
+  author_staff_id String?  @db.Uuid
+  author          String
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_client_notes_account")
+  @@schema("public")
+}
+
+model client_tasks {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id        String    @db.Uuid
+  title             String
+  due_on            DateTime? @db.Date
+  assignee_staff_id String?   @db.Uuid
+  /// open | done
+  status            String    @default("open")
+  created_by        String
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  completed_at      DateTime? @db.Timestamptz(6)
+  completed_by      String?
+
+  @@index([assignee_staff_id, due_on], map: "idx_client_tasks_open", where: raw("(status = 'open'::text)"))
+  @@index([account_id, created_at(sort: Desc)], map: "idx_client_tasks_account")
+  @@schema("public")
+}
+
+/// Support desk. `account_id` is SET NULL on workspace deletion and the
+/// name is snapshotted, so a ticket outlives the customer it was for.
+model support_tickets {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  number                BigInt    @unique(map: "idx_support_tickets_number") @default(dbgenerated("nextval('support_ticket_number_seq'::regclass)"))
+  account_id            String?   @db.Uuid
+  account_name          String?
+  subject               String
+  description           String?
+  source                String    @default("staff")
+  category              String    @default("other")
+  severity              String    @default("normal")
+  tier                  String    @default("L1")
+  status                String    @default("open")
+  assignee_staff_id     String?   @db.Uuid
+  requester             String?
+  incident_key          String?
+  first_response_due_at DateTime? @db.Timestamptz(6)
+  resolution_due_at     DateTime? @db.Timestamptz(6)
+  first_responded_at    DateTime? @db.Timestamptz(6)
+  resolved_at           DateTime? @db.Timestamptz(6)
+  closed_at             DateTime? @db.Timestamptz(6)
+  resolution            String?
+  created_by            String
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_support_tickets_account")
+  @@schema("public")
+}
+
+model support_ticket_events {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticket_id  String   @db.Uuid
+  kind       String
+  body       String?
+  from_value String?
+  to_value   String?
+  data       Json     @default("{}")
+  actor      String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([ticket_id, created_at], map: "idx_support_ticket_events_ticket")
+  @@schema("public")
+}
+
+/// Converse 01–06. `provider`/`model`/`fallback_*` are INTERNAL routing
+/// and must never be returned by a customer-facing API.
+model ai_model_catalog {
+  alias             String   @id
+  position          Int
+  name              String
+  tagline           String
+  description       String?
+  is_active         Boolean  @default(false)
+  plans             String[] @default([])
+  provider          String?
+  model             String?
+  fallback_provider String?
+  fallback_model    String?
+  max_output_tokens Int?
+  /// none | read_only | permissioned
+  tool_policy       String   @default("none")
+  prompt_version    String?
+  notes             String?
+  updated_by        String?
+  updated_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@schema("public")
+}
+
+model admin_settings {
+  key        String   @id
+  value      Json
+  updated_by String?
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@schema("public")
+}

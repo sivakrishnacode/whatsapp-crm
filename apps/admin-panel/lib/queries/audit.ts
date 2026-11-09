@@ -34,6 +34,9 @@ export type AuditListParams = {
   q?: string;
   action?: string;
   accountId?: string;
+  /** Exact `actor` — a staff email or "<user> (break-glass)". */
+  actor?: string;
+  targetType?: string;
   page?: number;
   perPage?: number;
 };
@@ -87,6 +90,14 @@ function buildWhere(params: AuditListParams): Prisma.Sql {
     conditions.push(Prisma.sql`l.account_id = ${params.accountId}::uuid`);
   }
 
+  if (params.actor) {
+    conditions.push(Prisma.sql`l.actor = ${params.actor}`);
+  }
+
+  if (params.targetType) {
+    conditions.push(Prisma.sql`l.target_type = ${params.targetType}`);
+  }
+
   return conditions.length
     ? Prisma.sql`where ${Prisma.join(conditions, ' and ')}`
     : Prisma.empty;
@@ -132,6 +143,22 @@ export async function auditActionCounts(): Promise<AuditActionCount[]> {
     from admin_audit_log
     group by action
     order by "count" desc, action asc
+  `);
+}
+
+export type AuditActorCount = { actor: string; count: number };
+
+/**
+ * Who has written to the log. Populates the actor filter from what was
+ * recorded, not from today's staff list — a deactivated or deleted staff
+ * member's changes must stay findable.
+ */
+export async function auditActorCounts(): Promise<AuditActorCount[]> {
+  return prisma.$queryRaw<AuditActorCount[]>(Prisma.sql`
+    select actor as "actor", (count(*))::int as "count"
+    from admin_audit_log
+    group by actor
+    order by "count" desc, actor asc
   `);
 }
 

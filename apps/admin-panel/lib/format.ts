@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { currency } from '@/lib/env';
+import { adminTimezone, currency } from '@/lib/env';
 
 /**
  * Display formatting. All of it locale-fixed rather than request-derived —
@@ -100,40 +100,71 @@ export function formatPercent(
   return `${(value ?? 0).toFixed(fractionDigits)}%`;
 }
 
-const DATE_FORMAT = new Intl.DateTimeFormat('en-GB', {
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric',
-});
-
-const DATE_TIME_FORMAT = new Intl.DateTimeFormat('en-GB', {
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-});
-
-const MONTH_FORMAT = new Intl.DateTimeFormat('en-GB', {
-  month: 'short',
-  year: '2-digit',
-});
+/**
+ * Dates and times are rendered in ADMIN_TIMEZONE, not the server's zone (UTC
+ * in the container). The handoff requires every windowed figure to state its
+ * timezone; that is only honest if the timestamps beside it use the same one.
+ * Formatters are built per call because the zone is read lazily from env.
+ */
+function dateFormatter(options: Intl.DateTimeFormatOptions) {
+  return new Intl.DateTimeFormat('en-GB', {
+    ...options,
+    timeZone: adminTimezone(),
+  });
+}
 
 export function formatDate(value: Date | string | null | undefined): string {
   if (!value) return '—';
-  return DATE_FORMAT.format(new Date(value));
+  return dateFormatter({
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(value));
 }
 
 export function formatDateTime(
   value: Date | string | null | undefined
 ): string {
   if (!value) return '—';
-  return DATE_TIME_FORMAT.format(new Date(value));
+  return dateFormatter({
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
 }
 
 export function formatMonth(value: Date | string | null | undefined): string {
   if (!value) return '—';
-  return MONTH_FORMAT.format(new Date(value));
+  return dateFormatter({ month: 'short', year: '2-digit' }).format(
+    new Date(value)
+  );
+}
+
+/** "Mon 3" — axis labels on daily charts. */
+export function formatDayLabel(value: Date | string): string {
+  return dateFormatter({ weekday: 'short', day: 'numeric' }).format(
+    new Date(value)
+  );
+}
+
+/**
+ * "4 min ago" / "3 h ago" / "12 days ago" / "in 2 h". Fine-grained, unlike
+ * `formatRelativeDays` — operational screens (tickets, health evidence) are
+ * hour-scale.
+ */
+export function formatAgo(value: Date | string | null | undefined): string {
+  if (!value) return '—';
+  const ms = Date.now() - new Date(value).getTime();
+  const future = ms < 0;
+  const minutes = Math.round(Math.abs(ms) / 60_000);
+  let text: string;
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) text = `${minutes} min`;
+  else if (minutes < 48 * 60) text = `${Math.round(minutes / 60)} h`;
+  else text = `${Math.round(minutes / (60 * 24))} days`;
+  return future ? `in ${text}` : `${text} ago`;
 }
 
 export function daysUntil(

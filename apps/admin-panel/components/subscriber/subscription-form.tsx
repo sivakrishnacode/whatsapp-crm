@@ -10,6 +10,7 @@ import {
   Input,
   Select,
 } from '@/components/ui/form';
+import { Callout } from '@/components/ui/page';
 import { SubmitButton } from '@/components/ui/submit-button';
 import {
   updateSubscription,
@@ -58,20 +59,14 @@ export function SubscriptionForm({
       <input type="hidden" name="userId" value={userId} />
 
       {gateway ? (
-        <p className="border-ring text-ink-2 flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-xs leading-relaxed">
-          <span
-            aria-hidden
-            className="bg-warning mt-1 size-1.5 shrink-0 rounded-full"
-          />
-          <span>
-            <strong className="text-ink font-semibold">
-              Live {gateway} subscription.
-            </strong>{' '}
-            Changes here only move the row in this database — {gateway} keeps
-            charging on its own schedule and its next webhook can overwrite what
-            you set. Change it at {gateway} too, or detach it below first.
-          </span>
-        </p>
+        <Callout tone="warn">
+          <strong className="font-semibold">
+            Live {gateway} subscription.
+          </strong>{' '}
+          Changes here only move the row in this database — {gateway} keeps
+          charging on its own schedule and its next webhook can overwrite what
+          you set. Change it at {gateway} too, or detach it below first.
+        </Callout>
       ) : null}
 
       <FieldGrid>

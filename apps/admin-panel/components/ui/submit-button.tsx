@@ -20,16 +20,17 @@ export function SubmitButton({
   children: React.ReactNode;
   name?: string;
   value?: string;
-  variant?: 'primary' | 'secondary' | 'danger';
+  variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
   pendingLabel?: string;
   className?: string;
 }) {
   const { pending } = useFormStatus();
 
   const styles = {
-    primary: 'bg-series-1 text-white hover:opacity-90',
-    secondary: 'border-ring border text-ink hover:bg-surface-2',
-    danger: 'border-critical text-critical border hover:bg-surface-2',
+    primary: 'bg-primary text-white hover:bg-primary-hover',
+    secondary: 'border-ring bg-surface border text-ink hover:bg-surface-2',
+    danger: 'border-bad-fg/40 bg-surface text-bad-fg border hover:bg-bad-soft',
+    ghost: 'text-ink-2 hover:bg-surface-2',
   }[variant];
 
   return (
@@ -38,7 +39,7 @@ export function SubmitButton({
       name={name}
       value={value}
       disabled={pending}
-      className={`rounded-lg px-3.5 py-2 text-sm font-medium transition disabled:opacity-50 ${styles} ${className}`}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition disabled:opacity-50 ${styles} ${className}`}
     >
       {pending && pendingLabel ? pendingLabel : children}
     </button>

@@ -82,3 +82,20 @@ export function maxCreditAdjustment(): number {
   const raw = Number(process.env.ADMIN_MAX_CREDIT_ADJUSTMENT);
   return Number.isInteger(raw) && raw > 0 ? raw : 25_000;
 }
+
+/**
+ * The timezone every date window and "today" in the Control Center is
+ * computed in. The handoff requires each KPI to state its timezone, so this
+ * is shown beside every windowed figure. Defaults to India, matching the
+ * INR default; an invalid IANA name falls back to UTC rather than crashing
+ * every page.
+ */
+export function adminTimezone(): string {
+  const raw = process.env.ADMIN_TIMEZONE?.trim() || 'Asia/Kolkata';
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: raw });
+    return raw;
+  } catch {
+    return 'UTC';
+  }
+}

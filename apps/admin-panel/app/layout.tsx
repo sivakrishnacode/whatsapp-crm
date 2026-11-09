@@ -15,8 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Converse360 Admin',
-  description: 'Subscriber accounts, subscriptions and sales for Converse360.',
+  title: 'Converse360 Control Center',
+  description:
+    'Internal operations for Converse360: clients, health, support, onboarding and revenue.',
   // An internal billing panel has no business in a search index.
   robots: { index: false, follow: false },
 };
@@ -27,7 +28,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">{children}</body>
+      <body className="min-h-full">{children}</body>
     </html>
   );
 }

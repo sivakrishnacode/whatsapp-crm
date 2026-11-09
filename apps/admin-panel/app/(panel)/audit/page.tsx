@@ -5,12 +5,43 @@ import { Badge, Pill } from '@/components/ui/badge';
 import { Card, CardHeader, EmptyState } from '@/components/ui/card';
 import { FilterBar, FilterField } from '@/components/ui/filter-bar';
 import { Input, Select } from '@/components/ui/form';
+import { PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
-import { requireAdmin } from '@/lib/auth';
+import { can, requireCapability } from '@/lib/auth';
 import { formatDateTime, formatNumber } from '@/lib/format';
-import { auditActionCounts, listAudit } from '@/lib/queries/audit';
+import {
+  auditActionCounts,
+  auditActorCounts,
+  listAudit,
+} from '@/lib/queries/audit';
 
-export const metadata: Metadata = { title: 'Audit log · Converse360 Admin' };
+export const metadata: Metadata = {
+  title: 'Audit Logs · Converse360 Control Center',
+};
+
+/**
+ * Every target type recordAudit() can write (lib/actions/audit.ts), with the
+ * words an operator would use. The filter offers all of them, including ones
+ * with no rows yet, so "has anyone ever changed staff?" is answerable with an
+ * empty result rather than a missing option.
+ */
+const TARGET_TYPES: { value: string; label: string }[] = [
+  { value: 'workspace', label: 'Workspace' },
+  { value: 'member', label: 'Member' },
+  { value: 'invitation', label: 'Invitation' },
+  { value: 'client', label: 'Client (ops profile)' },
+  { value: 'client_note', label: 'Client note' },
+  { value: 'client_task', label: 'Client task' },
+  { value: 'ticket', label: 'Support ticket' },
+  { value: 'subscription', label: 'Subscription' },
+  { value: 'plan', label: 'Plan' },
+  { value: 'credit_pack', label: 'Credit pack' },
+  { value: 'credit_wallet', label: 'Credit wallet' },
+  { value: 'catalog', label: 'AI catalog' },
+  { value: 'staff', label: 'Staff' },
+  { value: 'settings', label: 'Settings' },
+  { value: 'export', label: 'Export' },
+];
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,13 +72,26 @@ export default async function AuditPage({
     q?: string;
     action?: string;
     accountId?: string;
+    actor?: string;
+    target?: string;
     page?: string;
   }>;
 }) {
-  await requireAdmin();
+  const staff = await requireCapability('audit.read');
   const params = await searchParams;
 
-  const actions = await auditActionCounts();
+  const [actions, actors] = await Promise.all([
+    auditActionCounts(),
+    auditActorCounts(),
+  ]);
+  // Both filters are matched against known values before they reach SQL.
+  const actor = actors.some((entry) => entry.actor === params.actor)
+    ? params.actor
+    : undefined;
+  const targetType = TARGET_TYPES.some((t) => t.value === params.target)
+    ? params.target
+    : undefined;
+  const showSubscriptions = can(staff, 'billing.read');
   const known = new Set(actions.map((entry) => entry.action));
   const action =
     params.action && known.has(params.action) ? params.action : 'all';
@@ -57,34 +101,39 @@ export default async function AuditPage({
       : undefined;
   const page = Number(params.page) > 0 ? Number(params.page) : 1;
 
-  const list = await listAudit({ q: params.q, action, accountId, page });
+  const list = await listAudit({
+    q: params.q,
+    action,
+    accountId,
+    actor,
+    targetType,
+    page,
+  });
   const scopedName = accountId ? list.rows[0]?.accountName : null;
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-ink text-xl font-semibold">Audit log</h1>
-          <p className="text-muted mt-1 text-sm">
-            Every write this panel has made, by whom, in the words recorded at
-            the time.
+      <PageHeader
+        eyebrow="Platform"
+        title="Audit Logs"
+        description="Every write the Control Center has made, by whom, in the words recorded at the time. Immutable: nothing here can be edited or deleted."
+        actions={
+          <p className="flex flex-wrap gap-2">
+            {actions.slice(0, 6).map((entry) => (
+              <Pill key={entry.action}>
+                {entry.action}: {formatNumber(entry.count)}
+              </Pill>
+            ))}
           </p>
-        </div>
-        <p className="text-muted flex flex-wrap gap-2 text-xs">
-          {actions.slice(0, 6).map((entry) => (
-            <Pill key={entry.action}>
-              {entry.action}: {formatNumber(entry.count)}
-            </Pill>
-          ))}
-        </p>
-      </header>
+        }
+      />
 
       {accountId ? (
-        <p className="border-ring text-ink-2 flex flex-wrap items-center gap-2 rounded-xl border px-4 py-3 text-sm">
+        <p className="border-ring bg-surface text-ink-2 flex flex-wrap items-center gap-2 rounded-xl border px-4 py-3 text-sm">
           Scoped to one workspace
           {scopedName ? (
             <Link
-              href={`/workspaces/${accountId}`}
+              href={`/clients/${accountId}`}
               className="text-ink font-medium underline-offset-2 hover:underline"
             >
               {scopedName}
@@ -105,7 +154,9 @@ export default async function AuditPage({
 
       <FilterBar
         action="/audit"
-        hasFilters={Boolean(params.q || action !== 'all')}
+        hasFilters={Boolean(
+          params.q || action !== 'all' || actor || targetType
+        )}
       >
         {/* Carried through the GET so filtering inside a scoped view keeps the
          * scope — the filter bar posts only its own fields. */}
@@ -120,6 +171,28 @@ export default async function AuditPage({
             placeholder="Summary, operator, workspace or email"
             spellCheck={false}
           />
+        </FilterField>
+
+        <FilterField label="Operator">
+          <Select name="actor" defaultValue={actor ?? ''}>
+            <option value="">Anyone</option>
+            {actors.map((entry) => (
+              <option key={entry.actor} value={entry.actor}>
+                {entry.actor} ({entry.count})
+              </option>
+            ))}
+          </Select>
+        </FilterField>
+
+        <FilterField label="Target">
+          <Select name="target" defaultValue={targetType ?? ''}>
+            <option value="">Any target</option>
+            {TARGET_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </Select>
         </FilterField>
 
         <FilterField label="Action">
@@ -142,7 +215,11 @@ export default async function AuditPage({
 
         {list.rows.length === 0 ? (
           <EmptyState>
-            {list.total === 0 && !params.q && action === 'all'
+            {list.total === 0 &&
+            !params.q &&
+            action === 'all' &&
+            !actor &&
+            !targetType
               ? 'Nothing has been changed from this panel yet.'
               : 'No entries match that filter.'}
           </EmptyState>
@@ -159,22 +236,30 @@ export default async function AuditPage({
 
                 <div className="text-muted mt-1.5 flex flex-wrap items-center gap-2 text-xs">
                   <Badge>{row.action}</Badge>
+                  <Badge tone="outline">
+                    {TARGET_TYPES.find((t) => t.value === row.targetType)
+                      ?.label ?? row.targetType}
+                  </Badge>
                   <span>by {row.actor}</span>
                   {row.accountId ? (
                     <Link
-                      href={`/workspaces/${row.accountId}`}
+                      href={`/clients/${row.accountId}`}
                       className="hover:text-ink underline-offset-2 hover:underline"
                     >
                       {row.accountName ?? 'deleted workspace'}
                     </Link>
                   ) : null}
                   {row.userId ? (
-                    <Link
-                      href={`/subscribers/${row.userId}`}
-                      className="hover:text-ink underline-offset-2 hover:underline"
-                    >
-                      {row.userEmail ?? 'deleted user'}
-                    </Link>
+                    showSubscriptions ? (
+                      <Link
+                        href={`/subscriptions/${row.userId}`}
+                        className="hover:text-ink underline-offset-2 hover:underline"
+                      >
+                        {row.userEmail ?? 'deleted user'}
+                      </Link>
+                    ) : (
+                      <span>{row.userEmail ?? 'deleted user'}</span>
+                    )
                   ) : null}
                 </div>
 
@@ -203,15 +288,17 @@ export default async function AuditPage({
             q: params.q,
             action: action === 'all' ? undefined : action,
             accountId,
+            actor,
+            target: targetType,
           }}
         />
       </Card>
 
       <p className="text-muted text-xs leading-relaxed">
-        This log starts at migration 073. Changes made before it were not
-        recorded — the panel&rsquo;s administrator is an env credential rather
-        than a row in <code className="text-ink-2">auth.users</code>, so there
-        was no column with an honest value to write.
+        This log starts at migration 073; changes made before it were not
+        recorded. Since migration 098 the operator is a named staff member
+        (their email). Entries marked <em>break-glass</em> were made with the
+        env credential, which is not a person — ask who held it at the time.
       </p>
     </div>
   );

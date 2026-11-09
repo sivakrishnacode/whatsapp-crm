@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
  */
 
 const CONTROL =
-  'border-ring bg-surface text-ink placeholder:text-muted w-full rounded-lg border px-3 py-2 text-sm';
+  'border-ring bg-surface text-ink placeholder:text-muted w-full rounded-lg border px-3 py-2 text-sm transition-colors focus:border-primary disabled:opacity-60';
 
 export function Field({
   label,
@@ -69,7 +69,7 @@ export function Checkbox({
         type="checkbox"
         name={name}
         defaultChecked={defaultChecked}
-        className="border-ring accent-series-1 mt-0.5 size-4 rounded border"
+        className="border-ring accent-primary mt-0.5 size-4 rounded border"
       />
       <span>
         <span className="text-ink-2 block text-xs font-medium">{label}</span>
@@ -88,23 +88,32 @@ export function FieldGrid({ children }: { children: ReactNode }) {
 }
 
 /** Action feedback. Both tones name what happened; neither relies on color. */
-export function FormMessage({ ok, error }: { ok?: string; error?: string }) {
+export function FormMessage({
+  ok,
+  error,
+  errorLabel = 'Not saved',
+}: {
+  ok?: string;
+  error?: string;
+  /** The bold lead-in on an error. "Not saved" fits a save; a login says something else. */
+  errorLabel?: string;
+}) {
   if (!ok && !error) return null;
 
   return (
     <p
       role="status"
       className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs leading-relaxed ${
-        error ? 'bg-surface-2 text-ink' : 'bg-surface-2 text-ink'
+        error ? 'bg-bad-soft text-bad-fg' : 'bg-good-soft text-good-fg'
       }`}
     >
       <span
         aria-hidden
-        className={`mt-1 size-1.5 shrink-0 rounded-full ${error ? 'bg-critical' : 'bg-good'}`}
+        className={`mt-1 size-1.5 shrink-0 rounded-full ${error ? 'bg-bad-fg' : 'bg-good-fg'}`}
       />
       <span>
         <strong className="font-semibold">
-          {error ? 'Not saved' : 'Saved'}
+          {error ? errorLabel : 'Saved'}
         </strong>{' '}
         — {error ?? ok}
       </span>

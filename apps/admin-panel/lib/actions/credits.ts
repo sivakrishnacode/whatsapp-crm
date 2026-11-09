@@ -15,7 +15,7 @@ import {
   uuid,
 } from '@/lib/actions/parse';
 import type { ActionState } from '@/lib/actions/subscriptions';
-import { requireAdmin } from '@/lib/auth';
+import { requireCapability } from '@/lib/auth';
 import { maxCreditAdjustment } from '@/lib/env';
 import { prisma } from '@/lib/prisma';
 
@@ -48,7 +48,7 @@ export async function adjustCredits(
   _previous: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  const session = await requireAdmin();
+  const session = await requireCapability('credits.adjust');
 
   try {
     const accountId = uuid(formData, 'accountId', 'Workspace');
@@ -84,7 +84,7 @@ export async function adjustCredits(
         from admin_adjust_ai_credits(
           ${accountId}::uuid,
           ${delta}::integer,
-          ${session.username},
+          ${session.actor},
           ${note}
         )
     `);
@@ -101,7 +101,7 @@ export async function adjustCredits(
     }
 
     await recordAudit({
-      actor: session.username,
+      actor: session.actor,
       action: direction === 'add' ? 'credits.grant' : 'credits.revoke',
       targetType: 'credit_wallet',
       accountId,
@@ -159,7 +159,7 @@ export async function updateCreditPack(
   _previous: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  const session = await requireAdmin();
+  const session = await requireCapability('billing.manage');
 
   try {
     const packId = uuid(formData, 'packId', 'Pack');
@@ -209,7 +209,7 @@ export async function updateCreditPack(
     });
 
     await recordAudit({
-      actor: session.username,
+      actor: session.actor,
       action: 'credit_pack.update',
       targetType: 'credit_pack',
       targetId: packId,

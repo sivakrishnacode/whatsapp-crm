@@ -5,8 +5,7 @@ import { refresh } from 'next/cache';
 import { recordAudit } from '@/lib/actions/audit';
 import { FieldError, oneOf, text, uuid } from '@/lib/actions/parse';
 import type { ActionState } from '@/lib/actions/subscriptions';
-import { requireAdmin } from '@/lib/auth';
-import type { AdminSession } from '@/lib/session';
+import { can, requireCapability, type Staff } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
 /**
@@ -54,7 +53,7 @@ export async function updateWorkspace(
   _previous: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  const session = await requireAdmin();
+  const session = await requireCapability('members.manage');
 
   try {
     const accountId = uuid(formData, 'accountId', 'Workspace');
@@ -90,7 +89,7 @@ export async function updateWorkspace(
     });
 
     await recordAudit({
-      actor: session.username,
+      actor: session.actor,
       action: 'workspace.update',
       targetType: 'workspace',
       targetId: accountId,
@@ -141,7 +140,7 @@ export async function updateWorkspace(
  * own audit line.
  */
 async function addMember(
-  session: AdminSession,
+  session: Staff,
   formData: FormData,
   accountId: string
 ): Promise<ActionState> {
@@ -197,7 +196,7 @@ async function addMember(
   });
 
   await recordAudit({
-    actor: session.username,
+    actor: session.actor,
     action: 'member.add',
     targetType: 'member',
     targetId: user.id,
@@ -228,7 +227,7 @@ export async function memberAction(
   _previous: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  const session = await requireAdmin();
+  const session = await requireCapability('members.manage');
 
   try {
     const accountId = uuid(formData, 'accountId', 'Workspace');
@@ -258,6 +257,14 @@ export async function memberAction(
       case 'remove':
         return await removeMember(session, accountId, userId, member);
       case 'transfer_ownership':
+        // Ownership carries the subscription row with it (a plan is resolved
+        // through accounts.owner_user_id), so this is a billing change as
+        // much as a membership one.
+        if (!can(session, 'billing.manage')) {
+          throw new FieldError(
+            'Transferring ownership moves the subscription — it needs a Billing or Super Admin role.'
+          );
+        }
         return await transferOwnership(session, accountId, userId, member);
     }
   } catch (error) {
@@ -268,7 +275,7 @@ export async function memberAction(
 type Member = Awaited<ReturnType<typeof loadMember>>;
 
 async function setMemberRole(
-  session: AdminSession,
+  session: Staff,
   formData: FormData,
   accountId: string,
   userId: string,
@@ -293,7 +300,7 @@ async function setMemberRole(
   });
 
   await recordAudit({
-    actor: session.username,
+    actor: session.actor,
     action: 'member.role',
     targetType: 'member',
     targetId: userId,
@@ -330,7 +337,7 @@ async function setMemberRole(
  * used to need.
  */
 async function removeMember(
-  session: AdminSession,
+  session: Staff,
   accountId: string,
   userId: string,
   member: Member
@@ -358,7 +365,7 @@ async function removeMember(
   });
 
   await recordAudit({
-    actor: session.username,
+    actor: session.actor,
     action: 'member.remove',
     targetType: 'member',
     targetId: userId,
@@ -422,7 +429,7 @@ async function removeMember(
  * not done here: it is somebody's account, not an obstacle.
  */
 async function transferOwnership(
-  session: AdminSession,
+  session: Staff,
   accountId: string,
   userId: string,
   member: Member
@@ -500,7 +507,7 @@ async function transferOwnership(
   });
 
   await recordAudit({
-    actor: session.username,
+    actor: session.actor,
     action: 'workspace.transfer_ownership',
     targetType: 'workspace',
     targetId: accountId,
@@ -547,7 +554,7 @@ export async function revokeInvitation(
   _previous: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  const session = await requireAdmin();
+  const session = await requireCapability('members.manage');
 
   try {
     const accountId = uuid(formData, 'accountId', 'Workspace');
@@ -576,7 +583,7 @@ export async function revokeInvitation(
     await prisma.account_invitations.delete({ where: { id: inviteId } });
 
     await recordAudit({
-      actor: session.username,
+      actor: session.actor,
       action: 'invitation.revoke',
       targetType: 'invitation',
       targetId: inviteId,

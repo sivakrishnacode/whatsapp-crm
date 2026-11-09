@@ -45,7 +45,7 @@ export function Pagination({
         {page > 1 ? (
           <Link
             href={href(page - 1)}
-            className="border-ring text-ink hover:bg-surface-2 rounded-lg border px-3 py-1.5 text-xs"
+            className="border-ring bg-surface text-ink hover:bg-surface-2 rounded-lg border px-3 py-1.5 text-xs font-medium"
           >
             Previous
           </Link>
@@ -62,7 +62,7 @@ export function Pagination({
         {page < pageCount ? (
           <Link
             href={href(page + 1)}
-            className="border-ring text-ink hover:bg-surface-2 rounded-lg border px-3 py-1.5 text-xs"
+            className="border-ring bg-surface text-ink hover:bg-surface-2 rounded-lg border px-3 py-1.5 text-xs font-medium"
           >
             Next
           </Link>

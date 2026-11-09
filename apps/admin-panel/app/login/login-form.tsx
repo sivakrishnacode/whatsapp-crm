@@ -13,10 +13,11 @@ export function LoginForm({ next }: { next?: string }) {
     <form action={formAction} className="space-y-4">
       {next ? <input type="hidden" name="next" value={next} /> : null}
 
-      <Field label="Username">
+      <Field label="Email">
         <Input
           name="username"
           autoComplete="username"
+          inputMode="email"
           autoFocus
           required
           spellCheck={false}
@@ -32,7 +33,9 @@ export function LoginForm({ next }: { next?: string }) {
         />
       </Field>
 
-      {state.error ? <FormMessage error={state.error} /> : null}
+      {state.error ? (
+        <FormMessage error={state.error} errorLabel="Not signed in" />
+      ) : null}
 
       <SubmitButton className="w-full" pendingLabel="Signing in…">
         Sign in

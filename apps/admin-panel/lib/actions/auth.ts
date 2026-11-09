@@ -10,9 +10,8 @@ export type LoginState = { error?: string };
 /**
  * Attempt throttling.
  *
- * The whole login is one username and one password from an env file, so it is
- * exactly the shape of thing that gets credential-stuffed if it is ever
- * reachable from the internet. This is an in-memory sliding window: it resets
+ * Staff emails plus one break-glass env credential: exactly the shape of thing
+ * that gets credential-stuffed if it is ever reachable from the internet. This is an in-memory sliding window: it resets
  * on restart and is per-process, which is honest about what it is — a speed
  * bump, not a distributed rate limiter. For a single-container internal panel
  * that is the right amount of machinery; behind more than one replica, put the
@@ -84,15 +83,20 @@ export async function login(
     return { error: 'Enter a username and password.' };
   }
 
-  if (!checkCredentials(username, password)) {
+  const result = await checkCredentials(username, password);
+  if (!result.ok) {
     recordAttempt(key);
-    // One message for both wrong-username and wrong-password: naming which was
-    // wrong tells an attacker which half to keep.
+    // One message for every failure — unknown email, wrong password,
+    // deactivated account: naming which tells an attacker what to try next.
     return { error: 'Those credentials are not valid.' };
   }
 
   attempts.delete(key);
-  await startSession(username.trim());
+  await startSession({
+    subject: result.subject,
+    role: result.role,
+    version: result.version,
+  });
 
   redirect(safeRedirect(typeof next === 'string' ? next : null));
 }

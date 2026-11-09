@@ -5,6 +5,7 @@ import { BarList } from '@/components/chart/bar-list';
 import { PackForm } from '@/components/credits/pack-form';
 import { Badge, Pill } from '@/components/ui/badge';
 import { Card, CardBody, CardHeader, DerivedNote } from '@/components/ui/card';
+import { Callout, PageHeader } from '@/components/ui/page';
 import { HeroStat, StatRow, StatTile } from '@/components/ui/stat';
 import {
   Table,
@@ -15,7 +16,7 @@ import {
   THead,
   TR,
 } from '@/components/ui/table';
-import { requireAdmin } from '@/lib/auth';
+import { can, requireCapability } from '@/lib/auth';
 import { maxCreditAdjustment } from '@/lib/env';
 import {
   formatCredits,
@@ -28,9 +29,11 @@ import {
   minorToMajor,
 } from '@/lib/format';
 import { getCreditsOverview } from '@/lib/queries/credits';
-import { LOW_CREDIT_THRESHOLD } from '@/lib/queries/workspaces';
+import { getSettings } from '@/lib/settings-store';
 
-export const metadata: Metadata = { title: 'AI credits · Converse360 Admin' };
+export const metadata: Metadata = {
+  title: 'AI Credits & Usage · Converse360 Control Center',
+};
 
 const FEATURE_LABELS: Record<string, string> = {
   draft: 'Inbox drafts',
@@ -48,9 +51,13 @@ const FEATURE_LABELS: Record<string, string> = {
  * cannot — see lib/queries/sql.ts.
  */
 export default async function CreditsPage() {
-  await requireAdmin();
-  const { totals, features, months, consumers, packs, orders, adjustments } =
-    await getCreditsOverview();
+  const staff = await requireCapability('billing.read');
+  const canEditPacks = can(staff, 'billing.manage');
+  const canAdjust = can(staff, 'credits.adjust');
+  const [
+    { totals, features, months, consumers, packs, orders, adjustments },
+    settings,
+  ] = await Promise.all([getCreditsOverview(), getSettings()]);
 
   const consumedNet = totals.lifetimeConsumed;
   const grantedFree = Math.max(
@@ -60,13 +67,17 @@ export default async function CreditsPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-ink text-xl font-semibold">AI credits</h1>
-        <p className="text-muted mt-1 text-sm">
-          What the platform Gemini key is costing us, what customers have paid
-          to use it, and the packs they buy it in.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Revenue"
+        title="AI Credits & Usage"
+        description="What the platform Gemini key is costing us, what customers have paid to use it, and the packs they buy it in. Credits are platform AI usage — separate from the subscription and from Meta's own messaging charges, which Meta bills the customer directly."
+      />
+
+      <Callout tone="info" title="Adjusting one workspace's credits">
+        {canAdjust
+          ? 'Grants and clawbacks are made from the workspace itself — open it from the tables below (Customer 360 → AI & Credits). Every movement goes through admin_adjust_ai_credits and lands on the ledger with your name.'
+          : 'Your role can see credits but not move them. Adjustments need the Billing or Super Admin role.'}
+      </Callout>
 
       <Card>
         <CardBody className="grid gap-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] md:items-center">
@@ -117,8 +128,8 @@ export default async function CreditsPage() {
                 {formatNumber(totals.walletsEmpty)}
               </dd>
               <dd className="text-muted mt-0.5 text-xs">
-                {formatNumber(totals.walletsLow)} more under{' '}
-                {LOW_CREDIT_THRESHOLD}
+                {formatNumber(totals.walletsLow)} more at or under{' '}
+                {formatCredits(settings.lowCreditThreshold)}
               </dd>
             </div>
 
@@ -213,7 +224,7 @@ export default async function CreditsPage() {
                     <TR key={row.accountId}>
                       <TD>
                         <Link
-                          href={`/workspaces/${row.accountId}`}
+                          href={`/clients/${row.accountId}`}
                           className="text-ink font-medium underline-offset-2 hover:underline"
                         >
                           {row.accountName}
@@ -332,8 +343,12 @@ export default async function CreditsPage() {
                     {pack.displayName}
                   </span>
                   <Badge tone="outline">{pack.code}</Badge>
-                  {pack.badge ? <Pill>{pack.badge}</Pill> : null}
-                  {pack.isActive ? null : <Pill>Not offered</Pill>}
+                  {pack.badge ? <Pill tone="primary">{pack.badge}</Pill> : null}
+                  {pack.isActive ? null : (
+                    <Pill tone="neutral" glyph="○">
+                      Not offered
+                    </Pill>
+                  )}
                   <span className="text-ink-2 tabular text-sm">
                     {formatMinor(pack.priceMinor, pack.currency)} for{' '}
                     {formatCredits(pack.credits)}
@@ -346,18 +361,24 @@ export default async function CreditsPage() {
                 </span>
               </summary>
               <div className="mt-5">
-                <PackForm
-                  packId={pack.id}
-                  code={pack.code}
-                  displayName={pack.displayName}
-                  credits={pack.credits}
-                  priceMajor={minorToMajor(pack.priceMinor)}
-                  currencyCode={pack.currency}
-                  badge={pack.badge}
-                  sortOrder={pack.sortOrder}
-                  isActive={pack.isActive}
-                  sold={pack.sold}
-                />
+                {canEditPacks ? (
+                  <PackForm
+                    packId={pack.id}
+                    code={pack.code}
+                    displayName={pack.displayName}
+                    credits={pack.credits}
+                    priceMajor={minorToMajor(pack.priceMinor)}
+                    currencyCode={pack.currency}
+                    badge={pack.badge}
+                    sortOrder={pack.sortOrder}
+                    isActive={pack.isActive}
+                    sold={pack.sold}
+                  />
+                ) : (
+                  <p className="text-muted text-sm">
+                    Editing pack prices needs the Billing or Super Admin role.
+                  </p>
+                )}
                 <p className="text-muted mt-4 text-xs">
                   Last changed {formatDate(pack.updatedAt)}. Earned is summed
                   from what each order was actually charged, so repricing a pack
@@ -390,7 +411,7 @@ export default async function CreditsPage() {
                 >
                   <span className="min-w-0">
                     <Link
-                      href={`/workspaces/${order.accountId}`}
+                      href={`/clients/${order.accountId}`}
                       className="text-ink font-medium underline-offset-2 hover:underline"
                     >
                       {order.accountName}
@@ -436,7 +457,7 @@ export default async function CreditsPage() {
                 >
                   <span className="min-w-0">
                     <Link
-                      href={`/workspaces/${row.accountId}`}
+                      href={`/clients/${row.accountId}`}
                       className="text-ink font-medium underline-offset-2 hover:underline"
                     >
                       {row.accountName}

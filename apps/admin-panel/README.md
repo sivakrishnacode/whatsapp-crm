@@ -1,13 +1,15 @@
-# admin-panel
+# admin-panel — the Converse360 Control Center
 
-The internal operations panel for Converse360: subscriptions and the amounts
-behind them, the tenant workspaces and who is inside them, and the AI credit
-wallets that run on our own Gemini key.
+The internal operations panel for Converse360 (C2.0 handoff): every client
+workspace and its health, the support desk, onboarding, revenue and renewals,
+AI credits, the Converse AI catalog, and who on our side may do what.
 
 Next.js 16 (App Router) on port **3002**. It reads and writes the same Supabase
 Postgres the CRM uses, through Prisma — the schema comes from
 [`@repo/database`](../../packages/database), so there is no second copy of it and
-no new endpoints in `apps/api`.
+no new endpoints in `apps/api`. Its own tables (staff, client ops profile,
+notes, tasks, tickets, catalog, settings) are migration **098**, locked to the
+owner connection exactly like `admin_audit_log`.
 
 ## Setup
 
@@ -16,44 +18,78 @@ cp apps/admin-panel/.env.local.example apps/admin-panel/.env.local
 # fill in ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_SESSION_SECRET,
 # and copy DATABASE_URL out of apps/api/.env
 npm run dev --workspace=admin-panel   # http://localhost:3002
+npm test --workspace=admin-panel      # health rules, lifecycle, SLA, roles
 ```
 
-`openssl rand -base64 48` for the session secret.
+## Auth and roles
 
-## Auth
+- **Staff accounts** (`admin_staff`) sign in with email + password (scrypt).
+  Created in **Staff & Access** by a Super Admin, with a generated temporary
+  password shown once; each person changes it at `/account`.
+- **Break-glass**: the `ADMIN_USERNAME`/`ADMIN_PASSWORD` env pair still signs
+  in, as a Super Admin with no staff row. It is how the first staff account is
+  created and how you get back in if every Super Admin is lost. It cannot own a
+  client or a ticket, and the audit log marks it `(break-glass)`. Unset the pair
+  once two Super Admins exist.
+- **Roles** (`lib/staff/roles.ts` is the ONE permission table — nav, pages and
+  Server Actions all read it): Super Admin, Account Manager, Billing, Support
+  L1/L2/L3. L1 sees no money; only Super Admin and Billing move credits or
+  edit prices; only Super Admin and L3 see the internal model mapping; only
+  Super Admin manages staff and settings. No role can read a customer secret —
+  no screen loads one.
+- Sessions are HS256 JWTs carrying `session_version`; deactivating, re-roling
+  or resetting a staff member bumps it, which ends their sessions on the next
+  request. `proxy.ts` is only a redirect convenience — `requireCapability()` /
+  `authorizeAction()` run in every page and every Server Action.
+- Failed logins are throttled per IP, in-memory (10 per 5 minutes). Behind
+  more than one replica, put the real limit in the reverse proxy.
 
-One administrator, defined by `ADMIN_USERNAME` / `ADMIN_PASSWORD` in the env
-file. No user table, no sign-up, no password reset — rotating the env value _is_
-the reset, and rotating `ADMIN_SESSION_SECRET` is the "sign everyone out" button.
+## Modules
 
-- Credentials are compared timing-safely (`lib/auth.ts`), username
-  case-insensitively.
-- A session is an HS256 JWT in an `httpOnly` cookie, 12 hours by default
-  (`ADMIN_SESSION_TTL_HOURS`).
-- `proxy.ts` bounces anonymous requests, but it is only a redirect convenience.
-  Every page and every Server Action calls `requireAdmin()` itself, because a
-  Server Action is reachable by direct POST regardless of what the proxy did.
-- Failed logins are throttled per IP, in-memory: 10 per 5 minutes. That is a
-  speed bump for a single container, not a distributed rate limit — behind more
-  than one replica, put the real limit in the reverse proxy.
+| Route                                                     | Purpose                                                                                                              |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `/`                                                       | Operations overview: incidents, attention, stalled onboarding, tickets/SLA, renewals, low credits, my work           |
+| `/incidents`                                              | Every critical/attention health check across the fleet → open a ticket with a diagnostic snapshot                    |
+| `/support` (+ `/new`, `/[number]`)                        | Support desk: L1/L2/L3/Billing queues, severity, SLA clocks, assignment, events, resolution                          |
+| `/onboarding`                                             | Workspaces not yet live, by the stage the product actually records, with stall detection                             |
+| `/clients`                                                | Client directory: search (name, any member email, WABA/phone id, tenant id), lifecycle, health, owner, CSV           |
+| `/clients/[id]` (+ tabs)                                  | Customer 360: overview, performance, channels & health, team, AI & credits, billing, integrations, tickets, timeline |
+| `/portfolio`                                              | Fleet analytics by window (7/30/90 d), activation funnel, messaging, AI, revenue, support, segments, CSV             |
+| `/health`                                                 | Meta & channel health matrix, quality/tier, top Meta error codes                                                     |
+| `/integrations`                                           | API keys, webhook endpoints (origin only), Google bridge, stores — fleet-wide                                        |
+| `/users`                                                  | Every login, including users who never onboarded                                                                     |
+| `/subscriptions` (+ `/renewals`, `/revenue`, `/[userId]`) | Subscriptions, renewal watchlist, derived revenue, per-subscription edits                                            |
+| `/plans`, `/credits`                                      | Plan prices and limits; AI credit wallets, packs, top-ups and adjustments                                            |
+| `/catalog`                                                | Converse 01–06 personas and their internal mapping (**not read by the agent runtime yet**)                           |
+| `/staff`, `/account`                                      | Staff & Access; change your own password                                                                             |
+| `/audit`, `/settings`                                     | Immutable admin audit log; SLA targets, watch windows, health thresholds                                             |
 
-Deploy it on a hostname you control, loopback-bound behind the host proxy. It can
-change what customers are charged.
+Old URLs (`/workspaces`, `/subscribers`, `/sales`) redirect.
 
-## What the pages do
+## Health, completion and lifecycle
 
-| Route                     | Purpose                                                                                   |
-| ------------------------- | ----------------------------------------------------------------------------------------- |
-| `/`                       | MRR, at-risk and trial value, AI credit position, trials ending, renewals due             |
-| `/subscribers`            | Every subscription, searchable and filterable by status/plan                              |
-| `/subscribers/[userId]`   | Edit one subscription; usage vs plan limits; account activity                             |
-| `/sales`                  | MRR/ARR, splits by plan / cycle / payment method, 12-month movement, expected collections |
-| `/plans`                  | The subscription amounts themselves — prices, trial length, limits                        |
-| `/workspaces`             | Every tenant account: people, plan, channels, credits, what they've built                 |
-| `/workspaces/[accountId]` | One workspace — membership, credit adjustments, AI setup, channel health                  |
-| `/users`                  | Everyone with a login, including users who never onboarded                                |
-| `/credits`                | AI credits across tenants: spend, top-up revenue, packs, manual adjustments               |
-| `/audit`                  | Every write this panel has made, and by whom                                              |
+- **Health** (`lib/health/`) is graded from what the API's own jobs last wrote —
+  this panel holds no customer token and never calls Meta. Every check carries
+  its evidence, the time of that evidence and a next action. **Missing or stale
+  evidence grades Unknown, never Healthy**, and Unknown outranks Healthy in the
+  overall grade. Rules are pure and pinned by `rules.test.ts`.
+- **Setup completion** is a separate function over separate questions (the
+  handoff's weights); a fully set-up workspace can be critical.
+- **Lifecycle** is derived (churned / onboarding / attention / active) unless an
+  operator pins a stage with a reason. A pin is a classification — pinning
+  "suspended" does not stop anyone sending.
+- Per-client performance calls the customer's own analytics RPCs (migration
+  089), so a figure here is the figure the customer sees.
+
+## What is not built here (needs other apps)
+
+- The C2.0 10-step customer wizard, contextual Help widget, consent-based
+  support access grants and screen share — customer-facing, `apps/web`.
+- Wiring the AI catalog into the agent runtime and a customer model picker —
+  `apps/api` / `apps/web`.
+- Ticket notifications to customers (no email channel from this panel), API
+  request logs and a webhook test console (the API records no per-request log).
+- Documentation CMS — help content belongs with the docs site, not a table.
 
 ## Workspaces and the people in them
 

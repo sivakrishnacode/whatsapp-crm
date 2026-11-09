@@ -5,6 +5,7 @@ import { Badge, Pill, StatusBadge } from '@/components/ui/badge';
 import { Card, CardHeader, EmptyState } from '@/components/ui/card';
 import { FilterBar, FilterField } from '@/components/ui/filter-bar';
 import { Input, Select } from '@/components/ui/form';
+import { PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
 import { SubscriberIdentity } from '@/components/subscriber/identity';
 import {
@@ -16,7 +17,7 @@ import {
   THead,
   TR,
 } from '@/components/ui/table';
-import { requireAdmin } from '@/lib/auth';
+import { can, requireCapability } from '@/lib/auth';
 import {
   formatDate,
   formatMoney,
@@ -25,7 +26,9 @@ import {
 } from '@/lib/format';
 import { listUsers, roleCounts } from '@/lib/queries/users';
 
-export const metadata: Metadata = { title: 'Users · Converse360 Admin' };
+export const metadata: Metadata = {
+  title: 'People & Logins · Converse360 Control Center',
+};
 
 const ROLES = ['owner', 'admin', 'agent', 'viewer'] as const;
 
@@ -34,7 +37,9 @@ export default async function UsersPage({
 }: {
   searchParams: Promise<{ q?: string; role?: string; page?: string }>;
 }) {
-  await requireAdmin();
+  const staff = await requireCapability('clients.read');
+  // L1 sees no money: the subscription and MRR columns need billing.read.
+  const showBilling = can(staff, 'billing.read');
   const params = await searchParams;
 
   const role = ROLES.includes(params.role as (typeof ROLES)[number])
@@ -49,22 +54,20 @@ export default async function UsersPage({
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-ink text-xl font-semibold">Users</h1>
-          <p className="text-muted mt-1 text-sm">
-            Everyone with a login, whether or not they onboarded onto an
-            account.
+      <PageHeader
+        eyebrow="Clients"
+        title="People & Logins"
+        description="Every customer login, whether or not they finished onboarding. Customer people, not Converse360 staff — staff are in Staff & Access."
+        actions={
+          <p className="flex flex-wrap gap-2">
+            {roles.map((entry) => (
+              <Pill key={entry.role}>
+                {entry.role}: {formatNumber(entry.count)}
+              </Pill>
+            ))}
           </p>
-        </div>
-        <p className="text-muted flex flex-wrap gap-2 text-xs">
-          {roles.map((entry) => (
-            <Pill key={entry.role}>
-              {entry.role}: {formatNumber(entry.count)}
-            </Pill>
-          ))}
-        </p>
-      </header>
+        }
+      />
 
       <FilterBar
         action="/users"
@@ -93,8 +96,8 @@ export default async function UsersPage({
 
       <Card>
         <CardHeader
-          title="All users"
-          description="A user with no profile signed up but never completed onboarding — they have no account and no subscription."
+          title="All logins"
+          description="A user with no profile signed up but never completed onboarding — they have no account and no subscription. The workspace shown is the one they own; memberships of other workspaces are on each client’s Team tab."
         />
 
         {list.rows.length === 0 ? (
@@ -107,10 +110,10 @@ export default async function UsersPage({
                   <TH>User</TH>
                   <TH>Account</TH>
                   <TH>Role</TH>
-                  <TH>Subscription</TH>
+                  {showBilling ? <TH>Subscription</TH> : null}
                   <TH>Signed up</TH>
                   <TH>Last sign-in</TH>
-                  <TH align="right">MRR</TH>
+                  {showBilling ? <TH align="right">MRR</TH> : null}
                 </TR>
               </THead>
               <TBody>
@@ -121,9 +124,16 @@ export default async function UsersPage({
                         userId={row.userId}
                         fullName={row.fullName}
                         email={row.email}
+                        href={
+                          showBilling && row.status
+                            ? `/subscriptions/${row.userId}`
+                            : row.accountId
+                              ? `/clients/${row.accountId}`
+                              : null
+                        }
                       />
                       {row.bannedUntil && row.bannedUntil > new Date() ? (
-                        <span className="text-critical mt-1 block text-xs">
+                        <span className="text-bad-fg mt-1 block text-xs">
                           banned until {formatDate(row.bannedUntil)}
                         </span>
                       ) : null}
@@ -136,7 +146,7 @@ export default async function UsersPage({
                     <TD>
                       {row.accountId ? (
                         <Link
-                          href={`/workspaces/${row.accountId}`}
+                          href={`/clients/${row.accountId}`}
                           className="text-ink-2 hover:text-ink underline-offset-2 hover:underline"
                         >
                           {row.accountName ?? 'Unnamed workspace'}
@@ -155,14 +165,16 @@ export default async function UsersPage({
                         <span className="text-muted text-xs">no profile</span>
                       )}
                     </TD>
-                    <TD>
-                      <StatusBadge status={row.status} />
-                      {row.planDisplayName ? (
-                        <span className="text-muted block text-xs">
-                          {row.planDisplayName}
-                        </span>
-                      ) : null}
-                    </TD>
+                    {showBilling ? (
+                      <TD>
+                        <StatusBadge status={row.status} />
+                        {row.planDisplayName ? (
+                          <span className="text-muted mt-1 block text-xs">
+                            {row.planDisplayName}
+                          </span>
+                        ) : null}
+                      </TD>
+                    ) : null}
                     <TD>
                       <span className="text-ink-2">
                         {formatDate(row.createdAt)}
@@ -178,11 +190,13 @@ export default async function UsersPage({
                         </span>
                       ) : null}
                     </TD>
-                    <TD align="right">
-                      <span className="text-ink font-medium">
-                        {row.mrr > 0 ? formatMoney(row.mrr) : '—'}
-                      </span>
-                    </TD>
+                    {showBilling ? (
+                      <TD align="right">
+                        <span className="text-ink font-medium">
+                          {row.mrr > 0 ? formatMoney(row.mrr) : '—'}
+                        </span>
+                      </TD>
+                    ) : null}
                   </TR>
                 ))}
               </TBody>

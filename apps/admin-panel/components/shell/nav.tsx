@@ -1,55 +1,118 @@
 'use client';
 
+import {
+  Building2,
+  ChartColumn,
+  Coins,
+  CreditCard,
+  HeartPulse,
+  LayoutDashboard,
+  LifeBuoy,
+  Package,
+  Rocket,
+  ScrollText,
+  Settings,
+  ShieldCheck,
+  Siren,
+  Sparkles,
+  Users,
+  Webhook,
+  type LucideIcon,
+} from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-/**
- * Sidebar navigation. Client-side only because it needs `usePathname` to mark
- * the current section — everything else in the shell stays a Server Component.
- */
+import { NAV, type NavIcon } from '@/lib/nav';
 
 /**
- * Ordered by what the section is *about*, not alphabetically: money first
- * (overview → subscribers → sales → plans), then tenants (workspaces →
- * users → AI credits), then the record of what was changed.
+ * The navy rail's link list. Client-side only because it needs `usePathname`
+ * to mark the current section; which items appear is decided on the server
+ * (`allowed`) from the staff member's capabilities, so a role never sees a
+ * link to a screen that would refuse them.
  */
-const ITEMS = [
-  { href: '/', label: 'Overview' },
-  { href: '/subscribers', label: 'Subscribers' },
-  { href: '/sales', label: 'Sales' },
-  { href: '/plans', label: 'Plans & pricing' },
-  { href: '/workspaces', label: 'Workspaces' },
-  { href: '/users', label: 'Users' },
-  { href: '/credits', label: 'AI credits' },
-  { href: '/audit', label: 'Audit log' },
-] as const;
 
-export function Nav() {
+const ICONS: Record<NavIcon, LucideIcon> = {
+  overview: LayoutDashboard,
+  incidents: Siren,
+  support: LifeBuoy,
+  onboarding: Rocket,
+  clients: Building2,
+  portfolio: ChartColumn,
+  health: HeartPulse,
+  integrations: Webhook,
+  users: Users,
+  subscriptions: CreditCard,
+  plans: Package,
+  credits: Coins,
+  catalog: Sparkles,
+  staff: ShieldCheck,
+  audit: ScrollText,
+  settings: Settings,
+};
+
+export function Nav({
+  allowed,
+  badges = {},
+  onNavigate,
+}: {
+  allowed: string[];
+  /** Small counts beside a link — open incidents, unassigned tickets. */
+  badges?: Record<string, number>;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
+  const allow = new Set(allowed);
 
   return (
-    <nav aria-label="Sections" className="flex gap-1 lg:flex-col">
-      {ITEMS.map((item) => {
-        // Overview owns "/" exactly; every other section also owns its
-        // sub-routes, so /subscribers/<id> keeps Subscribers highlighted.
-        const active =
-          item.href === '/'
-            ? pathname === '/'
-            : pathname === item.href || pathname.startsWith(`${item.href}/`);
-
+    <nav aria-label="Control Center" className="space-y-4">
+      {NAV.map((group) => {
+        const items = group.items.filter((item) => allow.has(item.href));
+        if (items.length === 0) return null;
         return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={active ? 'page' : undefined}
-            className={`rounded-lg px-3 py-2 text-sm whitespace-nowrap transition ${
-              active
-                ? 'bg-surface text-ink border-ring border font-medium'
-                : 'text-ink-2 hover:bg-surface/70 border border-transparent'
-            }`}
-          >
-            {item.label}
-          </Link>
+          <div key={group.label}>
+            <p className="text-rail-muted mb-1.5 px-3 text-[10px] font-semibold tracking-[0.14em] uppercase">
+              {group.label}
+            </p>
+            <ul className="space-y-0.5">
+              {items.map((item) => {
+                const active =
+                  item.href === '/'
+                    ? pathname === '/'
+                    : pathname === item.href ||
+                      pathname.startsWith(`${item.href}/`);
+                const Icon = ICONS[item.icon];
+                const badge = badges[item.href];
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      onClick={onNavigate}
+                      aria-current={active ? 'page' : undefined}
+                      className={`flex min-h-9 items-center gap-2.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                        active
+                          ? 'bg-rail-active text-rail-ink-strong'
+                          : 'text-rail-ink hover:bg-rail-2 hover:text-rail-ink-strong'
+                      }`}
+                    >
+                      <Icon
+                        aria-hidden
+                        className={`size-4 shrink-0 ${active ? 'text-[#8eb8fa]' : 'opacity-75'}`}
+                        strokeWidth={1.9}
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {item.label}
+                      </span>
+                      {badge ? (
+                        <span className="bg-critical tabular rounded-full px-1.5 text-[10px] leading-4 font-bold text-white">
+                          {badge > 99 ? '99+' : badge}
+                        </span>
+                      ) : null}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         );
       })}
     </nav>

@@ -3,6 +3,7 @@
 import { useActionState, useState } from 'react';
 
 import { Field, FormMessage, Input, Select } from '@/components/ui/form';
+import { Callout } from '@/components/ui/page';
 import { SubmitButton } from '@/components/ui/submit-button';
 import { adjustCredits } from '@/lib/actions/credits';
 import type { ActionState } from '@/lib/actions/subscriptions';
@@ -51,20 +52,12 @@ export function AdjustCredits({
       <input type="hidden" name="accountId" value={accountId} />
 
       {creditMode === 'byok' ? (
-        <p className="border-ring text-ink-2 flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-xs leading-relaxed">
-          <span
-            aria-hidden
-            className="bg-warning mt-1 size-1.5 shrink-0 rounded-full"
-          />
-          <span>
-            This workspace runs the agent on{' '}
-            <strong className="text-ink font-semibold">
-              its own provider key
-            </strong>
-            , so nothing is metered against credits. Anything added here sits
-            unused until they switch to platform mode.
-          </span>
-        </p>
+        <Callout tone="warn">
+          This workspace runs the agent on{' '}
+          <strong className="font-semibold">its own provider key</strong>, so
+          nothing is metered against credits. Anything added here sits unused
+          until they switch to platform mode.
+        </Callout>
       ) : null}
 
       <div className="flex flex-wrap items-end gap-3">

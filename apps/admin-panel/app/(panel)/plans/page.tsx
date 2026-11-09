@@ -1,21 +1,22 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { PlanForm } from '@/components/plans/plan-form';
 import { Badge, Pill } from '@/components/ui/badge';
 import { Card, CardBody, CardHeader, DerivedNote } from '@/components/ui/card';
+import { ButtonLink, Callout, PageHeader } from '@/components/ui/page';
 import { StatRow, StatTile } from '@/components/ui/stat';
-import { requireAdmin } from '@/lib/auth';
+import { can, requireCapability } from '@/lib/auth';
 import { currency } from '@/lib/env';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { listPlans } from '@/lib/queries/plans';
 
 export const metadata: Metadata = {
-  title: 'Plans & pricing · Converse360 Admin',
+  title: 'Plans & Pricing · Converse360 Control Center',
 };
 
 export default async function PlansPage() {
-  await requireAdmin();
+  const staff = await requireCapability('billing.read');
+  const canEdit = can(staff, 'billing.manage');
   const plans = await listPlans();
   const currencyCode = currency();
 
@@ -25,13 +26,17 @@ export default async function PlansPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-ink text-xl font-semibold">Plans &amp; pricing</h1>
-        <p className="text-muted mt-1 text-sm">
-          The subscription amounts themselves. Everything else in this panel is
-          priced from here.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Revenue"
+        title="Plans & Pricing"
+        description="The subscription amounts themselves. Everything else in the Control Center is priced from here, and the pricing page and welcome wizard read this table live — an edit needs no deploy."
+      />
+
+      {canEdit ? null : (
+        <Callout tone="neutral" title="Read-only for your role">
+          Editing prices and limits needs the Billing or Super Admin role.
+        </Callout>
+      )}
 
       <StatRow>
         <StatTile
@@ -63,17 +68,25 @@ export default async function PlansPage() {
               <span className="flex flex-wrap items-center gap-2">
                 {plan.displayName}
                 <Badge tone="outline">{plan.name}</Badge>
-                {plan.isActive ? null : <Pill>Not offered</Pill>}
+                {plan.isActive ? (
+                  <Pill tone="good" glyph="●">
+                    Offered
+                  </Pill>
+                ) : (
+                  <Pill tone="neutral" glyph="○">
+                    Not offered
+                  </Pill>
+                )}
               </span>
             }
             description={plan.description ?? undefined}
             action={
-              <Link
-                href={`/subscribers?plan=${encodeURIComponent(plan.name)}`}
-                className="text-muted hover:text-ink text-xs underline-offset-2 hover:underline"
+              <ButtonLink
+                href={`/subscriptions?plan=${encodeURIComponent(plan.name)}`}
+                size="sm"
               >
-                View subscribers
-              </Link>
+                View subscriptions
+              </ButtonLink>
             }
           />
 
@@ -122,27 +135,60 @@ export default async function PlansPage() {
             </div>
 
             <details className="border-line border-t pt-4">
-              <summary className="text-ink-2 hover:text-ink cursor-pointer text-sm font-medium">
-                Edit {plan.displayName}
+              <summary className="text-primary hover:text-primary-hover cursor-pointer text-sm font-semibold">
+                {canEdit
+                  ? `Edit ${plan.displayName}`
+                  : 'Limits and gateway ids'}
               </summary>
               <div className="mt-5">
-                <PlanForm
-                  planId={plan.id}
-                  displayName={plan.displayName}
-                  description={plan.description}
-                  priceMonthly={plan.priceMonthly}
-                  priceYearly={plan.priceYearly}
-                  trialDays={plan.trialDays}
-                  maxContacts={plan.maxContacts}
-                  maxMessagesMonthly={plan.maxMessagesMonthly}
-                  maxBroadcastsMonthly={plan.maxBroadcastsMonthly}
-                  maxFlows={plan.maxFlows}
-                  maxTeamMembers={plan.maxTeamMembers}
-                  maxStorageMb={plan.maxStorageMb}
-                  isActive={Boolean(plan.isActive)}
-                  activeSubscribers={plan.active}
-                  currencyCode={currencyCode}
-                />
+                {canEdit ? (
+                  <PlanForm
+                    planId={plan.id}
+                    displayName={plan.displayName}
+                    description={plan.description}
+                    priceMonthly={plan.priceMonthly}
+                    priceYearly={plan.priceYearly}
+                    trialDays={plan.trialDays}
+                    maxContacts={plan.maxContacts}
+                    maxMessagesMonthly={plan.maxMessagesMonthly}
+                    maxBroadcastsMonthly={plan.maxBroadcastsMonthly}
+                    maxFlows={plan.maxFlows}
+                    maxTeamMembers={plan.maxTeamMembers}
+                    maxStorageMb={plan.maxStorageMb}
+                    isActive={Boolean(plan.isActive)}
+                    activeSubscribers={plan.active}
+                    currencyCode={currencyCode}
+                  />
+                ) : (
+                  <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4">
+                    {(
+                      [
+                        ['Trial days', plan.trialDays, 'No trial'],
+                        ['Contacts', plan.maxContacts, 'Unlimited'],
+                        [
+                          'Messages / month',
+                          plan.maxMessagesMonthly,
+                          'Unlimited',
+                        ],
+                        [
+                          'Broadcasts / month',
+                          plan.maxBroadcastsMonthly,
+                          'Unlimited',
+                        ],
+                        ['Flows', plan.maxFlows, 'Unlimited'],
+                        ['Team members', plan.maxTeamMembers, 'Unlimited'],
+                        ['Storage (MB)', plan.maxStorageMb, 'Unlimited'],
+                      ] as const
+                    ).map(([label, value, empty]) => (
+                      <div key={label}>
+                        <dt className="text-muted text-xs">{label}</dt>
+                        <dd className="text-ink-2 tabular mt-0.5">
+                          {value === null ? empty : formatNumber(value)}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
 
                 <dl className="text-muted border-line mt-6 grid gap-2 border-t pt-4 text-xs sm:grid-cols-3">
                   <div>

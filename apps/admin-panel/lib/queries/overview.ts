@@ -194,3 +194,90 @@ export async function getOverview(): Promise<Overview> {
 
   return { subscriptions, tenants, plans, trials, renewals, recent };
 }
+
+/* ============================================================
+ * Operations (C360-033) — the Control Center overview.
+ *
+ * Small, self-contained reads against the support desk and task tables.
+ * Deliberately not shared with the desk's own queries: the overview needs a
+ * handful of columns over OPEN rows only, and SLA state is computed from
+ * them with lib/sla.ts exactly as the desk does.
+ * ============================================================ */
+
+export type OpenTicket = {
+  id: string;
+  /** float8, not BIGINT — a BigInt cannot cross into a component. */
+  number: number;
+  subject: string;
+  accountId: string | null;
+  accountName: string | null;
+  severity: string;
+  tier: string;
+  status: string;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  createdAt: Date;
+  firstResponseDueAt: Date | null;
+  firstRespondedAt: Date | null;
+  resolutionDueAt: Date | null;
+  resolvedAt: Date | null;
+};
+
+/** Every ticket that is not resolved or closed. Bounded by the desk's backlog. */
+export async function openTickets(): Promise<OpenTicket[]> {
+  return prisma.$queryRaw<OpenTicket[]>(Prisma.sql`
+    select
+      t.id as "id",
+      (t.number)::float8 as "number",
+      t.subject as "subject",
+      t.account_id as "accountId",
+      coalesce(a.name, t.account_name) as "accountName",
+      t.severity as "severity",
+      t.tier as "tier",
+      t.status as "status",
+      t.assignee_staff_id as "assigneeId",
+      st.full_name as "assigneeName",
+      t.created_at as "createdAt",
+      t.first_response_due_at as "firstResponseDueAt",
+      t.first_responded_at as "firstRespondedAt",
+      t.resolution_due_at as "resolutionDueAt",
+      t.resolved_at as "resolvedAt"
+    from support_tickets t
+    left join accounts a on a.id = t.account_id
+    left join admin_staff st on st.id = t.assignee_staff_id
+    where t.status not in ('resolved', 'closed')
+    order by
+      case t.severity
+        when 'critical' then 0 when 'high' then 1 when 'normal' then 2 else 3
+      end,
+      t.created_at asc
+  `);
+}
+
+export type OpenTask = {
+  id: string;
+  accountId: string;
+  accountName: string;
+  title: string;
+  dueOn: Date | null;
+  createdAt: Date;
+};
+
+/** A staff member's open follow-ups, soonest due first, undated last. */
+export async function openTasksFor(staffId: string): Promise<OpenTask[]> {
+  return prisma.$queryRaw<OpenTask[]>(Prisma.sql`
+    select
+      t.id as "id",
+      t.account_id as "accountId",
+      a.name as "accountName",
+      t.title as "title",
+      t.due_on as "dueOn",
+      t.created_at as "createdAt"
+    from client_tasks t
+    join accounts a on a.id = t.account_id
+    where t.status = 'open'
+      and t.assignee_staff_id = ${staffId}::uuid
+    order by t.due_on asc nulls last, t.created_at asc
+    limit 20
+  `);
+}

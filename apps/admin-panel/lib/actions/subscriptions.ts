@@ -2,7 +2,7 @@
 
 import { refresh } from 'next/cache';
 
-import { requireAdmin } from '@/lib/auth';
+import { requireCapability } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
   FieldError,
@@ -66,7 +66,7 @@ export async function updateSubscription(
   _previous: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  await requireAdmin();
+  await requireCapability('billing.manage');
 
   try {
     const userId = uuid(formData, 'userId', 'User');
@@ -121,7 +121,7 @@ export async function quickSubscriptionAction(
   _previous: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  await requireAdmin();
+  await requireCapability('billing.manage');
 
   try {
     const userId = uuid(formData, 'userId', 'User');

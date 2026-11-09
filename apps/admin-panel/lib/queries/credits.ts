@@ -3,7 +3,7 @@ import 'server-only';
 import { Prisma } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
-import { LOW_CREDIT_THRESHOLD } from '@/lib/queries/workspaces';
+import { getSettings } from '@/lib/settings-store';
 
 /**
  * AI credits, across every tenant.
@@ -55,6 +55,9 @@ export type CreditTotals = {
 };
 
 export async function creditTotals(): Promise<CreditTotals> {
+  // "Low" is the System Settings threshold, so this tile and the renewal
+  // watchlist agree about which wallets are running dry.
+  const { lowCreditThreshold } = await getSettings();
   const [row] = await prisma.$queryRaw<CreditTotals[]>(Prisma.sql`
     select
       (select coalesce(sum(balance), 0) from ai_credit_wallets)::int
@@ -68,7 +71,7 @@ export async function creditTotals(): Promise<CreditTotals> {
         as "walletsEmpty",
       (
         select count(*) from ai_credit_wallets
-         where balance between 1 and ${LOW_CREDIT_THRESHOLD}
+         where balance between 1 and ${lowCreditThreshold}
       )::int as "walletsLow",
       (select count(*) from ai_configs where credit_mode = 'platform')::int
         as "onPlatform",

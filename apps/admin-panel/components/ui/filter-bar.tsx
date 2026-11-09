@@ -22,13 +22,13 @@ export function FilterBar({
     <form
       method="get"
       action={action}
-      className="border-ring bg-surface flex flex-wrap items-end gap-3 rounded-xl border px-4 py-3.5"
+      className="border-ring bg-surface shadow-card flex flex-wrap items-end gap-3 rounded-2xl border px-4 py-3.5"
     >
       {children}
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          className="bg-series-1 rounded-lg px-3.5 py-2 text-sm font-medium text-white transition hover:opacity-90"
+          className="bg-primary hover:bg-primary-hover rounded-lg px-3.5 py-2 text-sm font-semibold text-white transition"
         >
           Apply
         </button>
